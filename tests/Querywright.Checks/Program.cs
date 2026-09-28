@@ -597,3 +597,14 @@ Console.WriteLine($"PASS: {checks} total checks including FK join completion. SS
 var unusedItems = SqlRefactoring.UnusedDeclarationItems("DECLARE @a int;\nDECLARE @b int = 1;\nSELECT @a;");
 Check(unusedItems.Count == 1 && unusedItems[0].Target == "@b" && unusedItems[0].Line == 2 && unusedItems[0].Offset == 24 && unusedItems[0].Length == 2, "unused declaration spans");
 Console.WriteLine($"PASS: {checks} total checks including unused declaration spans. SSMS integration not tested.");
+
+Check(SqlRefactoring.CreateToAlter("-- CREATE note\r\nCREATE   PROCEDURE dbo.p AS SELECT 'CREATE';") == "-- CREATE note\r\nALTER   PROCEDURE dbo.p AS SELECT 'CREATE';", "create to alter skips comments and strings");
+Check(SqlRefactoring.CreateToAlter("/* x */ create or alter view v as select 1 a") == "/* x */ ALTER view v as select 1 a", "create or alter to alter");
+Check(SqlRefactoring.CreateToAlter("CREATE OR /*c*/ ALTER FUNCTION f() RETURNS int AS BEGIN RETURN 1 END") == "ALTER FUNCTION f() RETURNS int AS BEGIN RETURN 1 END", "create or alter with inner comment");
+Check(SqlRefactoring.CreateToAlter("SELECT 1") == "SELECT 1" && SqlRefactoring.CreateToAlter("") == "", "no create unchanged");
+Check(SqlRefactoring.CreateToAlter("CREATE TRIGGER t ON dbo.x AFTER INSERT AS BEGIN CREATE TABLE #t(i int) END").StartsWith("ALTER TRIGGER") , "only first create changes");
+Console.WriteLine($"PASS: {checks} total checks including CREATE to ALTER. SSMS integration not tested.");
+Check(SqlNavigation.FindDefinition("EXEC otherdb.dbo.p;", 16) == null, "cross-database F12 left to host");
+var procTarget = SqlNavigation.FindDefinition("EXEC dbo.usp_Load @x = 1;", 10);
+Check(procTarget != null && procTarget.Offset < 0 && procTarget.Schema == "dbo" && procTarget.Name == "usp_Load", "F12 on procedure names object");
+Console.WriteLine($"PASS: {checks} total checks including object F12 targets. SSMS integration not tested.");

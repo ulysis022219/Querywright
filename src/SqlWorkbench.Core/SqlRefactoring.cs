@@ -57,6 +57,43 @@ namespace SqlWorkbench.Core
             return new RenameResult(result, oldName, matches.Length);
         }
 
+        public static string AddSemicolons(string sql)
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (sql.Length > 1_000_000) throw new ArgumentException("Refactoring input exceeds 1,000,000 characters.");
+            var parser = new TSql170Parser(true);
+            var script = parser.Parse(new StringReader(sql), out var errors);
+            if (errors.Count != 0) throw new FormatException("Fix SQL syntax errors before inserting semicolons.");
+            var statements = new Statements();
+            script.Accept(statements);
+            var tokens = script.ScriptTokenStream;
+            var offsets = new SortedSet<int>(statements.Items
+                .Where(s => s.LastTokenIndex >= 0 && tokens[s.LastTokenIndex].TokenType != TSqlTokenType.Semicolon)
+                .Select(s => tokens[s.LastTokenIndex].Offset + tokens[s.LastTokenIndex].Text.Length));
+            var output = new StringBuilder(sql);
+            foreach (int offset in offsets.Reverse()) output.Insert(offset, ';');
+            string result = output.ToString();
+            // Guard: the only token change allowed is added semicolons.
+            var after = parser.GetTokenStream(new StringReader(result), out var finalErrors);
+            if (finalErrors.Count > 0 || parser.Parse(new StringReader(result), out finalErrors) == null || finalErrors.Count > 0 ||
+                !Significant(after).SequenceEqual(Significant(tokens)))
+                throw new InvalidOperationException("Semicolon insertion changed SQL structure; original text retained.");
+            return result;
+        }
+
+        private static IEnumerable<string> Significant(IList<TSqlParserToken> tokens) =>
+            tokens.Where(t => t.TokenType != TSqlTokenType.Semicolon && t.TokenType != TSqlTokenType.WhiteSpace).Select(t => t.Text);
+
+        private sealed class Statements : TSqlFragmentVisitor
+        {
+            internal readonly List<TSqlStatement> Items = new List<TSqlStatement>();
+            public override void Visit(TSqlStatement node)
+            {
+                // ponytail: labels end with ':'; WITH CTE prefixes and GO are not statements.
+                if (!(node is LabelStatement)) Items.Add(node);
+            }
+        }
+
         private sealed class Variables : TSqlFragmentVisitor
         {
             internal readonly List<TSqlFragment> References = new List<TSqlFragment>();

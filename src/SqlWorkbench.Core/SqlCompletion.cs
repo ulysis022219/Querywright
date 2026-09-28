@@ -38,6 +38,14 @@ namespace SqlWorkbench.Core
         { Start = start; Length = length; Items = items.ToArray(); Limitation = limitation; }
     }
 
+    public sealed class TextEdit
+    {
+        public int Start { get; }
+        public int Length { get; }
+        public string Text { get; }
+        internal TextEdit(int start, int length, string text) { Start = start; Length = length; Text = text; }
+    }
+
     public static class SqlCompletion
     {
         private const string Marker = "__SqlWorkbenchCompletionMarker__";
@@ -84,9 +92,30 @@ namespace SqlWorkbench.Core
                 .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase));
         }
 
+        public static TextEdit ExpandWildcard(string sql, int position, IReadOnlyList<SchemaTable> tables,
+            string defaultSchema = "dbo", bool caseSensitive = false)
+        {
+            if (sql == null || tables == null) throw new ArgumentNullException(sql == null ? nameof(sql) : nameof(tables));
+            if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
+            if (sql.Length > 1_000_000) throw new ArgumentException("Expansion input exceeds 1,000,000 characters.");
+            var parser = new TSql170Parser(true);
+            var fragment = parser.Parse(new StringReader(sql), out var errors);
+            if (errors.Count > 0) throw new FormatException("Fix SQL syntax errors before expanding a wildcard.");
+            var visitor = new Resolver(tables, defaultSchema, caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase, position);
+            fragment.Accept(visitor);
+            if (visitor.Expansion == null) throw new InvalidOperationException("Place the caret on * or alias.* in a SELECT list.");
+            string result = sql.Substring(0, visitor.Expansion.Start) + visitor.Expansion.Text +
+                sql.Substring(visitor.Expansion.Start + visitor.Expansion.Length);
+            parser.Parse(new StringReader(result), out var finalErrors);
+            if (finalErrors.Count > 0) throw new InvalidOperationException("Expansion produced invalid SQL; original text retained.");
+            return visitor.Expansion;
+        }
+
         private sealed class Resolver : TSqlFragmentVisitor
         {
             internal readonly List<CompletionItem> Items = new List<CompletionItem>();
+            internal TextEdit? Expansion;
+            private readonly int wildcardPosition = -1;
             private readonly IReadOnlyList<SchemaTable> tables;
             private readonly string defaultSchema;
             private readonly StringComparer names;
@@ -95,6 +124,31 @@ namespace SqlWorkbench.Core
             private readonly Stack<Dictionary<string, CommonTableExpression>> cteScopes = new Stack<Dictionary<string, CommonTableExpression>>();
             internal Resolver(IReadOnlyList<SchemaTable> tables, string defaultSchema, StringComparer names)
             { this.tables = tables; this.defaultSchema = defaultSchema; this.names = names; }
+            internal Resolver(IReadOnlyList<SchemaTable> tables, string defaultSchema, StringComparer names, int wildcardPosition)
+                : this(tables, defaultSchema, names) { this.wildcardPosition = wildcardPosition; }
+
+            public override void Visit(SelectStarExpression node)
+            {
+                if (Expansion != null || node.StartOffset > wildcardPosition || wildcardPosition > node.StartOffset + node.FragmentLength) return;
+                var ids = node.Qualifier?.Identifiers;
+                if (ids != null && ids.Count > 1) throw new InvalidOperationException("Use an alias or table name qualifier, not schema.table.*.");
+                var from = scopes.Count == 0 ? null : scopes[scopes.Count - 1].FromClause;
+                if (from == null) throw new InvalidOperationException("Wildcard has no FROM clause to expand.");
+                var references = from.TableReferences.SelectMany(Tables).ToArray();
+                var parts = new List<string>();
+                bool qualify = ids != null || references.Length > 1;
+                foreach (var reference in references)
+                {
+                    string? alias = reference?.Alias?.Value ?? (reference as NamedTableReference)?.SchemaObject.BaseIdentifier.Value;
+                    if (ids != null && (alias == null || !names.Equals(alias, ids[0].Value))) continue;
+                    var columns = reference == null ? Array.Empty<string>() : Columns(reference).ToArray();
+                    if (alias == null || columns.Length == 0)
+                        throw new InvalidOperationException("Columns unknown for " + (alias ?? "a FROM source") + "; offline schema, CTE or derived column list required.");
+                    parts.AddRange(columns.Select(c => qualify ? Quote(alias) + "." + Quote(c) : Quote(c)));
+                }
+                if (parts.Count == 0) throw new InvalidOperationException("Wildcard qualifier " + ids![0].Value + " is not in this FROM clause.");
+                Expansion = new TextEdit(node.StartOffset, node.FragmentLength, string.Join(", ", parts));
+            }
 
             public override void ExplicitVisit(SelectStatement node)
             {
@@ -143,10 +197,10 @@ namespace SqlWorkbench.Core
                     if (scopes[i].FromClause == null) continue;
                     foreach (var reference in scopes[i].FromClause.TableReferences.SelectMany(Tables))
                     {
-                        string? alias = reference.Alias?.Value ?? (reference as NamedTableReference)?.SchemaObject.BaseIdentifier.Value;
+                        string? alias = reference?.Alias?.Value ?? (reference as NamedTableReference)?.SchemaObject.BaseIdentifier.Value;
                         if (alias == null) continue;
                         if (!seen.Add(alias) || (qualifier != null && !names.Equals(alias, qualifier))) continue;
-                        foreach (string column in Columns(reference))
+                        foreach (string column in Columns(reference!))
                                 Items.Add(new CompletionItem(column, qualifier == null ? Quote(alias) + "." + Quote(column) : Quote(column),
                                     alias + "." + column));
                         if (qualifier != null) return; // Inner aliases shadow outer aliases, even when metadata is missing.
@@ -184,7 +238,8 @@ namespace SqlWorkbench.Core
                 return tables.FirstOrDefault(t => names.Equals(t.Schema, schema) && names.Equals(t.Name, name.BaseIdentifier.Value));
             }
 
-            private static IEnumerable<TableReferenceWithAlias> Tables(TableReference reference)
+            // Yields null for unsupported sources so wildcard expansion can reject rather than omit them.
+            private static IEnumerable<TableReferenceWithAlias?> Tables(TableReference reference)
             {
                 if (reference is TableReferenceWithAlias aliased) yield return aliased;
                 else if (reference is JoinTableReference join)
@@ -194,6 +249,7 @@ namespace SqlWorkbench.Core
                 }
                 else if (reference is JoinParenthesisTableReference parenthesis)
                     foreach (var table in Tables(parenthesis.Join)) yield return table;
+                else yield return null;
             }
         }
     }

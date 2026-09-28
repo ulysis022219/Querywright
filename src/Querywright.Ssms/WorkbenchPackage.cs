@@ -47,6 +47,8 @@ namespace Querywright.Ssms
             shell?.LoadPackage(ref id, out _);
         }
 
+        internal string TabColorRules => options?.TabColorRules ?? "";
+
         internal string SettingsFile => options?.SettingsFile ?? "";
 
         internal bool SchemaConfigured => !string.IsNullOrWhiteSpace(options?.SchemaFile);

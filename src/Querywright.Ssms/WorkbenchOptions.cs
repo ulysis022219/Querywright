@@ -22,6 +22,11 @@ namespace Querywright.Ssms
         [Description("Optional team XML file containing formatting style and rule severities. Empty uses defaults.")]
         public string SettingsFile { get; set; } = "";
 
+        [Category("Environment")]
+        [DisplayName("Tab color rules")]
+        [Description("Colors the strip above a query editor by connection: \"pattern=color\" pairs separated by ';' matched against server/database, e.g. \"prod=Red;test=Orange\".")]
+        public string TabColorRules { get; set; } = "";
+
         [Category("Snippets")]
         [DisplayName("Snippet folder")]
         [Description("Folder of editable .sql templates. Use a shared folder for team snippets.")]

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 namespace Querywright.Core
@@ -15,6 +16,13 @@ namespace Querywright.Core
         public string? Name { get; }
         internal DefinitionTarget(int offset, int length) { Offset = offset; Length = length; }
         internal DefinitionTarget(string? schema, string name) { Offset = -1; Schema = schema; Name = name; }
+    }
+
+    public sealed class StatementSpan
+    {
+        public int Start { get; }
+        public int Length { get; }
+        internal StatementSpan(int start, int length) { Start = start; Length = length; }
     }
 
     public static class SqlNavigation
@@ -64,7 +72,62 @@ namespace Querywright.Core
             return new DefinitionTarget(name.SchemaIdentifier?.Value, name.BaseIdentifier.Value);
         }
 
-        private static bool Contains(TSqlFragment node, int position) =>
+        public static StatementSpan? StatementAt(string sql, int position)
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
+            if (sql.Length > 1_000_000) throw new ArgumentException("Navigation input exceeds 1,000,000 characters.");
+            var parser = new TSql170Parser(true);
+            int start = 0, end = sql.Length;
+            foreach (var (lineStart, lineEnd) in GoLines(sql, parser))
+            {
+                if (lineEnd <= position) start = lineEnd;
+                else { end = lineStart; break; }
+            }
+            string region = sql.Substring(start, end - start);
+            var script = (TSqlScript)parser.Parse(new StringReader(region), out var errors);
+            if (errors.Count == 0)
+            {
+                var statements = script.Batches.SelectMany(b => b.Statements).ToArray();
+                var statement = statements.LastOrDefault(s => start + s.StartOffset <= position) ?? statements.FirstOrDefault();
+                if (statement == null) return null;
+                var (offset, length) = Span(statement);
+                return new StatementSpan(start + offset, length);
+            }
+            string trimmed = region.Trim();
+            return trimmed.Length == 0 ? null : new StatementSpan(start + region.IndexOf(trimmed, StringComparison.Ordinal), trimmed.Length);
+        }
+
+        /// <summary>Statement extent including a trailing semicolon the parser leaves outside (e.g. after a procedure body).</summary>
+        internal static (int Start, int Length) Span(TSqlStatement statement)
+        {
+            var tokens = statement.ScriptTokenStream;
+            int end = statement.StartOffset + statement.FragmentLength, i = statement.LastTokenIndex + 1;
+            while (i < tokens.Count && tokens[i].TokenType == TSqlTokenType.WhiteSpace) i++;
+            if (i < tokens.Count && tokens[i].TokenType == TSqlTokenType.Semicolon && tokens[statement.LastTokenIndex].TokenType != TSqlTokenType.Semicolon)
+                end = tokens[i].Offset + 1;
+            return (statement.StartOffset, end - statement.StartOffset);
+        }
+
+        /// <summary>GO separator lines as [line start, index after newline).</summary>
+        internal static IEnumerable<(int Start, int End)> GoLines(string sql, TSql170Parser parser)
+        {
+            var tokens = parser.GetTokenStream(new StringReader(sql), out var errors);
+            // ponytail: a script that cannot be tokenized (e.g. unterminated string) falls back to GO line matching.
+            var starts = errors.Count == 0
+                ? tokens.Where(t => t.TokenType == TSqlTokenType.Go).Select(t => t.Offset == 0 ? 0 : sql.LastIndexOf('\n', t.Offset - 1) + 1)
+                : Regex.Matches(sql, @"^[ \t]*GO\b", RegexOptions.Multiline | RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)).Cast<Match>().Select(m => m.Index);
+            foreach (int start in starts.Distinct().ToArray())
+            {
+                int newline = sql.IndexOf('\n', start);
+                int end = newline < 0 ? sql.Length : newline + 1;
+                if (Regex.IsMatch(sql.Substring(start, end - start).TrimEnd('\r', '\n'), @"^[ \t]*GO(?:[ \t]+[0-9]+)?[ \t]*(?:--[^\r\n]*)?$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                    yield return (start, end);
+            }
+        }
+
+        internal static bool Contains(TSqlFragment node, int position) =>
             node.StartOffset <= position && position <= node.StartOffset + node.FragmentLength;
 
         private sealed class Scope<T>
@@ -74,7 +137,7 @@ namespace Querywright.Core
             internal Scope(TSqlFragment owner, IReadOnlyList<T> items) { Owner = owner; Items = items; }
         }
 
-        private sealed class Sources
+        internal sealed class Sources
         {
             internal readonly TSqlFragment Owner;
             internal readonly List<TableReferenceWithAlias> Tables = new List<TableReferenceWithAlias>();

@@ -1,5 +1,5 @@
-# End-to-end smoke test on a disposable Windows machine (CI). Drives the real SSMS 22 UI with keystrokes.
-# Never run on a workstation with open SSMS sessions: it kills SSMS processes it started and sends keys to the desktop.
+# End-to-end test on a disposable Windows machine (CI): installs the package into the real SSMS 22 and replays editor
+# commands through the package's self-test. Never run on a workstation with open SSMS sessions: it kills SSMS processes.
 param(
     [Parameter(Mandatory)][string]$Package,
     [string]$Out = (Join-Path $PWD 'e2e')
@@ -88,28 +88,33 @@ Write-Output "SSMS $([Diagnostics.FileVersionInfo]::GetVersionInfo($ssms).Produc
 & (Join-Path $PSScriptRoot 'Install-Development.ps1') -SsmsDirectory $ide -Package $Package
 
 $results = [ordered]@{}
-function Session([string]$name, [string]$text, [string[]]$extra, [scriptblock]$keys) {
-    # One SSMS instance per scenario; returns the saved file text.
+function Session([string]$name, [string]$text, [string[]]$extra, [string]$steps) {
+    # One SSMS instance per scenario. The package's self-test (QUERYWRIGHT_SELFTEST) replays $steps through the SQL
+    # editor's command chain, the same TYPECHAR/TAB/F12 commands a keypress sends, so window focus cannot break the run.
     $file = Join-Path $Out "$name.sql"
+    $result = Join-Path $Out "$name.result.txt"
     [IO.File]::WriteAllText($file, $text)
-    $process = Start-Process $ssms -ArgumentList (@("`"$file`"") + $extra + '-nosplash', '/log') -PassThru
+    Remove-Item $result -ErrorAction SilentlyContinue
+    $env:QUERYWRIGHT_SELFTEST = $result
+    $env:QUERYWRIGHT_SELFTEST_STEPS = $steps
+    Start-Process $ssms -ArgumentList (@("`"$file`"") + $extra + '-nosplash', '/log') | Out-Null
     try {
-        Start-Sleep 60
-        Snap "$name-started"
-        # First run relaunches SSMS, so the started process may be gone.
-        $id = (Get-Process SSMS -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1).Id
-        if (-not $id) { throw 'SSMS is not running.' }
-        Dismiss $id
-        [void][Microsoft.VisualBasic.Interaction]::AppActivate($id)
-        Windows $id | Write-Host
-        & $keys
+        for ($i = 0; $i -lt 48 -and -not (Test-Path $result); $i++) {
+            Start-Sleep 5
+            # First run relaunches SSMS, so follow the newest process; answer first-run prompts that could block the editor.
+            $id = (Get-Process SSMS -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1).Id
+            if ($id -and $i % 2 -eq 1) { Dismiss $id }
+        }
+        Start-Sleep 2
         Snap "$name-done"
-        Windows $id | Write-Host
-        Keys '^s' 3000
-        return [IO.File]::ReadAllText($file)
+        Thumbnail $name | Write-Host
+        if ($id) { Windows $id | Write-Host }
+        if (-not (Test-Path $result)) { return 'error: self-test wrote no result within 4 minutes' }
+        return [IO.File]::ReadAllText($result)
     } catch {
         return "error: $_"
     } finally {
+        Remove-Item Env:QUERYWRIGHT_SELFTEST, Env:QUERYWRIGHT_SELFTEST_STEPS -ErrorAction SilentlyContinue
         Get-Process SSMS -ErrorAction SilentlyContinue | Stop-Process -Force
         Start-Sleep 3
         Get-ChildItem "$env:APPDATA\Microsoft\SSMS" -Recurse -Filter ActivityLog.xml -ErrorAction SilentlyContinue |
@@ -120,18 +125,18 @@ function Expect([string]$name, [string]$actual, [scriptblock]$ok) {
     $results[$name] = if (& $ok $actual) { 'PASS' } else { "FAIL: file contains [$actual]" }
 }
 
-$text = Session 'snippet' 'ssf' @() { Keys '^{END}'; Keys '{TAB}' 2000; Thumbnail 'snippet' | Write-Host }
+$text = Session 'snippet' 'ssf' @() 'wait:3000|end|tab|wait:1000'
 Expect 'ssf + Tab' $text { param($t) $t -eq 'SELECT * FROM ' }
 
-$text = Session 'definition' "DECLARE @abc int;`r`nSELECT @abc;" @() { Keys '^{END}'; Keys '{LEFT 2}'; Keys '{F12}' 2000; Keys 'Z' }
+$text = Session 'definition' "DECLARE @abc int;`r`nSELECT @abc;" @() 'wait:3000|end|left:2|f12|wait:1000|type:Z'
 Expect 'F12 local variable' $text { param($t) $t -eq "DECLARE Z int;`r`nSELECT @abc;" }
 
 # Typing opens the suggestion list; Tab must still expand the snippet.
-$text = Session 'typed-snippet' '' @() { Keys 'ssf' 2500; Keys '{TAB}' 2000; Thumbnail 'typed-snippet' | Write-Host }
+$text = Session 'typed-snippet' '' @() 'wait:3000|type:ssf|wait:2500|tab|wait:1000'
 Expect 'typed ssf + Tab with popup' $text { param($t) $t -eq 'SELECT * FROM ' }
 
 # Keywords come from the popup without metadata.
-$text = Session 'keyword' '' @() { Keys 'SELECT 1 ORD' 2500; Keys '{TAB}' 1500; Thumbnail 'keyword' | Write-Host }
+$text = Session 'keyword' '' @() 'wait:3000|type:SELECT 1 ORD|wait:2500|tab|wait:1000'
 Expect 'keyword completion' $text { param($t) $t -match '^SELECT 1 ORDER' }
 
 # Live metadata against LocalDB on the disposable runner (the only database this test writes to).
@@ -154,13 +159,10 @@ try {
     $live = $true
 } catch { $results['LocalDB setup'] = "FAIL: $($_.Exception.Message)"; $live = $false }
 if ($live) {
-    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') {
-        Keys '^{HOME}'; Keys '{END}'; Keys '{TAB}' 3000; Thumbnail 'wildcard' | Write-Host
-    }
+    # The wait lets SSMS connect and the package load the catalog.
+    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:20000|home|right:8|tab|wait:3000'
     Expect '* + Tab from live metadata' $text { param($t) $t -match 'FullName' -and $t -notmatch '\*' }
-    $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') {
-        Keys '^{HOME}'; Keys '{RIGHT 7}'; Keys 'p.Ful' 3000; Keys '{TAB}' 1500; Thumbnail 'columns' | Write-Host
-    }
+    $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:20000|home|right:7|type:p.Ful|wait:3000|tab|wait:1000'
     Expect 'column completion from live metadata' $text { param($t) $t -match 'SELECT p\.FullName ?FROM' }
 }
 

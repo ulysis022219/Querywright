@@ -1,0 +1,136 @@
+# SqlWorkbench
+
+Independent open-source SQL productivity extension in development. Working name.
+Target: latest stable SSMS (22.10.1, verified September 28, 2026).
+Goal: all non-AI SQL Prompt capabilities. No affiliation with Redgate.
+
+## Current status
+
+Snippet expansion and four static analysis rules implemented and checked. The VSIX has
+Tools commands for snippet insertion and SQL document analysis, plus a package smoke
+check. Editor wiring compiles but has not run in SSMS. No installed extension,
+live autocomplete, database access, or verified SSMS integration yet. Offline completion,
+formatting core and
+selection/document command are implemented; runtime behavior remains unverified.
+See [feature inventory](docs/features.md) for remaining scope and acceptance criteria.
+
+## Run checks
+
+Requires .NET 10 SDK:
+
+```powershell
+dotnet run --project tests/SqlWorkbench.Checks
+```
+
+The core targets .NET Standard 2.0 for reuse from the Windows/.NET Framework SSMS host.
+The checks use .NET 10; they do not prove SSMS runtime compatibility.
+
+## Build the development VSIX
+
+```powershell
+dotnet build src/SqlWorkbench.Ssms/SqlWorkbench.Ssms.csproj
+powershell -NoProfile -File scripts/Test-Package.ps1
+```
+
+Output: `src/SqlWorkbench.Ssms/bin/Debug/net472/SqlWorkbench.Ssms.vsix`.
+Build does not install the package or start SSMS. The manifest targets SSMS 22 x64;
+installer recognition and runtime loading are not yet verified. SSMS updates may
+require compatibility changes. Microsoft does not officially support third-party extensions.
+
+After the user's SSMS setup finishes, validate the VSIX with SSMS 22's installer,
+then start a separate SSMS 22 session. Under Tools, run **SqlWorkbench: snippet smoke
+check** and verify the preview appears. Confirm the command does not modify a query,
+and uninstall the package to verify clean removal. Do not interrupt SSMS 19 sessions.
+
+Validation on September 28, 2026:
+- `dotnet run --project tests/SqlWorkbench.Checks`: 77 checks passed (updated September 29).
+- `dotnet build src/SqlWorkbench.Ssms/SqlWorkbench.Ssms.csproj --no-restore`:
+  VSIX generated, zero warnings/errors.
+- Archive inspected: extension/core assemblies, pkgdef and manifest included.
+- SSMS installation, menu visibility, runtime behavior and uninstall: pending.
+
+## Snippets and analysis prototype
+
+Tools > SqlWorkbench: insert snippet creates starter `.sql` templates in the local
+snippet folder and opens a file picker. Existing template content is preserved.
+Edit the files in any editor; Tools > Options > SqlWorkbench > General changes the
+folder, including to a team share. CURSOR, selection markers, DATE, TIME, MACHINE,
+and PASTE are implemented. SERVER, DBNAME, and USER require connection integration;
+insertion rejects templates requesting unavailable values before modifying SQL.
+
+Tools > SqlWorkbench: analyze SQL document runs four syntax-tree rules in the background
+and publishes results to Error List. Double-click navigation rejects stale snapshots.
+See [analysis coverage](docs/analysis-rules.md). No SQL is executed.
+
+Pending runtime checks: insertion at caret and over selection, Unicode/CRLF offsets,
+single undo/redo, read-only buffers, picker cancellation, invalid template rejection,
+analysis navigation, edited/closed queries, and UI responsiveness.
+
+## Formatting and team settings
+
+Tools > SqlWorkbench: format SQL selection/document formats selected complete SQL
+statements, or the full document when selection is empty. One undo transaction.
+Original text remains unchanged when parsing, protected-token checks or normalized
+SQL structure checks fail. These checks reduce accidental changes; they do not prove
+semantic equivalence for every supported SQL construct.
+
+Formatter handles ordinary GO separators and repetition counts; SQLCMD directives
+and incomplete statement selections remain unsupported. It uses ScriptDOM with
+SQL Server 2025 grammar and QUOTED_IDENTIFIER ON. Styles currently expose indentation,
+keyword case, comma placement, multiline columns and FROM placement. More style
+options, previews, bulk file formatting and per-connection dialect remain pending.
+
+Copy [example settings](examples/team-settings.xml) to a local/shared file. Set its
+path under Tools > Options > SqlWorkbench > General > Settings file. Rule values:
+Disabled, Info, Warning, Error. Parse errors cannot be disabled. Settings are read
+on each invocation off the UI thread; invalid settings stop the operation.
+
+## Offline completion prototype
+
+Set **Offline schema SQL file** in Tools > Options > SqlWorkbench to a script containing
+only CREATE TABLE statements (see examples/offline-schema.sql). No SQL is executed.
+At an identifier or after an alias dot, run **suggest from offline schema**. The picker
+inserts the chosen table/column with brackets and one undo transaction. Metadata is
+read fresh on invocation; it is a user-supplied snapshot, not current database state.
+
+Core checks cover ordinary joins, nested/correlated query scopes, alias shadowing,
+CTEs and derived columns, and suppress suggestions inside strings/comments. The
+host uses dbo as default schema and ordinal case-insensitive matching for now.
+Remaining: connection-aware metadata/cache, collation/default-schema discovery,
+native inline popup, quoted partial identifiers, broader incomplete-SQL recovery,
+APPLY correlation, temporary tables, variables, procedure parameters, cross-database
+names, CTE/derived wildcard expansion and fuzzy matching. These remain in full scope.
+
+## Local variable rename prototype
+
+Place the caret on a locally declared variable, then run **rename local variable**.
+Enter a new name, inspect Original/Proposed SQL in the preview, and Apply. The editor
+change uses one undo transaction and rejects a stale document. No SQL is executed.
+
+The core binds within one parsed batch, including table variables, and preserves
+comments, strings, other batches, and named EXEC parameter labels. Duplicate declarations,
+name collisions, malformed SQL and public procedure/function parameters are rejected.
+Matching currently uses ordinal case-insensitive names; collation-aware binding and
+broader refactorings remain pending. Dynamic SQL string contents are not rewritten.
+Core checks passed; preview, apply, undo and redo still need actual SSMS tests.
+
+## Development order
+
+Host validation (September 29, 2026): VSIX 0.1.1 installs on SSMS 22.10.1;
+six Tools commands appear and snippet smoke command runs. Document formatting,
+single-step undo and redo passed with `examples/host-smoke.sql` in a disconnected
+editor. Other commands and full feature compatibility remain unverified.
+Run `powershell -NoProfile -File scripts/Test-HostParser.ps1` after building to catch
+ScriptDOM API differences in the installed SSMS host; the host can override the
+parser assembly bundled in the VSIX.
+
+1. Inventory current commands and analysis rules; map each to acceptance checks.
+2. Prove SSMS package loading, active SQL document access, undo, and clean uninstall.
+3. Wire snippets; add cached metadata and context-aware completion.
+4. Formatting, navigation, editor helpers, history and result tools.
+5. Analysis and refactoring with reviewable edits and dependency-aware validation.
+6. Complete inventory gaps and run actual SSMS regression tests.
+
+No AI features. No automatic query execution or database mutation.
+Database credentials and query text must never enter logs by default.
+New project code is MIT licensed; dependencies require their own license review.

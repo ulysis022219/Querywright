@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WorkbenchSettings>
+  <Formatting>
+    <IndentSize>4</IndentSize>
+    <LowercaseKeywords>false</LowercaseKeywords>
+    <LeadingCommas>false</LeadingCommas>
+    <MultilineColumns>true</MultilineColumns>
+    <NewLineBeforeFrom>true</NewLineBeforeFrom>
+  </Formatting>
+  <SW001>Warning</SW001>
+  <SW002>Warning</SW002>
+  <SW003>Error</SW003>
+  <SW004>Info</SW004>
+</WorkbenchSettings>

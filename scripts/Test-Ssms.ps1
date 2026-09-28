@@ -42,6 +42,34 @@ function Thumbnail([string]$name) {
     "THUMBNAIL-END $name"
 }
 function Keys([string]$keys, [int]$wait = 800) { [System.Windows.Forms.SendKeys]::SendWait($keys); Start-Sleep -Milliseconds $wait }
+function Invoke-Named([int]$id, [string]$pattern) {
+    # Invokes the first control of the process whose name matches; true when one was found.
+    $auto = [System.Windows.Automation.AutomationElement]
+    foreach ($window in $auto::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition)) {
+        if ($window.Current.ProcessId -ne $id) { continue }
+        $match = $window.FindAll('Descendants', [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.Name -match $pattern } | Select-Object -First 1
+        if (-not $match) { continue }
+        Write-Host "dismiss: [$($match.Current.Name)] in [$($window.Current.Name)]"
+        $invoke = $null
+        if ($match.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) { $invoke.Invoke() }
+        else { $match.SetFocus(); Keys ' ' 0 }
+        Start-Sleep 3
+        return $true
+    }
+    $false
+}
+function Dismiss([int]$id) {
+    # First-run sign-in and connect prompts. ESC on the sign-in page asks to exit SSMS, so answer those by name.
+    for ($i = 0; $i -lt 6; $i++) {
+        if (Invoke-Named $id '^No$') { continue }                        # "exit SQL Server Management Studio?"
+        if (Invoke-Named $id '^Skip and add accounts later') { continue }
+        $connect = [System.Windows.Automation.AutomationElement]::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.ProcessId -eq $id -and $_.Current.Name -match '^Connect' }
+        if ($connect) { [void][Microsoft.VisualBasic.Interaction]::AppActivate($id); Keys '{ESC}' 2000; continue }
+        break
+    }
+}
 
 if (-not (Test-Path $ssms)) {
     Write-Output 'Installing SSMS 22...'
@@ -63,8 +91,7 @@ function Session([string]$name, [string]$text, [string[]]$extra, [scriptblock]$k
     try {
         Start-Sleep 60
         Snap "$name-started"
-        # Dismiss first-run prompts; a disconnected editor is enough for the offline scenarios.
-        1..3 | ForEach-Object { [void][Microsoft.VisualBasic.Interaction]::AppActivate($process.Id); Keys '{ESC}' 1500 }
+        Dismiss $process.Id
         [void][Microsoft.VisualBasic.Interaction]::AppActivate($process.Id)
         & $keys
         Snap "$name-done"

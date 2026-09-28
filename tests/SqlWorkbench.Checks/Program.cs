@@ -159,3 +159,65 @@ Console.WriteLine($"PASS: {checks} total checks including schema import. SSMS in
 try { SchemaCatalog.FromDdl("CREATE TABLE dbo.T(id int); ALTER TABLE dbo.T ADD x int;"); throw new Exception("Expected unsupported schema rejection"); }
 catch (FormatException) { checks++; }
 Console.WriteLine($"PASS: {checks} total checks. SSMS integration not tested.");
+
+TextEdit Expand(string text)
+{
+    int position = text.IndexOf('|');
+    return SqlCompletion.ExpandWildcard(text.Remove(position, 1), position, catalog);
+}
+void RejectExpand(string text)
+{
+    try { Expand(text); }
+    catch (InvalidOperationException) { checks++; return; }
+    throw new Exception("Expected wildcard rejection for " + text);
+}
+Check(Expand("SELECT *| FROM dbo.People;").Text == "[Id], [Name], [odd]]column]", "single-table wildcard");
+Check(Expand("SELECT o.*|, 1 FROM dbo.People p JOIN dbo.Orders o ON p.Id = o.PersonId;") is var q && q.Text == "[o].[OrderId], [o].[PersonId]" && q.Start == 7 && q.Length == 3, "qualified wildcard span");
+Check(Expand("SELECT |* FROM People p, dbo.Orders o;").Text.StartsWith("[p].[Id], [p].[Name], [p].[odd]]column], [o].[OrderId]"), "multi-table wildcard order");
+Check(Expand("WITH c AS (SELECT OrderId FROM dbo.Orders) SELECT *| FROM c;").Text == "[OrderId]", "CTE wildcard");
+Check(Expand("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT *| FROM dbo.Orders);").Text == "[OrderId], [PersonId]", "inner scope wildcard");
+RejectExpand("SELECT *| FROM dbo.Missing;");
+RejectExpand("SELECT *| FROM dbo.People p CROSS APPLY OPENJSON(p.Name) j;");
+RejectExpand("SELECT x.*| FROM dbo.People p;");
+RejectExpand("SELECT 1| FROM dbo.People;");
+Console.WriteLine($"PASS: {checks} total checks including wildcard expansion. SSMS integration not tested.");
+
+Check(SqlRefactoring.AddSemicolons("SELECT 1\nSELECT 2 -- c\n") == "SELECT 1;\nSELECT 2; -- c\n", "statement semicolons");
+Check(SqlRefactoring.AddSemicolons("SELECT 1;\nGO\nSELECT 2;") == "SELECT 1;\nGO\nSELECT 2;", "semicolons idempotent");
+Check(SqlRefactoring.AddSemicolons("IF 1 = 1 SELECT 1 ELSE SELECT 2") == "IF 1 = 1 SELECT 1; ELSE SELECT 2;", "IF/ELSE semicolons");
+Check(SqlRefactoring.AddSemicolons("BEGIN TRY\n SELECT 1\nEND TRY\nBEGIN CATCH\n THROW\nEND CATCH") ==
+    "BEGIN TRY\n SELECT 1;\nEND TRY\nBEGIN CATCH\n THROW;\nEND CATCH;", "TRY/CATCH semicolons");
+Check(SqlRefactoring.AddSemicolons("CREATE PROCEDURE p AS\nBEGIN\n SELECT N'a;b'\nEND") == "CREATE PROCEDURE p AS\nBEGIN\n SELECT N'a;b';\nEND;", "procedure semicolons");
+Check(SqlRefactoring.AddSemicolons("SELECT 1\nWITH c AS (SELECT 1 AS x) SELECT x FROM c") == "SELECT 1;\nWITH c AS (SELECT 1 AS x) SELECT x FROM c;", "CTE terminator");
+try { SqlRefactoring.AddSemicolons("SELECT FROM"); throw new Exception("Expected syntax rejection"); }
+catch (FormatException) { checks++; }
+Console.WriteLine($"PASS: {checks} total checks including semicolons. SSMS integration not tested.");
+
+DefinitionTarget? Go(string text)
+{
+    int position = text.IndexOf('|');
+    return SqlNavigation.FindDefinition(text.Remove(position, 1), position);
+}
+Check(Go("DECLARE @id int;\nSELECT @i|d;") is { Offset: 8, Length: 3 }, "variable definition");
+Check(Go("DECLARE @id int;\nGO\nSELECT @i|d;") == null, "variable batch isolation");
+Check(Go("CREATE PROCEDURE p @x int AS SELECT @|x;") is { Offset: 19 }, "parameter definition");
+Check(Go("SELECT p|.Name FROM dbo.People p;") is { Offset: 30, Length: 1 }, "alias definition");
+Check(Go("SELECT 1 FROM dbo.Pe|ople p;") is { Offset: -1, Schema: "dbo", Name: "People" }, "object definition");
+Check(Go("EXEC dbo.Get|People;") is { Name: "GetPeople" }, "procedure definition");
+Check(Go("WITH c AS (SELECT 1 AS x) SELECT x FROM |c;") is { Offset: 5, Length: 1 }, "CTE definition");
+Check(Go("UPDATE p SET Name = N'' FROM dbo.People p WHERE p|.Id = 1;") is { Offset: 40 }, "UPDATE alias definition");
+Check(Go("SELECT Pe|ople.Name FROM dbo.People;") is { Schema: "dbo", Name: "People" }, "unaliased table qualifier");
+Console.WriteLine($"PASS: {checks} total checks including navigation. SSMS integration not tested.");
+
+Check(SnippetFiles.ShortcutBefore("SELECT 1;\nssf", 13) == "ssf", "shortcut word");
+Check(SnippetFiles.ShortcutBefore("@ssf", 4) == null && SnippetFiles.ShortcutBefore("x.ssf", 5) == null && SnippetFiles.ShortcutBefore("ssf ", 4) == null, "shortcut boundaries");
+var shortcutFolder = Path.Combine(Path.GetTempPath(), "SqlWorkbench-shortcut-" + Guid.NewGuid().ToString("N"));
+try
+{
+    SnippetFiles.Initialize(shortcutFolder);
+    var ssf = SnippetFiles.FindShortcut(shortcutFolder, "ssf");
+    Check(ssf != null && Snippets.Expand(SnippetFiles.Read(ssf), context, now).Text == "SELECT * FROM ", "ssf snippet");
+    Check(SnippetFiles.FindShortcut(shortcutFolder, "nope") == null && SnippetFiles.FindShortcut(shortcutFolder, "../ssf") == null, "unknown/unsafe shortcut");
+}
+finally { Directory.Delete(shortcutFolder, true); }
+Console.WriteLine($"PASS: {checks} total checks including snippet shortcuts. SSMS integration not tested.");

@@ -1,6 +1,6 @@
 # Querywright
 
-Independent open-source SQL productivity extension in development. Working name.
+Independent open-source SQL productivity extension for SSMS, in development.
 Target: latest stable SSMS (22.10.1, verified September 28, 2026).
 Goal: all non-AI SQL Prompt capabilities. No affiliation with Redgate.
 

@@ -38,6 +38,8 @@ jobs:
           name: Querywright-ssms22
           path: dist/Querywright-ssms22.zip
       - name: Publish prerelease
+        # Needs Settings > Actions > Workflow permissions = read and write; the run artifact works either way.
+        continue-on-error: true
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

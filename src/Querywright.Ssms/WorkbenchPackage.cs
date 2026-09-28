@@ -51,6 +51,8 @@ namespace Querywright.Ssms
 
         internal string SettingsFile => options?.SettingsFile ?? "";
 
+        internal bool LiveMetadataEnabled => options?.LiveMetadata != false;
+
         internal bool SchemaConfigured => !string.IsNullOrWhiteSpace(options?.SchemaFile);
 
         /// <summary>Live metadata merged over the offline schema; null when neither is available. Never blocks or throws (typing path).</summary>

@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
-namespace SqlWorkbench.Core
+namespace Querywright.Core
 {
     public static class SchemaCatalog
     {

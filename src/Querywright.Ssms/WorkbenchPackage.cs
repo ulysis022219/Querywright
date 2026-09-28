@@ -14,14 +14,14 @@ using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Text.Operations;
 using Microsoft.VisualStudio.TextManager.Interop;
-using SqlWorkbench.Core;
+using Querywright.Core;
 
-namespace SqlWorkbench.Ssms
+namespace Querywright.Ssms
 {
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideAutoLoad(VSConstants.UICONTEXT.ShellInitialized_string, PackageAutoLoadFlags.BackgroundLoad)]
-    [ProvideOptionPage(typeof(WorkbenchOptions), "SqlWorkbench", "General", 0, 0, true)]
+    [ProvideOptionPage(typeof(WorkbenchOptions), "Querywright", "General", 0, 0, true)]
     [Guid("a13c1b0c-af94-4f53-8d06-edf816e39450")]
     public sealed class WorkbenchPackage : AsyncPackage
     {
@@ -67,7 +67,7 @@ namespace SqlWorkbench.Ssms
             textManager = await GetServiceAsync(typeof(SVsTextManager)) as IVsTextManager;
             if (textManager == null) throw new InvalidOperationException("SSMS text services unavailable.");
             options = (WorkbenchOptions)GetDialogPage(typeof(WorkbenchOptions));
-            errorList = new ErrorListProvider(this) { ProviderName = "SqlWorkbench", ProviderGuid = new Guid("c493165c-47d9-43d7-b28b-d2d7144d45ac") };
+            errorList = new ErrorListProvider(this) { ProviderName = "Querywright", ProviderGuid = new Guid("c493165c-47d9-43d7-b28b-d2d7144d45ac") };
             commands.AddCommand(new MenuCommand(ShowSnippetCheck,
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0100)));
             commands.AddCommand(new MenuCommand(InsertSnippet,
@@ -174,7 +174,7 @@ namespace SqlWorkbench.Ssms
                 string sql = snapshot.GetText();
                 int position = view.Caret.Position.BufferPosition.Position;
                 if (!SchemaConfigured)
-                    throw new InvalidOperationException("Set an offline schema SQL file under Tools > Options > SqlWorkbench. Live metadata integration is pending.");
+                    throw new InvalidOperationException("Set an offline schema SQL file under Tools > Options > Querywright. Live metadata integration is pending.");
                 var edit = await Task.Run(() => SqlCompletion.ExpandWildcard(sql, position, LoadSchema()));
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
@@ -222,7 +222,7 @@ namespace SqlWorkbench.Ssms
                 int position = view.Caret.Position.BufferPosition.Position;
                 string sql = snapshot.GetText();
                 if (!SchemaConfigured)
-                    throw new InvalidOperationException("Set an offline schema SQL file under Tools > Options > SqlWorkbench. Live metadata integration is pending.");
+                    throw new InvalidOperationException("Set an offline schema SQL file under Tools > Options > Querywright. Live metadata integration is pending.");
                 var result = await Task.Run(() => SqlCompletion.Complete(sql, position, LoadSchema()));
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (view.IsClosed || view.TextSnapshot != snapshot) throw new InvalidOperationException("Query changed. Request suggestions again.");
@@ -364,7 +364,7 @@ namespace SqlWorkbench.Ssms
                 }
                 errorList.Show();
                 var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-                status?.SetText($"SqlWorkbench: {result.Diagnostics.Count} diagnostics from four implemented rules; full analysis coverage pending.");
+                status?.SetText($"Querywright: {result.Diagnostics.Count} diagnostics from four implemented rules; full analysis coverage pending.");
             }
             catch (OperationCanceledException) { }
             catch (Exception error) when (!(error is OutOfMemoryException))
@@ -383,7 +383,7 @@ namespace SqlWorkbench.Ssms
         private void ShowWarning(string message)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            VsShellUtilities.ShowMessageBox(this, message, "SqlWorkbench",
+            VsShellUtilities.ShowMessageBox(this, message, "Querywright",
                 OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }
 
@@ -427,7 +427,7 @@ namespace SqlWorkbench.Ssms
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException ||
                 error is ArgumentException || error is FormatException || error is InvalidOperationException || error is COMException)
             {
-                VsShellUtilities.ShowMessageBox(this, error.Message, "SqlWorkbench snippet insertion",
+                VsShellUtilities.ShowMessageBox(this, error.Message, "Querywright snippet insertion",
                     OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
             }
         }
@@ -439,7 +439,7 @@ namespace SqlWorkbench.Ssms
                 new Dictionary<string, string>(), DateTimeOffset.Now);
             VsShellUtilities.ShowMessageBox(this,
                 "Snippet core loaded. Preview only; editor unchanged.\n\n" + expansion.Text,
-                "SqlWorkbench integration check", OLEMSGICON.OLEMSGICON_INFO,
+                "Querywright integration check", OLEMSGICON.OLEMSGICON_INFO,
                 OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }
     }

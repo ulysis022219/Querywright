@@ -1,4 +1,4 @@
-using SqlWorkbench.Core;
+using Querywright.Core;
 
 var now = new DateTimeOffset(2026, 9, 28, 13, 45, 12, TimeSpan.FromHours(8));
 var context = new Dictionary<string, string>
@@ -37,7 +37,7 @@ context.Remove("SERVER");
 Reject("$SERVER$");
 Console.WriteLine($"PASS: {checks} snippet checks. SSMS integration not tested.");
 
-var folder = Path.Combine(Path.GetTempPath(), "SqlWorkbench-check-" + Guid.NewGuid().ToString("N"));
+var folder = Path.Combine(Path.GetTempPath(), "Querywright-check-" + Guid.NewGuid().ToString("N"));
 try
 {
     SnippetFiles.Initialize(folder);
@@ -211,7 +211,7 @@ Console.WriteLine($"PASS: {checks} total checks including navigation. SSMS integ
 
 Check(SnippetFiles.ShortcutBefore("SELECT 1;\nssf", 13) == "ssf", "shortcut word");
 Check(SnippetFiles.ShortcutBefore("@ssf", 4) == null && SnippetFiles.ShortcutBefore("x.ssf", 5) == null && SnippetFiles.ShortcutBefore("ssf ", 4) == null, "shortcut boundaries");
-var shortcutFolder = Path.Combine(Path.GetTempPath(), "SqlWorkbench-shortcut-" + Guid.NewGuid().ToString("N"));
+var shortcutFolder = Path.Combine(Path.GetTempPath(), "Querywright-shortcut-" + Guid.NewGuid().ToString("N"));
 try
 {
     SnippetFiles.Initialize(shortcutFolder);

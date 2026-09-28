@@ -3,7 +3,7 @@ using System.IO;
 using System.Xml;
 using System.Xml.Serialization;
 
-namespace SqlWorkbench.Core
+namespace Querywright.Core
 {
     public enum RuleSeverity { Disabled, Info, Warning, Error }
 

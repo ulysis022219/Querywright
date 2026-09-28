@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
-namespace SqlWorkbench.Core
+namespace Querywright.Core
 {
     public sealed class SqlDiagnostic
     {

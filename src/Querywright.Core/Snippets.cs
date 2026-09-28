@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace SqlWorkbench.Core
+namespace Querywright.Core
 {
     public sealed class SnippetExpansion
     {

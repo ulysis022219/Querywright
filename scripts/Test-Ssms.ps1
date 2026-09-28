@@ -56,7 +56,7 @@ try {
 $log = Get-ChildItem $Out -Filter ActivityLog.xml | Select-Object -First 1
 if ($log) {
     [xml]$activity = Get-Content $log.FullName
-    $ours = $activity.activity.entry | Where-Object { $_.type -eq 'Error' -and ($_.description + $_.source + $_.path) -match 'SqlWorkbench|a13c1b0c' }
+    $ours = $activity.activity.entry | Where-Object { $_.type -eq 'Error' -and ($_.description + $_.source + $_.path) -match 'Querywright|a13c1b0c' }
     $results['package load errors'] = if ($ours) { 'FAIL: ' + (($ours | ForEach-Object description) -join ' | ') } else { 'PASS' }
 }
 $results.GetEnumerator() | ForEach-Object { Write-Output ("{0}: {1}" -f $_.Key, $_.Value) }

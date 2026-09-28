@@ -17,26 +17,26 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Core checks
-        run: dotnet run --project tests/SqlWorkbench.Checks
+        run: dotnet run --project tests/Querywright.Checks
       - name: Build VSIX
-        run: dotnet build src/SqlWorkbench.Ssms/SqlWorkbench.Ssms.csproj
+        run: dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj
       - name: Verify package
         shell: powershell
         run: scripts/Test-Package.ps1
       - name: Assemble installer zip
         shell: powershell
         run: |
-          $out = New-Item -ItemType Directory -Force dist/SqlWorkbench
-          Copy-Item src/SqlWorkbench.Ssms/bin/Debug/net472/SqlWorkbench.Ssms.vsix $out
-          Copy-Item scripts/Install-Development.ps1 (Join-Path $out 'Install-SqlWorkbench.ps1')
+          $out = New-Item -ItemType Directory -Force dist/Querywright
+          Copy-Item src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix $out
+          Copy-Item scripts/Install-Development.ps1 (Join-Path $out 'Install-Querywright.ps1')
           Copy-Item scripts/Test-Package.ps1 $out
           Copy-Item examples/offline-schema.sql $out
           Copy-Item docs/INSTALL.txt $out
-          Compress-Archive -Path "$out/*" -DestinationPath dist/SqlWorkbench-ssms22.zip -Force
+          Compress-Archive -Path "$out/*" -DestinationPath dist/Querywright-ssms22.zip -Force
       - uses: actions/upload-artifact@v4
         with:
-          name: SqlWorkbench-ssms22
-          path: dist/SqlWorkbench-ssms22.zip
+          name: Querywright-ssms22
+          path: dist/Querywright-ssms22.zip
       - name: Publish prerelease
         shell: bash
         env:
@@ -44,8 +44,8 @@ jobs:
         run: |
           tag="dev-${GITHUB_REF_NAME//\//-}"
           gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$tag" dist/SqlWorkbench-ssms22.zip --prerelease --target "$GITHUB_SHA" \
-            --title "SqlWorkbench dev build ($GITHUB_REF_NAME)" \
+          gh release create "$tag" dist/Querywright-ssms22.zip --prerelease --target "$GITHUB_SHA" \
+            --title "Querywright dev build ($GITHUB_REF_NAME)" \
             --notes "Untested development build from ${GITHUB_SHA}. See INSTALL.txt inside the zip."
 
   e2e:
@@ -56,12 +56,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: SqlWorkbench-ssms22
+          name: Querywright-ssms22
       - name: SSMS 22 end-to-end
         shell: powershell
         run: |
-          Expand-Archive SqlWorkbench-ssms22.zip -DestinationPath pkg
-          scripts/Test-Ssms.ps1 -Package (Resolve-Path pkg/SqlWorkbench.Ssms.vsix)
+          Expand-Archive Querywright-ssms22.zip -DestinationPath pkg
+          scripts/Test-Ssms.ps1 -Package (Resolve-Path pkg/Querywright.Ssms.vsix)
       - uses: actions/upload-artifact@v4
         if: always()
         with:

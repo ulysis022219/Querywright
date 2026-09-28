@@ -26,7 +26,7 @@
     <PackageReference Include="Microsoft.VisualStudio.Shell.15.0" Version="17.14.40264" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.9.820" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
-    <ProjectReference Include="../SqlWorkbench.Core/SqlWorkbench.Core.csproj">
+    <ProjectReference Include="../Querywright.Core/Querywright.Core.csproj">
       <IncludeOutputGroupsInVSIX>BuiltProjectOutputGroup</IncludeOutputGroupsInVSIX>
     </ProjectReference>
     <VSCTCompile Include="Commands.vsct">

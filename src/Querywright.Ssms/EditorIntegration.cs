@@ -15,10 +15,10 @@ using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.TextManager.Interop;
 using Microsoft.VisualStudio.Utilities;
-using SqlWorkbench.Core;
+using Querywright.Core;
 using VsCompletionItem = Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion.Data.CompletionItem;
 
-namespace SqlWorkbench.Ssms
+namespace Querywright.Ssms
 {
     /// <summary>Hooks Tab (snippet shortcuts, wildcard expansion) and F12 (go to definition) in SQL editors.</summary>
     [Export(typeof(IVsTextViewCreationListener))]
@@ -78,7 +78,7 @@ namespace SqlWorkbench.Ssms
     }
 
     [Export(typeof(IAsyncCompletionSourceProvider))]
-    [Name("SqlWorkbench schema completion")]
+    [Name("Querywright schema completion")]
     [ContentType("SQL")]
     [ContentType("T-SQL")]
     internal sealed class CompletionSourceProvider : IAsyncCompletionSourceProvider

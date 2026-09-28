@@ -20,6 +20,7 @@ namespace SqlWorkbench.Ssms
 {
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
+    [ProvideAutoLoad(VSConstants.UICONTEXT.ShellInitialized_string, PackageAutoLoadFlags.BackgroundLoad)]
     [ProvideOptionPage(typeof(WorkbenchOptions), "SqlWorkbench", "General", 0, 0, true)]
     [Guid("a13c1b0c-af94-4f53-8d06-edf816e39450")]
     public sealed class WorkbenchPackage : AsyncPackage
@@ -28,6 +29,32 @@ namespace SqlWorkbench.Ssms
         private IVsTextManager textManager;
         private ErrorListProvider errorList;
         private CancellationTokenSource analysisCancellation;
+        private WorkbenchOptions options;
+        private readonly object schemaLock = new object();
+        private (string Path, DateTime Stamp, IReadOnlyList<SchemaTable> Tables)? schemaCache;
+
+        /// <summary>Set after initialization; editor MEF components reach package services through it.</summary>
+        internal static WorkbenchPackage Instance { get; private set; }
+
+        internal bool SchemaConfigured => !string.IsNullOrWhiteSpace(options?.SchemaFile);
+
+        /// <summary>Offline schema, reparsed only when the file changes. Null when none is configured. Thread-safe.</summary>
+        internal IReadOnlyList<SchemaTable> LoadSchema()
+        {
+            string path = options?.SchemaFile;
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            var info = new FileInfo(path);
+            if (!info.Exists) throw new FileNotFoundException("Offline schema file not found: " + path);
+            if (info.Length > 4_000_000) throw new IOException("Schema file exceeds 4 MB.");
+            lock (schemaLock)
+            {
+                var cache = schemaCache;
+                if (cache.HasValue && cache.Value.Path == path && cache.Value.Stamp == info.LastWriteTimeUtc) return cache.Value.Tables;
+                var loaded = SchemaCatalog.FromDdl(File.ReadAllText(path));
+                schemaCache = (path, info.LastWriteTimeUtc, loaded);
+                return loaded;
+            }
+        }
         protected override async Task InitializeAsync(CancellationToken cancellationToken,
             IProgress<ServiceProgressData> progress)
         {
@@ -39,6 +66,7 @@ namespace SqlWorkbench.Ssms
             components = componentServices;
             textManager = await GetServiceAsync(typeof(SVsTextManager)) as IVsTextManager;
             if (textManager == null) throw new InvalidOperationException("SSMS text services unavailable.");
+            options = (WorkbenchOptions)GetDialogPage(typeof(WorkbenchOptions));
             errorList = new ErrorListProvider(this) { ProviderName = "SqlWorkbench", ProviderGuid = new Guid("c493165c-47d9-43d7-b28b-d2d7144d45ac") };
             commands.AddCommand(new MenuCommand(ShowSnippetCheck,
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0100)));
@@ -52,6 +80,110 @@ namespace SqlWorkbench.Ssms
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0104)));
             commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(RenameVariableAsync); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0105)));
+            commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(AddSemicolonsAsync); },
+                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0106)));
+            commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(ExpandWildcardAsync); },
+                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0107)));
+            Instance = this;
+        }
+
+        /// <summary>Tab after a snippet shortcut (ssf) or after * expands in place. False passes Tab to the editor.</summary>
+        internal bool TryTabExpand(IWpfTextView view)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (view.IsClosed || !view.Selection.IsEmpty || view.Caret.InVirtualSpace) return false;
+            try
+            {
+                var snapshot = view.TextSnapshot;
+                int caret = view.Caret.Position.BufferPosition.Position;
+                var line = view.Caret.Position.BufferPosition.GetContainingLine();
+                if (caret > 0 && snapshot[caret - 1] == '*' && SchemaConfigured)
+                {
+                    TextEdit edit;
+                    try { edit = SqlCompletion.ExpandWildcard(snapshot.GetText(), caret - 1, LoadSchema()); }
+                    catch (FormatException) { return false; } // Incomplete SQL while typing: ordinary Tab.
+                    ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
+                    return true;
+                }
+                string shortcut = SnippetFiles.ShortcutBefore(line.GetText(), caret - line.Start.Position);
+                if (shortcut == null) return false;
+                if (!Directory.Exists(options.SnippetFolder)) SnippetFiles.Initialize(options.SnippetFolder);
+                // ponytail: snippet files are small local reads; kept on the UI thread so Tab stays ordered with typing.
+                string path = SnippetFiles.FindShortcut(options.SnippetFolder, shortcut);
+                if (path == null) return false;
+                string template = SnippetFiles.Read(path);
+                var context = new Dictionary<string, string> { ["MACHINE"] = Environment.MachineName };
+                if (template.Contains("$PASTE$")) context["PASTE"] = System.Windows.Clipboard.GetText();
+                var expansion = Snippets.Expand(template, context, DateTimeOffset.Now);
+                ReplaceText(view, new SnapshotSpan(snapshot, caret - shortcut.Length, shortcut.Length), expansion.Text,
+                    expansion.Caret, expansion.SelectionStart, expansion.SelectionLength, "Expand snippet " + shortcut);
+                return true;
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                ShowWarning(error.Message);
+                return true;
+            }
+        }
+
+        /// <summary>F12 on variables, aliases and CTEs jumps in the script; database objects fall through to SSMS's own definition.</summary>
+        internal bool TryGoToDefinition(IWpfTextView view)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (view.IsClosed) return false;
+            DefinitionTarget target;
+            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), view.Caret.Position.BufferPosition.Position); }
+            catch (FormatException) { return false; }
+            if (target == null || target.Offset < 0) return false;
+            var snapshot = view.TextSnapshot;
+            view.Selection.Select(new SnapshotSpan(snapshot, target.Offset, target.Length), false);
+            view.Caret.MoveTo(new SnapshotPoint(snapshot, target.Offset));
+            view.Caret.EnsureVisible();
+            return true;
+        }
+
+        private async Task AddSemicolonsAsync()
+        {
+            try
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var view = GetSqlView();
+                var snapshot = view.TextSnapshot;
+                string sql = snapshot.GetText();
+                string result = await Task.Run(() => SqlRefactoring.AddSemicolons(sql));
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (result == sql) return;
+                ReplaceText(view, new SnapshotSpan(snapshot, 0, snapshot.Length), result, 0, 0, 0, "Insert semicolons");
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning(error.Message);
+            }
+        }
+
+        private async Task ExpandWildcardAsync()
+        {
+            try
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var view = GetSqlView();
+                if (!view.Selection.IsEmpty || view.Caret.InVirtualSpace)
+                    throw new InvalidOperationException("Place the caret on * without selecting text.");
+                var snapshot = view.TextSnapshot;
+                string sql = snapshot.GetText();
+                int position = view.Caret.Position.BufferPosition.Position;
+                if (!SchemaConfigured)
+                    throw new InvalidOperationException("Set an offline schema SQL file under Tools > Options > SqlWorkbench. Live metadata integration is pending.");
+                var edit = await Task.Run(() => SqlCompletion.ExpandWildcard(sql, position, LoadSchema()));
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning(error.Message);
+            }
         }
 
         private async Task RenameVariableAsync()
@@ -89,14 +221,9 @@ namespace SqlWorkbench.Ssms
                 var snapshot = view.TextSnapshot;
                 int position = view.Caret.Position.BufferPosition.Position;
                 string sql = snapshot.GetText();
-                string path = ((WorkbenchOptions)GetDialogPage(typeof(WorkbenchOptions))).SchemaFile;
-                if (string.IsNullOrWhiteSpace(path))
+                if (!SchemaConfigured)
                     throw new InvalidOperationException("Set an offline schema SQL file under Tools > Options > SqlWorkbench. Live metadata integration is pending.");
-                var result = await Task.Run(() =>
-                {
-                    if (new FileInfo(path).Length > 4_000_000) throw new IOException("Schema file exceeds 4 MB.");
-                    return SqlCompletion.Complete(sql, position, SchemaCatalog.FromDdl(File.ReadAllText(path)));
-                });
+                var result = await Task.Run(() => SqlCompletion.Complete(sql, position, LoadSchema()));
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (view.IsClosed || view.TextSnapshot != snapshot) throw new InvalidOperationException("Query changed. Request suggestions again.");
                 if (result.Items.Count == 0)
@@ -123,7 +250,7 @@ namespace SqlWorkbench.Ssms
         private async Task<WorkbenchSettings> ReadSettingsAsync()
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            string path = ((WorkbenchOptions)GetDialogPage(typeof(WorkbenchOptions))).SettingsFile;
+            string path = options.SettingsFile;
             return string.IsNullOrWhiteSpace(path) ? new WorkbenchSettings() : await Task.Run(() => WorkbenchSettings.Load(path));
         }
 
@@ -264,6 +391,7 @@ namespace SqlWorkbench.Ssms
         {
             if (disposing)
             {
+                if (Instance == this) Instance = null;
                 analysisCancellation?.Cancel();
                 errorList?.Dispose();
             }
@@ -280,7 +408,6 @@ namespace SqlWorkbench.Ssms
                     throw new InvalidOperationException("Use a normal selection and place the caret within the SQL text.");
                 var before = view.TextSnapshot;
                 var selected = view.Selection.StreamSelectionSpan.SnapshotSpan;
-                var options = (WorkbenchOptions)GetDialogPage(typeof(WorkbenchOptions));
                 SnippetFiles.Initialize(options.SnippetFolder);
                 var picker = new Microsoft.Win32.OpenFileDialog
                 {

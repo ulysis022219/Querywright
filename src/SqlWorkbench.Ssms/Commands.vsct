@@ -9,6 +9,14 @@
       </Group>
     </Groups>
     <Buttons>
+      <Button guid="CommandsGuid" id="AddSemicolons" priority="0x0030" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>SqlWorkbench: insert semicolons</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="ExpandWildcard" priority="0x0040" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>SqlWorkbench: expand wildcard</ButtonText></Strings>
+      </Button>
       <Button guid="CommandsGuid" id="RenameVariable" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
         <Strings><ButtonText>SqlWorkbench: rename local variable...</ButtonText></Strings>
@@ -45,6 +53,8 @@
       <IDSymbol name="FormatSql" value="0x0103" />
       <IDSymbol name="CompleteSql" value="0x0104" />
       <IDSymbol name="RenameVariable" value="0x0105" />
+      <IDSymbol name="AddSemicolons" value="0x0106" />
+      <IDSymbol name="ExpandWildcard" value="0x0107" />
     </GuidSymbol>
   </Symbols>
 </CommandTable>

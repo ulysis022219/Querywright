@@ -91,6 +91,93 @@ namespace Querywright.Core
                 if (node.ElseExpression == null)
                     Add("SW004", "CASE has no ELSE; unmatched values produce NULL.", node);
             }
+            public override void Visit(DeleteSpecification node)
+            {
+                if (node.WhereClause == null) Add("SW005", "DELETE has no WHERE clause and removes every row.", node);
+            }
+            public override void Visit(UpdateSpecification node)
+            {
+                if (node.WhereClause == null) Add("SW006", "UPDATE has no WHERE clause and changes every row.", node);
+            }
+            public override void Visit(ExpressionWithSortOrder node)
+            {
+                if (node.Expression is Literal) Add("SW007", "ORDER BY a constant or column ordinal; name the column instead.", node);
+            }
+            public override void Visit(SqlDataTypeReference node)
+            {
+                switch (node.SqlDataTypeOption)
+                {
+                    case SqlDataTypeOption.Char: case SqlDataTypeOption.VarChar: case SqlDataTypeOption.NChar:
+                    case SqlDataTypeOption.NVarChar: case SqlDataTypeOption.Binary: case SqlDataTypeOption.VarBinary:
+                        if (node.Parameters.Count == 0) Add("SW008", "Specify a length; the default (1 or 30) silently truncates.", node);
+                        break;
+                    case SqlDataTypeOption.Text: case SqlDataTypeOption.NText: case SqlDataTypeOption.Image:
+                        Add("SW010", "TEXT, NTEXT and IMAGE are deprecated; use VARCHAR(MAX), NVARCHAR(MAX) or VARBINARY(MAX).", node);
+                        break;
+                }
+            }
+            public override void Visit(GlobalVariableExpression node)
+            {
+                if (string.Equals(node.Name, "@@IDENTITY", StringComparison.OrdinalIgnoreCase))
+                    Add("SW009", "@@IDENTITY can return a trigger's identity; use SCOPE_IDENTITY() or OUTPUT.", node);
+            }
+            public override void Visit(FromClause node)
+            {
+                if (node.TableReferences.Count > 1) Add("SW011", "Comma-separated tables are an old-style join; use explicit JOIN.", node);
+            }
+            public override void Visit(ProcedureStatementBody node)
+            {
+                var name = node.ProcedureReference?.Name?.BaseIdentifier?.Value;
+                if (name != null && name.StartsWith("sp_", StringComparison.OrdinalIgnoreCase))
+                    Add("SW012", "Procedure names starting with sp_ are looked up in master first.", node.ProcedureReference!);
+                if (node.StatementList == null) return; // CLR procedure.
+                var nocount = new NoCountFinder();
+                node.StatementList.Accept(nocount);
+                if (!nocount.Found) Add("SW015", "Procedure lacks SET NOCOUNT ON; row-count messages add network chatter.", node.ProcedureReference ?? (TSqlFragment)node);
+            }
+            public override void Visit(FunctionCall node)
+            {
+                if (string.Equals(node.FunctionName.Value, "ISNUMERIC", StringComparison.OrdinalIgnoreCase))
+                    Add("SW013", "ISNUMERIC accepts values like '$' and '1e5'; use TRY_CONVERT.", node);
+            }
+            public override void Visit(InPredicate node)
+            {
+                if (node.NotDefined && node.Subquery != null)
+                    Add("SW014", "NOT IN with a subquery returns no rows if the subquery yields NULL; use NOT EXISTS.", node);
+            }
+            public override void Visit(ExecutableProcedureReference node)
+            {
+                var name = node.ProcedureReference?.ProcedureReference?.Name;
+                if (name != null && name.SchemaIdentifier == null && !name.BaseIdentifier.Value.StartsWith("sp_", StringComparison.OrdinalIgnoreCase) &&
+                    !name.BaseIdentifier.Value.StartsWith("#", StringComparison.Ordinal))
+                    Add("SW017", "Schema-qualify the procedure name to avoid extra name resolution.", name);
+            }
+            public override void Visit(TSqlBatch node)
+            {
+                var usage = new VariableUsage();
+                node.Accept(usage);
+                foreach (var declared in usage.Declared.Where(d => !usage.Used.Contains(d.Value)))
+                    Add("SW016", "Variable " + declared.Value + " is declared but never used.", declared);
+            }
+
+            private sealed class NoCountFinder : TSqlFragmentVisitor
+            {
+                internal bool Found;
+                public override void Visit(PredicateSetStatement node)
+                {
+                    if (node.IsOn && node.Options.HasFlag(SetOptions.NoCount)) Found = true;
+                }
+            }
+
+            private sealed class VariableUsage : TSqlFragmentVisitor
+            {
+                internal readonly List<Identifier> Declared = new List<Identifier>();
+                internal readonly HashSet<string> Used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                public override void Visit(DeclareVariableElement node) { if (!(node is ProcedureParameter)) Declared.Add(node.VariableName); }
+                public override void Visit(DeclareTableVariableBody node) => Declared.Add(node.VariableName);
+                public override void Visit(VariableReference node) => Used.Add(node.Name);
+                public override void Visit(VariableTableReference node) => Used.Add(node.Variable.Name);
+            }
         }
     }
 }

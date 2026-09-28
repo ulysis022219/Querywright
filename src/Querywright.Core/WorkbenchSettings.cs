@@ -14,17 +14,25 @@ namespace Querywright.Core
         public RuleSeverity SW002 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW003 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW004 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW005 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW006 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW007 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW008 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW009 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW010 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW011 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW012 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW013 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW014 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW015 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW016 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW017 { get; set; } = RuleSeverity.Warning;
 
         public RuleSeverity Severity(string rule)
         {
-            switch (rule)
-            {
-                case "SW001": return SW001;
-                case "SW002": return SW002;
-                case "SW003": return SW003;
-                case "SW004": return SW004;
-                default: return RuleSeverity.Error; // Parser errors cannot be disabled.
-            }
+            // Rule IDs are property names; anything else (parser errors) cannot be disabled.
+            var property = rule != null && rule.StartsWith("SW", StringComparison.Ordinal) ? typeof(WorkbenchSettings).GetProperty(rule) : null;
+            return property?.PropertyType == typeof(RuleSeverity) ? (RuleSeverity)property.GetValue(this)! : RuleSeverity.Error;
         }
 
         public static WorkbenchSettings Load(string path)

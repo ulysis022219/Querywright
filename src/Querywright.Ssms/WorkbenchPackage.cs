@@ -364,7 +364,7 @@ namespace Querywright.Ssms
                 }
                 errorList.Show();
                 var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-                status?.SetText($"Querywright: {result.Diagnostics.Count} diagnostics from four implemented rules; full analysis coverage pending.");
+                status?.SetText($"Querywright: {result.Diagnostics.Count} diagnostics from 17 implemented rules; full analysis coverage pending.");
             }
             catch (OperationCanceledException) { }
             catch (Exception error) when (!(error is OutOfMemoryException))

@@ -21,6 +21,18 @@ namespace Querywright.Ssms
         internal SecureString Password;
         internal string Key => Server + "\0" + Database + "\0" + (Integrated ? "" : User);
 
+        /// <summary>Traffic stays on this machine (LocalDB, shared memory, local pipe), so TLS adds nothing.</summary>
+        internal bool IsLocal
+        {
+            get
+            {
+                var host = (Server ?? "").Trim().ToLowerInvariant();
+                if (host.StartsWith("lpc:") || host.StartsWith(@"np:\\.\")) return true;
+                host = host.Split('\\', ',')[0];
+                return host == "(localdb)" || host == "." || host == "(local)" || host == "localhost";
+            }
+        }
+
         internal SqlConnection Open()
         {
             var builder = new SqlConnectionStringBuilder
@@ -129,6 +141,12 @@ ORDER BY fk.object_id, k.constraint_column_id;";
                         g.Select(c => c.Type).ToArray(), foreignKeys[g.Key].ToArray())).ToArray();
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + tables.Length + " tables");
                 return tables;
+            }
+            catch (SqlException error) when (error.Number == 20 && connection.Encrypt && connection.IsLocal)
+            {
+                // ponytail: SqlClient can't encrypt to LocalDB/shared memory (error 20); local-only traffic, so retry plain.
+                connection.Encrypt = false;
+                return Load(connection);
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {

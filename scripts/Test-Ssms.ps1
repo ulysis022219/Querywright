@@ -67,6 +67,11 @@ function Dismiss([int]$id) {
         $connect = [System.Windows.Automation.AutomationElement]::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
             Where-Object { $_.Current.ProcessId -eq $id -and $_.Current.Name -match '^Connect' }
         if ($connect) { [void][Microsoft.VisualBasic.Interaction]::AppActivate($id); Keys '{ESC}' 2000; continue }
+        # SSMS 22 hosts the connect prompt inside the main window; its server box takes focus.
+        $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+        if ($focused -and $focused.Current.ProcessId -eq $id -and $focused.Current.Name -match 'Server Name') {
+            Write-Host 'dismiss: connect prompt'; Keys '{ESC}' 2000; continue
+        }
         break
     }
 }
@@ -91,17 +96,22 @@ function Session([string]$name, [string]$text, [string[]]$extra, [scriptblock]$k
     try {
         Start-Sleep 60
         Snap "$name-started"
-        Dismiss $process.Id
-        [void][Microsoft.VisualBasic.Interaction]::AppActivate($process.Id)
+        # First run relaunches SSMS, so the started process may be gone.
+        $id = (Get-Process SSMS -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1).Id
+        if (-not $id) { throw 'SSMS is not running.' }
+        Dismiss $id
+        [void][Microsoft.VisualBasic.Interaction]::AppActivate($id)
+        Windows $id | Write-Host
         & $keys
         Snap "$name-done"
-        Windows $process.Id | Write-Host
+        Windows $id | Write-Host
         Keys '^s' 3000
         return [IO.File]::ReadAllText($file)
     } catch {
         return "error: $_"
     } finally {
-        if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+        Get-Process SSMS -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep 3
         Get-ChildItem "$env:APPDATA\Microsoft\SSMS" -Recurse -Filter ActivityLog.xml -ErrorAction SilentlyContinue |
             Select-Object -First 1 | Copy-Item -Destination (Join-Path $Out "ActivityLog-$name.xml")
     }
@@ -115,6 +125,14 @@ Expect 'ssf + Tab' $text { param($t) $t -eq 'SELECT * FROM ' }
 
 $text = Session 'definition' "DECLARE @abc int;`r`nSELECT @abc;" @() { Keys '^{END}'; Keys '{LEFT 2}'; Keys '{F12}' 2000; Keys 'Z' }
 Expect 'F12 local variable' $text { param($t) $t -eq "DECLARE Z int;`r`nSELECT @abc;" }
+
+# Typing opens the suggestion list; Tab must still expand the snippet.
+$text = Session 'typed-snippet' '' @() { Keys 'ssf' 2500; Keys '{TAB}' 2000; Thumbnail 'typed-snippet' | Write-Host }
+Expect 'typed ssf + Tab with popup' $text { param($t) $t -eq 'SELECT * FROM ' }
+
+# Keywords come from the popup without metadata.
+$text = Session 'keyword' '' @() { Keys 'SELECT 1 ORD' 2500; Keys '{TAB}' 1500; Thumbnail 'keyword' | Write-Host }
+Expect 'keyword completion' $text { param($t) $t -match '^SELECT 1 ORDER' }
 
 # Live metadata against LocalDB on the disposable runner (the only database this test writes to).
 $server = '(localdb)\MSSQLLocalDB'
@@ -136,10 +154,14 @@ try {
     $live = $true
 } catch { $results['LocalDB setup'] = "FAIL: $($_.Exception.Message)"; $live = $false }
 if ($live) {
-    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-E') {
+    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') {
         Keys '^{HOME}'; Keys '{END}'; Keys '{TAB}' 3000; Thumbnail 'wildcard' | Write-Host
     }
     Expect '* + Tab from live metadata' $text { param($t) $t -match 'FullName' -and $t -notmatch '\*' }
+    $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') {
+        Keys '^{HOME}'; Keys '{RIGHT 7}'; Keys 'p.Ful' 3000; Keys '{TAB}' 1500; Thumbnail 'columns' | Write-Host
+    }
+    Expect 'column completion from live metadata' $text { param($t) $t -match 'SELECT p\.FullName ?FROM' }
 }
 
 foreach ($log in Get-ChildItem $Out -Filter 'ActivityLog-*.xml') {

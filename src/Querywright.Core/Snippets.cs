@@ -69,6 +69,7 @@ namespace Querywright.Core
                         break;
                     case "USER":
                     case "PASTE":
+                    case "SELECTEDTEXT":
                     case "MACHINE":
                     case "SERVER":
                     case "DBNAME":

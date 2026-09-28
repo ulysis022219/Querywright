@@ -27,6 +27,16 @@ namespace Querywright.Core
         public RuleSeverity SW015 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW016 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW017 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW018 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW019 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW020 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW021 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW022 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW023 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW024 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW025 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW026 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW027 { get; set; } = RuleSeverity.Warning;
 
         public RuleSeverity Severity(string rule)
         {

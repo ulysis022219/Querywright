@@ -229,7 +229,7 @@ Check(Rules("SELECT a FROM dbo.T ORDER BY 1;").SequenceEqual(new[] { "SW007" }) 
 Check(Rules("DECLARE @s varchar = 'x'; SELECT @s, CAST(1 AS nvarchar);").SequenceEqual(new[] { "SW008" }) &&
     Rules("DECLARE @s varchar(10) = 'x'; SELECT @s, CAST(1 AS nvarchar(max));").Length == 0, "string length");
 Check(Rules("SELECT @@IDENTITY;").SequenceEqual(new[] { "SW009" }) && Rules("SELECT SCOPE_IDENTITY();").Length == 0, "@@IDENTITY");
-Check(Rules("CREATE TABLE dbo.T (a ntext);").SequenceEqual(new[] { "SW010" }), "deprecated types");
+Check(Rules("CREATE TABLE dbo.T (a ntext NULL);").SequenceEqual(new[] { "SW010" }), "deprecated types");
 Check(Rules("SELECT a.x FROM dbo.A a, dbo.B b WHERE a.x = b.x;").SequenceEqual(new[] { "SW011" }) &&
     Rules("SELECT a.x FROM dbo.A a JOIN dbo.B b ON a.x = b.x;").Length == 0, "old-style join");
 Check(Rules("CREATE PROCEDURE dbo.sp_x AS SET NOCOUNT ON; SELECT 1;").SequenceEqual(new[] { "SW012" }), "sp_ prefix");
@@ -238,10 +238,67 @@ Check(Rules("CREATE PROCEDURE dbo.p AS SELECT 1;").SequenceEqual(new[] { "SW015"
 Check(Rules("SELECT ISNUMERIC('1');").SequenceEqual(new[] { "SW013" }), "ISNUMERIC");
 Check(Rules("SELECT a FROM dbo.A WHERE a NOT IN (SELECT b FROM dbo.B);").SequenceEqual(new[] { "SW014" }) &&
     Rules("SELECT a FROM dbo.A WHERE a NOT IN (1, 2);").Length == 0, "NOT IN subquery");
-Check(Rules("DECLARE @unused int; DECLARE @t TABLE (x int); SELECT x FROM @t;").SequenceEqual(new[] { "SW016" }) &&
+Check(Rules("DECLARE @unused int; DECLARE @t TABLE (x int NULL); SELECT x FROM @t;").SequenceEqual(new[] { "SW016" }) &&
     Rules("DECLARE @x int = 1;\nGO\nSELECT 1;").SequenceEqual(new[] { "SW016" }) &&
     Rules("CREATE PROCEDURE dbo.p @a int AS SET NOCOUNT ON; SELECT 1;").Length == 0, "unused variables");
 Check(Rules("EXEC GetPeople;").SequenceEqual(new[] { "SW017" }) && Rules("EXEC dbo.GetPeople; EXEC sp_who; EXEC #tmp;").Length == 0, "unqualified EXEC");
 var strict = new WorkbenchSettings { SW005 = RuleSeverity.Disabled };
 Check(SqlAnalysis.Analyze("DELETE FROM dbo.T;", settings: strict).Diagnostics.Count == 0 && strict.Severity("PARSE1") == RuleSeverity.Error, "new rules configurable");
 Console.WriteLine($"PASS: {checks} total checks including analysis batch 2. SSMS integration not tested.");
+
+Check(Rules("DECLARE c CURSOR FOR SELECT 1; OPEN c;").SequenceEqual(new[] { "SW018" }) && Rules("DECLARE @c CURSOR; SET @c = CURSOR FOR SELECT 1; OPEN @c;").SequenceEqual(new[] { "SW018" }) &&
+    Rules("DECLARE c CURSOR LOCAL FAST_FORWARD FOR SELECT 1; DECLARE g CURSOR GLOBAL FOR SELECT 1;").Length == 0, "cursor scope");
+Check(Rules("CREATE PROCEDURE dbo.p AS BEGIN SET NOCOUNT ON; IF 1 = 1 RETURN; SELECT 1; END").SequenceEqual(new[] { "SW019" }) &&
+    Rules("CREATE PROCEDURE dbo.p AS BEGIN SET NOCOUNT ON; RETURN 0; END").Length == 0 && Rules("RETURN;").Length == 0, "bare RETURN in procedure");
+Check(Rules("CREATE TABLE #t (a int, b int NOT NULL);").SequenceEqual(new[] { "SW020" }) && Rules("DECLARE @t TABLE (a int); SELECT a FROM @t;").SequenceEqual(new[] { "SW020" }) &&
+    Rules("CREATE TABLE dbo.T (id int IDENTITY, k int PRIMARY KEY, a int NULL, b AS a + 1); CREATE TABLE dbo.U (x int, y int NULL, CONSTRAINT PK_U PRIMARY KEY (x));").Length == 0, "column nullability");
+var sw020 = SqlAnalysis.Analyze("CREATE TABLE dbo.T (a int NULL, b int);").Diagnostics.Single();
+Check(sw020.Rule == "SW020" && sw020.Column == 33, "nullability location on column");
+Check(Rules("DECLARE @p varbinary(16); READTEXT dbo.T.c @p 0 10;").SequenceEqual(new[] { "SW021" }) &&
+    Rules("DECLARE @p varbinary(16); WRITETEXT dbo.T.c @p 'x';").SequenceEqual(new[] { "SW021" }) &&
+    Rules("DECLARE @p varbinary(16); UPDATETEXT dbo.T.c @p 0 NULL 'x';").SequenceEqual(new[] { "SW021" }) &&
+    Rules("UPDATE dbo.T SET c.WRITE(N'x', 0, 1) WHERE Id = 1;").Length == 0, "text pointer statements");
+Check(Rules("ALTER TABLE dbo.T ADD c int NOT NULL;").SequenceEqual(new[] { "SW022" }) &&
+    Rules("ALTER TABLE dbo.T ADD c int NOT NULL DEFAULT 0, d int NULL, e AS 1;").Length == 0, "ALTER ADD NOT NULL without DEFAULT");
+Check(Rules("SET ROWCOUNT 10;").SequenceEqual(new[] { "SW023" }) && Rules("SET NOCOUNT ON;").Length == 0, "SET ROWCOUNT");
+Check(Rules("SELECT a FROM dbo.T WITH (NOLOCK) JOIN dbo.U u WITH (READUNCOMMITTED) ON u.a = T.a;").SequenceEqual(new[] { "SW024" }) &&
+    Rules("SELECT a FROM dbo.T WITH (READCOMMITTEDLOCK, INDEX(ix));").Length == 0, "NOLOCK hint");
+Check(Rules("CREATE PROCEDURE dbo.p AS BEGIN SET NOCOUNT ON; WAITFOR DELAY '00:00:01'; RETURN 0; END").SequenceEqual(new[] { "SW025" }) &&
+    Rules("WAITFOR DELAY '00:00:01';").Length == 0, "WAITFOR DELAY in procedure");
+Check(Rules("SELECT TOP (5) a FROM dbo.T;").SequenceEqual(new[] { "SW026" }) &&
+    Rules("SELECT TOP (5) a FROM dbo.T ORDER BY a; IF EXISTS (SELECT TOP 1 1 FROM dbo.T) SELECT 1;").Length == 0, "TOP without ORDER BY");
+Check(Rules("DECLARE @s nvarchar(100) = N'SELECT 1'; EXEC (@s);").SequenceEqual(new[] { "SW027" }) &&
+    Rules("DECLARE @s nvarchar(100) = N'SELECT 1'; EXEC sys.sp_executesql @s;").Length == 0, "EXECUTE(string)");
+Console.WriteLine($"PASS: {checks} total checks including analysis batch 3. SSMS integration not tested.");
+
+Check(Rules("-- querywright-disable SW005\nDELETE FROM dbo.T;\nGO\nDELETE FROM dbo.T;").Length == 0 && Rules("-- querywright-disable SW005, SW006\nDELETE FROM dbo.T;\nUPDATE dbo.T SET x = 1;\n-- querywright-enable SW005\nDELETE FROM dbo.T;\nUPDATE dbo.T SET x = 1;")
+    .SequenceEqual(new[] { "SW005" }), "disable until enable");
+Check(Rules("/* querywright-disable */ SELECT * FROM dbo.T; DELETE FROM dbo.T;").Length == 0, "block comment disables all to end");
+Check(Rules("-- querywright-disable\nSELECT * FROM dbo.T;\n-- querywright-enable SW001\nSELECT * FROM dbo.T; DELETE FROM dbo.T;").SequenceEqual(new[] { "SW001" }), "re-enable one after disable all");
+Check(Rules("-- querywright-disable-next-line SW005\nDELETE FROM dbo.T;\nDELETE FROM dbo.T;").Length == 1 &&
+    SqlAnalysis.Analyze("-- querywright-disable-next-line SW005\nDELETE FROM dbo.T;\nDELETE FROM dbo.T;").Diagnostics.Single().Line == 3, "disable next line only");
+Check(Rules("/* querywright-disable-next-line\n   multi-line comment */\nSELECT * FROM dbo.T;").Length == 0 &&
+    Rules("-- querywright-disable-next-line SW006\nDELETE FROM dbo.T;").SequenceEqual(new[] { "SW005" }), "next-line after block comment; other IDs untouched");
+Check(Rules("SELECT N'-- querywright-disable'; SELECT * FROM dbo.T; -- querywright-disabled\nSELECT * FROM dbo.U;").SequenceEqual(new[] { "SW001" }) &&
+    SqlAnalysis.Analyze("SELECT N'-- querywright-disable'; SELECT * FROM dbo.T; -- querywright-disabled\nSELECT * FROM dbo.U;").Diagnostics.Count == 2, "strings and lookalike comments are not directives");
+Check(!SqlAnalysis.Analyze("-- querywright-disable\nSELECT FROM").Parsed && SqlAnalysis.Analyze("-- querywright-disable\nSELECT FROM").Diagnostics.Count > 0, "parse errors never suppressed");
+Check(Rules("-- QueryWright-Disable-Next-Line sw001 -- reason SW005\nSELECT * FROM dbo.T; DELETE FROM dbo.T;").SequenceEqual(new[] { "SW005" }), "case-insensitive directive and trailing reason");
+Console.WriteLine($"PASS: {checks} total checks including inline suppression. SSMS integration not tested.");
+
+var big = new System.Text.StringBuilder();
+for (int i = 0; i < 1000; i++)
+    big.Append("SELECT a, b FROM dbo.T").Append(i).Append(" t WITH (NOLOCK)\n  WHERE t.a = @x\n    AND t.b IN (SELECT b FROM dbo.U);\n")
+       .Append("-- note ").Append(i).Append("\nUPDATE dbo.T SET a = CASE WHEN b = 1 THEN 2 END WHERE a = 1;\n");
+var bigSql = "DECLARE @x int = 1;\n" + big;
+Check(bigSql.Count(c => c == '\n') >= 5000, "5,000-line fixture");
+SqlAnalysis.Analyze("SELECT 1;"); // warm up JIT
+var watch = System.Diagnostics.Stopwatch.StartNew();
+var bigResult = SqlAnalysis.Analyze(bigSql);
+watch.Stop();
+Check(bigResult.Parsed && bigResult.Diagnostics.Count(d => d.Rule == "SW024") == 1000, "5,000-line analysis results");
+Check(watch.ElapsedMilliseconds < 2000, "5,000-line analysis under 2 s (" + watch.ElapsedMilliseconds + " ms)");
+using var midway = new CancellationTokenSource();
+midway.CancelAfter(1);
+try { for (int i = 0; i < 50; i++) SqlAnalysis.Analyze(bigSql, midway.Token); throw new Exception("Expected cancellation of large analysis"); }
+catch (OperationCanceledException) { checks++; }
+Console.WriteLine($"PASS: {checks} total checks; 5,000-line analysis took {watch.ElapsedMilliseconds} ms. SSMS integration not tested.");

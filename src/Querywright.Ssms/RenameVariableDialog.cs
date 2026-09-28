@@ -11,15 +11,16 @@ namespace Querywright.Ssms
     {
         internal RenameResult Result { get; private set; }
 
-        internal RenameVariableDialog(string sql, int position)
+        /// <summary>Preview-then-apply rename; <paramref name="rename"/> runs off the UI thread with the requested name.</summary>
+        internal RenameVariableDialog(string sql, string what, string initialName, Func<string, RenameResult> rename)
         {
-            Title = "Querywright: rename local variable";
+            Title = "Querywright: rename " + what;
             Width = 1000; Height = 650; MinWidth = 600; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
             var controls = new StackPanel();
-            var name = new TextBox { Text = "@newName", Margin = new Thickness(0, 4, 0, 8) };
-            controls.Children.Add(new Label { Content = "_New variable name:", Target = name });
+            var name = new TextBox { Text = initialName, Margin = new Thickness(0, 4, 0, 8) };
+            controls.Children.Add(new Label { Content = "_New " + what + " name:", Target = name });
             controls.Children.Add(name);
             var status = new TextBlock { Text = "Preview changes before applying. SQL will not be executed.", TextWrapping = TextWrapping.Wrap };
             controls.Children.Add(status);
@@ -53,7 +54,7 @@ namespace Querywright.Ssms
                 preview.IsEnabled = false; apply.IsEnabled = false; Result = null;
                 try
                 {
-                    var result = await Task.Run(() => SqlRefactoring.RenameLocalVariable(sql, position, requested));
+                    var result = await Task.Run(() => rename(requested));
                     if (!IsLoaded || requested != name.Text) return;
                     Result = result; proposed.Text = result.Text;
                     status.Text = $"{result.Changes} references: {result.OldName} to {requested}. Review both panes, then Apply.";

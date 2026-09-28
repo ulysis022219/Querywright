@@ -41,8 +41,48 @@
         <Parent guid="CommandsGuid" id="ToolsGroup" />
         <Strings><ButtonText>Querywright: snippet smoke check</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="ApplyCasing" priority="0x0110" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: apply keyword casing</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AddBrackets" priority="0x0120" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: add square brackets</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="RemoveBrackets" priority="0x0130" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: remove square brackets</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="QualifyNames" priority="0x0140" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: qualify object names</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="RenameAlias" priority="0x0150" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: rename table alias...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="SummarizeScript" priority="0x0160" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: summarize script</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="UnusedDeclarations" priority="0x0170" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: find unused variables and parameters</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="RefreshMetadata" priority="0x0180" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: refresh suggestions</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="ExecuteStatement" priority="0x0190" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: execute current statement</ButtonText></Strings>
+      </Button>
     </Buttons>
   </Commands>
+  <KeyBindings>
+    <KeyBinding guid="CommandsGuid" id="ExecuteStatement" editor="guidVSStd97" key1="VK_F5" mod1="Shift" />
+    <KeyBinding guid="CommandsGuid" id="RefreshMetadata" editor="guidVSStd97" key1="D" mod1="Control Shift" />
+  </KeyBindings>
   <Symbols>
     <GuidSymbol name="PackageGuid" value="{a13c1b0c-af94-4f53-8d06-edf816e39450}" />
     <GuidSymbol name="CommandsGuid" value="{b48a692b-82fb-47cf-bfc9-bdf13483d6c7}">
@@ -55,6 +95,15 @@
       <IDSymbol name="RenameVariable" value="0x0105" />
       <IDSymbol name="AddSemicolons" value="0x0106" />
       <IDSymbol name="ExpandWildcard" value="0x0107" />
+      <IDSymbol name="ApplyCasing" value="0x0108" />
+      <IDSymbol name="AddBrackets" value="0x0109" />
+      <IDSymbol name="RemoveBrackets" value="0x010A" />
+      <IDSymbol name="QualifyNames" value="0x010B" />
+      <IDSymbol name="RenameAlias" value="0x010C" />
+      <IDSymbol name="SummarizeScript" value="0x010D" />
+      <IDSymbol name="UnusedDeclarations" value="0x010E" />
+      <IDSymbol name="RefreshMetadata" value="0x010F" />
+      <IDSymbol name="ExecuteStatement" value="0x0110" />
     </GuidSymbol>
   </Symbols>
 </CommandTable>

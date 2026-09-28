@@ -128,6 +128,17 @@ namespace Querywright.Ssms
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0106)));
             commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(ExpandWildcardAsync); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0107)));
+            void Add(int id, Func<Task> handler) => commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
+                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id)));
+            Add(0x0108, () => TransformAsync(sql => SqlRefactoring.ApplyCasing(sql), "Apply casing"));
+            Add(0x0109, () => TransformAsync(SqlRefactoring.AddBrackets, "Add square brackets"));
+            Add(0x010A, () => TransformAsync(SqlRefactoring.RemoveBrackets, "Remove square brackets"));
+            Add(0x010B, () => TransformAsync(sql => SqlRefactoring.QualifyObjectNames(sql), "Qualify object names"));
+            Add(0x010C, RenameAliasAsync);
+            Add(0x010D, () => ListAsync(SqlRefactoring.Summarize, "statements", TaskErrorCategory.Message));
+            Add(0x010E, () => ListAsync(SqlRefactoring.UnusedDeclarationItems, "unused declarations", TaskErrorCategory.Warning));
+            Add(0x010F, RefreshMetadataAsync);
+            Add(0x0110, ExecuteCurrentStatementAsync);
             Instance = this;
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
         }
@@ -238,7 +249,9 @@ namespace Querywright.Ssms
                 if (!view.Selection.IsEmpty || view.Caret.InVirtualSpace)
                     throw new InvalidOperationException("Place the caret on a local variable without selecting text.");
                 var snapshot = view.TextSnapshot;
-                var dialog = new RenameVariableDialog(snapshot.GetText(), view.Caret.Position.BufferPosition.Position);
+                string sql = snapshot.GetText();
+                int position = view.Caret.Position.BufferPosition.Position;
+                var dialog = new RenameVariableDialog(sql, "local variable", "@newName", name => SqlRefactoring.RenameLocalVariable(sql, position, name));
                 var shell = await GetServiceAsync(typeof(SVsUIShell)) as IVsUIShell;
                 if (shell == null) throw new InvalidOperationException("SSMS window service unavailable.");
                 ErrorHandler.ThrowOnFailure(shell.GetDialogOwnerHwnd(out var owner));
@@ -286,6 +299,141 @@ namespace Querywright.Ssms
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 ShowWarning(error.Message);
+            }
+        }
+
+        /// <summary>Whole-document rewrite as one undo step; transforms validate their own output.</summary>
+        private async Task TransformAsync(Func<string, string> transform, string name)
+        {
+            try
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var view = GetSqlView();
+                var snapshot = view.TextSnapshot;
+                string sql = snapshot.GetText();
+                int caret = view.Caret.Position.BufferPosition.Position;
+                string result = await Task.Run(() => transform(sql));
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (result == sql) return;
+                ReplaceText(view, new SnapshotSpan(snapshot, 0, snapshot.Length), result, Math.Min(caret, result.Length), 0, 0, name);
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning(error.Message);
+            }
+        }
+
+        private async Task RenameAliasAsync()
+        {
+            try
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var view = GetSqlView();
+                if (!view.Selection.IsEmpty || view.Caret.InVirtualSpace)
+                    throw new InvalidOperationException("Place the caret on a table alias without selecting text.");
+                var snapshot = view.TextSnapshot;
+                string sql = snapshot.GetText();
+                int position = view.Caret.Position.BufferPosition.Position;
+                var dialog = new RenameVariableDialog(sql, "table alias", "newAlias", name => SqlRefactoring.RenameAlias(sql, position, name));
+                var shell = await GetServiceAsync(typeof(SVsUIShell)) as IVsUIShell;
+                if (shell == null) throw new InvalidOperationException("SSMS window service unavailable.");
+                ErrorHandler.ThrowOnFailure(shell.GetDialogOwnerHwnd(out var owner));
+                new System.Windows.Interop.WindowInteropHelper(dialog).Owner = owner;
+                if (dialog.ShowDialog() != true || dialog.Result == null) return;
+                ReplaceText(view, new SnapshotSpan(snapshot, 0, snapshot.Length), dialog.Result.Text, Math.Min(position, dialog.Result.Text.Length), 0, 0, "Rename alias");
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning(error.Message);
+            }
+        }
+
+        /// <summary>Summarize script / find unused declarations: results in the Error List, double-click navigates.</summary>
+        private async Task ListAsync(Func<string, IReadOnlyList<OutlineItem>> find, string what, TaskErrorCategory category)
+        {
+            try
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var view = GetSqlView();
+                var snapshot = view.TextSnapshot;
+                string sql = snapshot.GetText();
+                var items = await Task.Run(() => find(sql));
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowTasks(view, snapshot, items.Select(i => (i.Kind + (i.Target.Length == 0 ? "" : " " + i.Target), i.Offset, i.Length, category)));
+                var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
+                status?.SetText($"Querywright: {items.Count} {what}.");
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning(error.Message);
+            }
+        }
+
+        private void ShowTasks(IWpfTextView view, ITextSnapshot snapshot, IEnumerable<(string Text, int Offset, int Length, TaskErrorCategory Category)> items)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            errorList.Tasks.Clear();
+            foreach (var item in items)
+            {
+                int offset = Math.Max(0, Math.Min(item.Offset, snapshot.Length)), length = Math.Max(0, Math.Min(item.Length, snapshot.Length - offset));
+                var line = snapshot.GetLineFromPosition(offset);
+                var task = new ErrorTask
+                {
+                    Text = item.Text, Line = line.LineNumber, Column = offset - line.Start.Position,
+                    Category = TaskCategory.CodeSense, ErrorCategory = item.Category
+                };
+                task.Navigate += (sender, args) =>
+                {
+                    ThreadHelper.ThrowIfNotOnUIThread();
+                    if (view.IsClosed || view.TextSnapshot != snapshot)
+                    {
+                        ShowWarning("Results are stale. Run the command again.");
+                        return;
+                    }
+                    view.Selection.Select(new SnapshotSpan(snapshot, offset, length), false);
+                    view.Caret.MoveTo(new SnapshotPoint(snapshot, offset));
+                    view.VisualElement.Focus();
+                    view.Caret.EnsureVisible();
+                };
+                errorList.Tasks.Add(task);
+            }
+            errorList.Show();
+        }
+
+        private async Task RefreshMetadataAsync()
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            LiveMetadata.Refresh();
+            CurrentTables(); // restart the load for the active connection
+            var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
+            status?.SetText("Querywright: refreshing database metadata.");
+        }
+
+        /// <summary>Shift+F5: selects the statement under the caret and runs SSMS's own Execute. Only on this explicit command.</summary>
+        private async Task ExecuteCurrentStatementAsync()
+        {
+            try
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var view = GetSqlView();
+                if (view.Selection.IsEmpty)
+                {
+                    var snapshot = view.TextSnapshot;
+                    var statement = SqlNavigation.StatementAt(snapshot.GetText(), view.Caret.Position.BufferPosition.Position);
+                    if (statement == null) throw new InvalidOperationException("Place the caret in a complete SQL statement.");
+                    view.Selection.Select(new SnapshotSpan(snapshot, statement.Start, statement.Length), false);
+                }
+                var dte = await GetServiceAsync(typeof(SDTE));
+                if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
+                dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { "Query.Execute", "" });
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning((error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
             }
         }
 

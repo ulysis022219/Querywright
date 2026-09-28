@@ -35,17 +35,33 @@ namespace Querywright.Ssms
         }
     }
 
-    /// <summary>Reads table/view/column names from the connected database with one fixed catalog query. Never runs user SQL.</summary>
+    /// <summary>Reads table/view/column names, types and foreign keys from the connected database with one fixed catalog query. Never runs user SQL.</summary>
     internal static class LiveMetadata
     {
         private const int MaxRows = 100_000;
         private const string CatalogQuery = @"SET LOCK_TIMEOUT 3000;
-SELECT s.name, o.name, c.name
+SELECT s.name, o.name, c.name, TYPE_NAME(c.user_type_id) +
+    CASE WHEN TYPE_NAME(c.user_type_id) IN ('varchar', 'char', 'varbinary', 'binary')
+            THEN '(' + CASE c.max_length WHEN -1 THEN 'max' ELSE CAST(c.max_length AS varchar(5)) END + ')'
+        WHEN TYPE_NAME(c.user_type_id) IN ('nvarchar', 'nchar')
+            THEN '(' + CASE c.max_length WHEN -1 THEN 'max' ELSE CAST(c.max_length / 2 AS varchar(5)) END + ')'
+        WHEN TYPE_NAME(c.user_type_id) IN ('decimal', 'numeric')
+            THEN '(' + CAST(c.precision AS varchar(3)) + ',' + CAST(c.scale AS varchar(3)) + ')'
+        ELSE '' END
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = o.object_id
 WHERE o.type IN ('U', 'V') AND o.is_ms_shipped = 0
-ORDER BY s.name, o.name, c.column_id;";
+ORDER BY s.name, o.name, c.column_id;
+SELECT fk.object_id, SCHEMA_NAME(p.schema_id), p.name, pc.name, SCHEMA_NAME(r.schema_id), r.name, rc.name
+FROM sys.foreign_keys AS fk
+JOIN sys.foreign_key_columns AS k ON k.constraint_object_id = fk.object_id
+JOIN sys.objects AS p ON p.object_id = k.parent_object_id
+JOIN sys.columns AS pc ON pc.object_id = k.parent_object_id AND pc.column_id = k.parent_column_id
+JOIN sys.objects AS r ON r.object_id = k.referenced_object_id
+JOIN sys.columns AS rc ON rc.object_id = k.referenced_object_id AND rc.column_id = k.referenced_column_id
+WHERE p.is_ms_shipped = 0
+ORDER BY fk.object_id, k.constraint_column_id;";
 
         private static readonly ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>> cache =
             new ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>>();
@@ -74,17 +90,28 @@ ORDER BY s.name, o.name, c.column_id;";
         {
             try
             {
-                var columns = new List<(string Schema, string Table, string Column)>();
+                var columns = new List<(string Schema, string Table, string Column, string Type)>();
+                var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
                 using (var sql = connection.Open())
                 {
                     sql.Open();
                     using (var command = new SqlCommand(CatalogQuery, sql) { CommandTimeout = 15 })
                     using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
+                    {
                         while (reader.Read() && columns.Count < MaxRows)
-                            columns.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+                            columns.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
+                        while (reader.Read()) { } // drain capped rows
+                        if (reader.NextResult())
+                            while (reader.Read() && keys.Count < MaxRows)
+                                keys.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                                    reader.GetString(4), reader.GetString(5), reader.GetString(6)));
+                    }
                 }
+                var foreignKeys = keys.GroupBy(k => k.Id).ToLookup(g => (g.First().Schema, g.First().Table),
+                    g => new SchemaForeignKey(g.Select(k => k.Column).ToArray(), g.First().RefSchema, g.First().RefTable, g.Select(k => k.RefColumn).ToArray()));
                 var tables = columns.GroupBy(c => (c.Schema, c.Table))
-                    .Select(g => new SchemaTable(g.Key.Schema, g.Key.Table, g.Select(c => c.Column).ToArray())).ToArray();
+                    .Select(g => new SchemaTable(g.Key.Schema, g.Key.Table, g.Select(c => c.Column).ToArray(),
+                        g.Select(c => c.Type).ToArray(), foreignKeys[g.Key].ToArray())).ToArray();
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + tables.Length + " tables");
                 return tables;
             }

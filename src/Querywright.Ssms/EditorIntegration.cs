@@ -102,7 +102,7 @@ namespace Querywright.Ssms
             textView.Properties.GetOrCreateSingletonProperty(() => new CompletionSource());
     }
 
-    /// <summary>Popup suggestions while typing, from the offline schema snapshot.</summary>
+    /// <summary>Popup suggestions while typing: keywords, variables and aliases always; objects from live or offline metadata.</summary>
     internal sealed class CompletionSource : IAsyncCompletionSource
     {
         private static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
@@ -114,7 +114,6 @@ namespace Querywright.Ssms
                 return CompletionStartData.DoesNotParticipateInCompletion;
             // Connection lookup needs the UI thread, where the broker normally calls this.
             if (Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess()) tables = WorkbenchPackage.Instance.CurrentTables();
-            if (tables == null) return CompletionStartData.DoesNotParticipateInCompletion;
             if (trigger.Reason == CompletionTriggerReason.Insertion &&
                 !(char.IsLetter(trigger.Character) || trigger.Character == '_' || trigger.Character == '.' || trigger.Character == ' '))
                 return CompletionStartData.DoesNotParticipateInCompletion;
@@ -137,7 +136,7 @@ namespace Querywright.Ssms
             {
                 try
                 {
-                    return tables == null ? null : SqlCompletion.Complete(sql, position, tables);
+                    return SqlCompletion.Complete(sql, position, tables); // null tables: keywords, functions, variables
                 }
                 // ponytail: typing must never raise dialogs; explicit commands report schema errors.
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }

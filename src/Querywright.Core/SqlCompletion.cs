@@ -251,7 +251,7 @@ namespace Querywright.Core
                 foreach (var v in variables.Where(v => context != Context.Table || v.Value))
                     Add(Kind.Variable, v.Key, v.Key, v.Value ? "table variable" : "variable");
                 foreach (var table in catalog)
-                    Add(Kind.Table, table.Name, Quote(table.Schema) + "." + Quote(table.Name), "table " + table.Schema + "." + table.Name);
+                    Add(Kind.Table, table.Name, QuoteIfNeeded(table.Schema) + "." + QuoteIfNeeded(table.Name), "table " + table.Schema + "." + table.Name);
                 if (context != Context.Table)
                 {
                     foreach (var join in Joins(segment, at, scan, catalog, defaultSchema, names)) items.Add((join, Kind.Join));
@@ -261,7 +261,7 @@ namespace Querywright.Core
                     if (scan.Sources.Count == 0 && context == Context.Column)
                         foreach (var table in catalog)
                             foreach (var column in table.Columns)
-                                Add(Kind.Column, column, Quote(column), ColumnDescription(table.TypeOf(column), table.Schema + "." + table.Name));
+                                Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(table.TypeOf(column), table.Schema + "." + table.Name));
                     else if (resolver != null && resolver.Handled && !resolver.TableMarker)
                         items.AddRange(resolver.Items.Select(i => (i, Kind.Column)));
                     else
@@ -269,7 +269,7 @@ namespace Querywright.Core
                         var seen = new HashSet<string>(names);
                         foreach (var s in scan.Sources.Where(s => seen.Add(s.Alias)))
                             foreach (var column in s.Columns)
-                                Add(Kind.Column, column, Quote(s.Alias) + "." + Quote(column), ColumnDescription(s.Table?.TypeOf(column), s.Alias + "." + column));
+                                Add(Kind.Column, column, QuoteIfNeeded(s.Alias) + "." + QuoteIfNeeded(column), ColumnDescription(s.Table?.TypeOf(column), s.Alias + "." + column));
                     }
                 }
             }
@@ -283,13 +283,13 @@ namespace Querywright.Core
                 {
                     string label = source?.Alias ?? table!.Name;
                     foreach (var column in source?.Columns ?? table!.Columns)
-                        Add(Kind.Column, column, Quote(column), ColumnDescription((source?.Table ?? table)?.TypeOf(column), label + "." + column));
+                        Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription((source?.Table ?? table)?.TypeOf(column), label + "." + column));
                 }
                 else if (parts.Count == 1 && scan.Ctes.TryGetValue(parts[0], out var cteColumns))
-                    foreach (var column in cteColumns) Add(Kind.Column, column, Quote(column), ColumnDescription(null, parts[0] + "." + column));
+                    foreach (var column in cteColumns) Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(null, parts[0] + "." + column));
                 else if (parts.Count == 1)
                     foreach (var t in catalog.Where(t => names.Equals(t.Schema, parts[0])))
-                        Add(Kind.Table, t.Name, Quote(t.Name), "table " + t.Schema + "." + t.Name);
+                        Add(Kind.Table, t.Name, QuoteIfNeeded(t.Name), "table " + t.Schema + "." + t.Name);
             }
 
             int Rank(Kind kind) => kind == Kind.Join ? -1 : context == Context.Table ? 0
@@ -560,7 +560,7 @@ namespace Querywright.Core
                     var columns = reference == null ? Array.Empty<string>() : Columns(reference).ToArray();
                     if (alias == null || columns.Length == 0)
                         throw new InvalidOperationException("Columns unknown for " + (alias ?? "a FROM source") + "; offline schema, CTE or derived column list required.");
-                    parts.AddRange(columns.Select(c => qualify ? Quote(alias) + "." + Quote(c) : Quote(c)));
+                    parts.AddRange(columns.Select(c => qualify ? QuoteIfNeeded(alias) + "." + QuoteIfNeeded(c) : QuoteIfNeeded(c)));
                 }
                 if (parts.Count == 0) throw new InvalidOperationException("Wildcard qualifier " + ids![0].Value + " is not in this FROM clause.");
                 Expansion = new TextEdit(node.StartOffset, node.FragmentLength, string.Join(", ", parts));
@@ -598,7 +598,7 @@ namespace Querywright.Core
                 if (node.SchemaObject.DatabaseIdentifier != null || node.SchemaObject.ServerIdentifier != null) return;
                 Handled = TableMarker = true;
                 foreach (var table in tables.Where(t => schema == null || names.Equals(t.Schema, schema)))
-                    Items.Add(new CompletionItem(table.Name, schema == null ? Quote(table.Schema) + "." + Quote(table.Name) : Quote(table.Name),
+                    Items.Add(new CompletionItem(table.Name, schema == null ? QuoteIfNeeded(table.Schema) + "." + QuoteIfNeeded(table.Name) : QuoteIfNeeded(table.Name),
                         "table " + table.Schema + "." + table.Name));
             }
 
@@ -620,7 +620,7 @@ namespace Querywright.Core
                         if (!seen.Add(alias) || (qualifier != null && !names.Equals(alias, qualifier))) continue;
                         var table = reference is NamedTableReference named && !IsCte(named) ? Find(named) : null;
                         foreach (string column in Columns(reference!))
-                            Items.Add(new CompletionItem(column, qualifier == null ? Quote(alias) + "." + Quote(column) : Quote(column),
+                            Items.Add(new CompletionItem(column, qualifier == null ? QuoteIfNeeded(alias) + "." + QuoteIfNeeded(column) : QuoteIfNeeded(column),
                                 ColumnDescription(table?.TypeOf(column), alias + "." + column)));
                         if (qualifier != null) return; // Inner aliases shadow outer aliases, even when metadata is missing.
                     }

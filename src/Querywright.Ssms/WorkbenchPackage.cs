@@ -144,6 +144,35 @@ namespace Querywright.Ssms
         }
 
         /// <summary>Tab after a snippet shortcut (ssf) or after * expands in place. False passes Tab to the editor.</summary>
+        private IReadOnlyList<KeyValuePair<string, string>> snippetCache = Array.Empty<KeyValuePair<string, string>>();
+        private DateTime snippetCacheTime = DateTime.MinValue;
+
+        /// <summary>(shortcut, first line) pairs for the popup, re-read at most every 30 seconds.</summary>
+        internal IReadOnlyList<KeyValuePair<string, string>> SnippetList()
+        {
+            if (DateTime.UtcNow - snippetCacheTime < TimeSpan.FromSeconds(30)) return snippetCache;
+            try
+            {
+                string folder = options?.SnippetFolder ?? "";
+                if (folder.Length > 0 && !Directory.Exists(folder)) SnippetFiles.Initialize(folder);
+                snippetCache = SnippetFiles.List(folder);
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { snippetCache = Array.Empty<KeyValuePair<string, string>>(); }
+            snippetCacheTime = DateTime.UtcNow;
+            return snippetCache;
+        }
+
+        internal bool HasSnippetShortcut(IWpfTextView view)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (!view.Selection.IsEmpty) return false;
+            var point = view.Caret.Position.BufferPosition;
+            var line = point.GetContainingLine();
+            string shortcut = SnippetFiles.ShortcutBefore(line.GetText(), point.Position - line.Start.Position);
+            try { return shortcut != null && SnippetFiles.FindShortcut(options?.SnippetFolder ?? "", shortcut) != null; }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { return false; }
+        }
+
         internal bool TryTabExpand(IWpfTextView view)
         {
             ThreadHelper.ThrowIfNotOnUIThread();

@@ -67,6 +67,9 @@ namespace Querywright.Ssms
             var package = WorkbenchPackage.Instance;
             if (package != null)
             {
+                // SQL Prompt: Tab on a typed snippet shortcut expands it even while the suggestion list is open.
+                if (IsTab(group, id) && completion.IsCompletionActive(view) && package.HasSnippetShortcut(view))
+                    completion.GetSession(view)?.Dismiss();
                 if (IsTab(group, id) && !completion.IsCompletionActive(view))
                 {
                     bool expanded = package.TryTabExpand(view);
@@ -141,9 +144,13 @@ namespace Querywright.Ssms
                 // ponytail: typing must never raise dialogs; explicit commands report schema errors.
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }
             }, token).ConfigureAwait(false);
-            if (result == null || result.Items.Count == 0) return CompletionContext.Empty;
-            var items = result.Items.Select(i => new VsCompletionItem(i.Name, this, null!, ImmutableArray<CompletionFilter>.Empty,
-                i.Description, i.InsertText, i.Name, i.Name, ImmutableArray<ImageElement>.Empty)).ToImmutableArray();
+            var snippets = applicableTo.IsEmpty ? Array.Empty<KeyValuePair<string, string>>() : package.SnippetList();
+            if ((result == null || result.Items.Count == 0) && snippets.Count == 0) return CompletionContext.Empty;
+            // Snippets insert their shortcut; Tab then expands it (see EditorCommandFilter).
+            var items = snippets.Select(s => new VsCompletionItem(s.Key, this, null!, ImmutableArray<CompletionFilter>.Empty,
+                    "snippet: " + s.Value, s.Key, s.Key, s.Key, ImmutableArray<ImageElement>.Empty))
+                .Concat((result?.Items ?? Array.Empty<Querywright.Core.CompletionItem>()).Select(i => new VsCompletionItem(i.Name, this, null!, ImmutableArray<CompletionFilter>.Empty,
+                    i.Description, i.InsertText, i.Name, i.Name, ImmutableArray<ImageElement>.Empty))).ToImmutableArray();
             // Soft selection after a space so Enter still inserts a new line.
             return new CompletionContext(items, null, applicableTo.IsEmpty ? InitialSelectionHint.SoftSelection : InitialSelectionHint.RegularSelection);
         }

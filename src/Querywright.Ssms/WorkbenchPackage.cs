@@ -36,6 +36,16 @@ namespace Querywright.Ssms
         /// <summary>Set after initialization; editor MEF components reach package services through it.</summary>
         internal static WorkbenchPackage Instance { get; private set; }
 
+        /// <summary>Editors can open before the background autoload finishes; load synchronously on first SQL editor.</summary>
+        internal static void EnsureLoaded()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (Instance != null) return;
+            var shell = Package.GetGlobalService(typeof(SVsShell)) as IVsShell;
+            var id = typeof(WorkbenchPackage).GUID;
+            shell?.LoadPackage(ref id, out _);
+        }
+
         internal bool SchemaConfigured => !string.IsNullOrWhiteSpace(options?.SchemaFile);
 
         /// <summary>Offline schema, reparsed only when the file changes. Null when none is configured. Thread-safe.</summary>
@@ -85,6 +95,7 @@ namespace Querywright.Ssms
             commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(ExpandWildcardAsync); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0107)));
             Instance = this;
+            ActivityLog.TryLogInformation("Querywright", "Package initialized");
         }
 
         /// <summary>Tab after a snippet shortcut (ssf) or after * expands in place. False passes Tab to the editor.</summary>
@@ -315,7 +326,7 @@ namespace Querywright.Ssms
             ErrorHandler.ThrowOnFailure(textManager.GetActiveView(1, null, out var adapter));
             var view = adapter == null ? null : components.GetService<IVsEditorAdaptersFactoryService>().GetWpfTextView(adapter);
             if (view == null || view.IsClosed) throw new InvalidOperationException("Open a SQL query editor first.");
-            if (!view.TextBuffer.ContentType.IsOfType("SQL") && !view.TextBuffer.ContentType.IsOfType("T-SQL"))
+            if (!EditorListener.IsSql(view.TextBuffer.ContentType))
                 throw new InvalidOperationException("Active editor is not a recognized SQL buffer.");
             return view;
         }

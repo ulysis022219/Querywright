@@ -6,13 +6,13 @@ Goal: all non-AI SQL Prompt capabilities. No affiliation with Redgate.
 
 ## Current status
 
-Snippet expansion and four static analysis rules implemented and checked. The VSIX has
+Snippet expansion and 17 static analysis rules implemented and checked. The VSIX has
 Tools commands for snippet insertion and SQL document analysis, plus a package smoke
 check. Editor wiring compiles but has not run in SSMS. No installed extension,
 live autocomplete, database access, or verified SSMS integration yet. Offline completion,
 formatting core and
 selection/document command are implemented; runtime behavior remains unverified.
-See [feature inventory](docs/features.md) for remaining scope and acceptance criteria.
+See [feature inventory](docs/features.md) and the [SQL Prompt parity roadmap](docs/sql-prompt-parity.md).
 
 ## Run checks
 
@@ -43,7 +43,7 @@ check** and verify the preview appears. Confirm the command does not modify a qu
 and uninstall the package to verify clean removal. Do not interrupt SSMS 19 sessions.
 
 Validation on September 28, 2026:
-- `dotnet run --project tests/Querywright.Checks`: 106 checks passed (0.2.0 core).
+- `dotnet run --project tests/Querywright.Checks`: 120 checks passed (0.2.0 core).
 - `dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj --no-restore`:
   VSIX generated, zero warnings/errors.
 - Archive inspected: extension/core assemblies, pkgdef and manifest included.
@@ -81,7 +81,7 @@ folder, including to a team share. CURSOR, selection markers, DATE, TIME, MACHIN
 and PASTE are implemented. SERVER, DBNAME, and USER require connection integration;
 insertion rejects templates requesting unavailable values before modifying SQL.
 
-Tools > Querywright: analyze SQL document runs four syntax-tree rules in the background
+Tools > Querywright: analyze SQL document runs 17 syntax-tree rules in the background
 and publishes results to Error List. Double-click navigation rejects stale snapshots.
 See [analysis coverage](docs/analysis-rules.md). No SQL is executed.
 

@@ -68,6 +68,12 @@ function Invoke-Named([int]$id, [string]$pattern) {
 function Dismiss([int]$id) {
     # First-run sign-in and connect prompts. ESC on the sign-in page asks to exit SSMS, so answer those by name.
     for ($i = 0; $i -lt 6; $i++) {
+        # SSMS confirms command-line connections; answering No would leave the editor disconnected.
+        $confirm = [System.Windows.Automation.AutomationElement]::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.ProcessId -eq $id } |
+            ForEach-Object { $_.FindAll('Descendants', [System.Windows.Automation.Condition]::TrueCondition) } |
+            Where-Object { $_.Current.Name -match '^Connect to the following server' } | Select-Object -First 1
+        if ($confirm -and (Invoke-Named $id '^Yes$')) { continue }
         if (Invoke-Named $id '^No$') { continue }                        # "exit SQL Server Management Studio?"
         if (Invoke-Named $id '^Skip and add accounts later') { continue }
         $connect = [System.Windows.Automation.AutomationElement]::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
@@ -167,9 +173,9 @@ try {
 } catch { $results['LocalDB setup'] = "FAIL: $($_.Exception.Message)"; $live = $false }
 if ($live) {
     # The wait lets SSMS connect and the package load the catalog.
-    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:20000|home|right:8|tab|wait:3000'
+    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|home|right:8|tab|wait:3000'
     Expect '* + Tab from live metadata' $text { param($t) $t -match 'FullName' -and $t -notmatch '\*' }
-    $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:20000|home|right:7|type:p.Ful|wait:3000|tab|wait:1000'
+    $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|home|right:7|type:p.Ful|wait:3000|tab|wait:1000'
     Expect 'column completion from live metadata' $text { param($t) $t -match 'SELECT p\.FullName ?FROM' }
 }
 

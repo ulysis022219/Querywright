@@ -183,10 +183,26 @@ namespace Querywright.Ssms
                 var snapshot = view.TextSnapshot;
                 int caret = view.Caret.Position.BufferPosition.Position;
                 var line = view.Caret.Position.BufferPosition.GetContainingLine();
-                IReadOnlyList<SchemaTable> tables;
-                if (caret > 0 && snapshot[caret - 1] == '*' && (tables = CurrentTables()) != null)
+                if (caret > 0 && snapshot[caret - 1] == '*')
                 {
+                    var tables = CurrentTables();
                     TextEdit edit;
+                    if (tables == null)
+                    {
+                        // First Tab after connecting: the catalog is still loading, so expand once it arrives if the text is unchanged.
+                        var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+                        if (connection == null) return false;
+                        _ = JoinableTaskFactory.RunAsync(async () =>
+                        {
+                            var loaded = await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(20));
+                            await JoinableTaskFactory.SwitchToMainThreadAsync();
+                            if (loaded == null || view.IsClosed || view.TextSnapshot != snapshot) return;
+                            try { edit = SqlCompletion.ExpandWildcard(snapshot.GetText(), caret - 1, loaded); }
+                            catch (Exception error) when (error is FormatException || error is InvalidOperationException) { return; }
+                            ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
+                        });
+                        return true;
+                    }
                     try { edit = SqlCompletion.ExpandWildcard(snapshot.GetText(), caret - 1, tables); }
                     catch (FormatException) { return false; } // Incomplete SQL while typing: ordinary Tab.
                     ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Id="SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450" Version="0.1.1" Language="en-US" Publisher="SqlWorkbench contributors" />
+    <Identity Id="SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450" Version="0.2.0" Language="en-US" Publisher="SqlWorkbench contributors" />
     <DisplayName>SqlWorkbench (development prototype)</DisplayName>
-    <Description xml:space="preserve">Independent SQL productivity prototype: snippets, formatting, analysis, offline completion and local-variable rename.</Description>
+    <Description xml:space="preserve">Independent SQL productivity prototype: snippets, formatting, analysis, offline completion popup, Tab snippet shortcuts, F12 navigation, wildcard expansion, semicolons and local-variable rename.</Description>
   </Metadata>
   <Installation>
     <InstallationTarget Id="Microsoft.VisualStudio.Ssms" Version="[22.0,23.0)">
@@ -18,5 +18,6 @@
   </Prerequisites>
   <Assets>
     <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%;PkgdefProjectOutputGroup|" />
+    <Asset Type="Microsoft.VisualStudio.MefComponent" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%|" />
   </Assets>
 </PackageManifest>

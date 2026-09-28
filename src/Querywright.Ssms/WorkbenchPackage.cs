@@ -241,7 +241,12 @@ namespace Querywright.Ssms
         {
             try
             {
-                string definition = await Task.Run(() => LiveMetadata.Definition(connection, schema, name));
+                string definition = await Task.Run(() =>
+                {
+                    try { return LiveMetadata.Definition(connection, schema, name); }
+                    // Unreachable server or no VIEW DEFINITION permission: SSMS's own F12 still works.
+                    catch (Exception error) when (error is System.Data.SqlClient.SqlException || error is InvalidOperationException) { return null; }
+                });
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 var dte = await GetServiceAsync(typeof(SDTE));
                 if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
@@ -264,8 +269,7 @@ namespace Querywright.Ssms
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 // SqlException text can name the server or login; show only what failed.
-                ShowWarning(error is System.Data.SqlClient.SqlException sqlError ? "Could not read the definition (SQL error " + sqlError.Number + ")."
-                    : (error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
+                ShowWarning((error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
             }
         }
 

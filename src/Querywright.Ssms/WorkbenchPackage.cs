@@ -47,6 +47,8 @@ namespace Querywright.Ssms
             shell?.LoadPackage(ref id, out _);
         }
 
+        internal string SettingsFile => options?.SettingsFile ?? "";
+
         internal bool SchemaConfigured => !string.IsNullOrWhiteSpace(options?.SchemaFile);
 
         /// <summary>Live metadata merged over the offline schema; null when neither is available. Never blocks or throws (typing path).</summary>
@@ -154,9 +156,7 @@ namespace Querywright.Ssms
                 string path = SnippetFiles.FindShortcut(options.SnippetFolder, shortcut);
                 if (path == null) return false;
                 string template = SnippetFiles.Read(path);
-                var context = new Dictionary<string, string> { ["MACHINE"] = Environment.MachineName };
-                if (template.Contains("$PASTE$")) context["PASTE"] = System.Windows.Clipboard.GetText();
-                var expansion = Snippets.Expand(template, context, DateTimeOffset.Now);
+                var expansion = Snippets.Expand(template, SnippetContext(template, ""), DateTimeOffset.Now);
                 ReplaceText(view, new SnapshotSpan(snapshot, caret - shortcut.Length, shortcut.Length), expansion.Text,
                     expansion.Caret, expansion.SelectionStart, expansion.SelectionLength, "Expand snippet " + shortcut);
                 return true;
@@ -438,6 +438,19 @@ namespace Querywright.Ssms
             base.Dispose(disposing);
         }
 
+        /// <summary>Placeholder values; the connection is looked up only when the template uses it.</summary>
+        private static Dictionary<string, string> SnippetContext(string template, string selectedText)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var context = new Dictionary<string, string> { ["MACHINE"] = Environment.MachineName, ["SELECTEDTEXT"] = selectedText };
+            if (template.Contains("$PASTE$")) context["PASTE"] = System.Windows.Clipboard.GetText();
+            var connection = template.Contains("$SERVER$") || template.Contains("$DBNAME$") || template.Contains("$USER$") ? LiveMetadata.Capture() : null;
+            context["SERVER"] = connection?.Server ?? "";
+            context["DBNAME"] = connection?.Database ?? "";
+            context["USER"] = connection == null || connection.Integrated ? Environment.UserDomainName + "\\" + Environment.UserName : connection.User;
+            return context;
+        }
+
         private void InsertSnippet(object sender, EventArgs args)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
@@ -456,9 +469,7 @@ namespace Querywright.Ssms
                 };
                 if (picker.ShowDialog() != true) return;
                 string template = SnippetFiles.Read(picker.FileName);
-                var context = new Dictionary<string, string> { ["MACHINE"] = Environment.MachineName };
-                if (template.Contains("$PASTE$")) context["PASTE"] = System.Windows.Clipboard.GetText();
-                var expansion = Snippets.Expand(template, context, DateTimeOffset.Now);
+                var expansion = Snippets.Expand(template, SnippetContext(template, selected.GetText()), DateTimeOffset.Now);
                 if (view.IsClosed || view.TextSnapshot != before)
                     throw new InvalidOperationException("Query changed while choosing the snippet. Retry insertion.");
                 ReplaceText(view, selected, expansion.Text, expansion.Caret, expansion.SelectionStart,

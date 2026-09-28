@@ -6,7 +6,7 @@ Goal: all non-AI SQL Prompt capabilities. No affiliation with Redgate.
 
 ## Current status
 
-Snippet expansion and 17 static analysis rules implemented and checked. The VSIX has
+Snippet expansion and 27 static analysis rules implemented and checked. The VSIX has
 Tools commands for snippet insertion and SQL document analysis, plus a package smoke
 check. Editor wiring compiles but has not run in SSMS. No installed extension,
 live autocomplete, database access, or verified SSMS integration yet. Offline completion,
@@ -81,7 +81,7 @@ folder, including to a team share. CURSOR, selection markers, DATE, TIME, MACHIN
 and PASTE are implemented. SERVER, DBNAME, and USER require connection integration;
 insertion rejects templates requesting unavailable values before modifying SQL.
 
-Tools > Querywright: analyze SQL document runs 17 syntax-tree rules in the background
+Tools > Querywright: analyze SQL document runs 27 syntax-tree rules in the background
 and publishes results to Error List. Double-click navigation rejects stale snapshots.
 See [analysis coverage](docs/analysis-rules.md). No SQL is executed.
 

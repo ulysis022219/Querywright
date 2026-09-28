@@ -15,7 +15,7 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 | INSERT/EXEC parameter fill | Expands column list / parameters for INSERT and EXEC | missing | Needs metadata |
 | Snippet shortcut + Tab | `ssf` Tab → `SELECT * FROM` | host (also listed in the popup; Tab expands with the list open) | — |
 | Wildcard expansion with Tab | `*` Tab → column list | host | — |
-| F12 | Scripts object as ALTER in new tab; local declarations | host (locals); objects defer to SSMS | Script ALTER from metadata |
+| F12 | Scripts object as ALTER in new tab; local declarations | host (locals; procedures, views, functions, triggers scripted as ALTER from the live connection; tables and unreadable objects defer to SSMS) | — |
 | Execute current statement | Shift+F5 runs the statement under the caret | host (selects the statement, then SSMS's own Query.Execute — only on explicit keypress) | — |
 | Tab coloring | Color query tabs per server/database environment | host (colored strip above the editor; rules in Options) | — |
 | Tab history | Searchable history of opened/closed tabs, restore after crash | missing | Local, crash-safe store |
@@ -52,7 +52,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Find unused variables and parameters | host (Error List) |
 | Summarize script (outline of statements) | host (Error List, click to navigate) |
 | Find invalid objects | missing (metadata) |
-| Script object as ALTER / CREATE | missing |
+| Script object as ALTER / CREATE | host (F12, ALTER in a new query; never executed) |
 | Remove square brackets / add brackets | host |
 
 ## 5. Results grid
@@ -79,7 +79,7 @@ Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: missing.
 
 ## Remaining
 
-Column picker, INSERT/EXEC parameter fill, quick info, tab history, F12 scripting of database objects as ALTER,
+Column picker, INSERT/EXEC parameter fill, quick info, tab history,
 object-level refactors (smart rename, split table, encapsulate; would be reviewable scripts only), analysis auto-fixes.
 Results-grid actions are out of scope (no API).
 

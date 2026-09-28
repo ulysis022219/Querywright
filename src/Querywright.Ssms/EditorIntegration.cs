@@ -47,6 +47,8 @@ namespace Querywright.Ssms
             WorkbenchPackage.Instance?.CurrentTables(); // start the live metadata load before the first keystroke
             var filter = new EditorCommandFilter(view, Completion);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
+            SelfTest.Adapter = adapter;
+            SelfTest.View = view;
         }
     }
 

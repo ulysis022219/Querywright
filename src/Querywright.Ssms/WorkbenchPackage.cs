@@ -141,6 +141,7 @@ namespace Querywright.Ssms
             Add(0x0110, ExecuteCurrentStatementAsync);
             Instance = this;
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
+            _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
         }
 
         /// <summary>Tab after a snippet shortcut (ssf) or after * expands in place. False passes Tab to the editor.</summary>

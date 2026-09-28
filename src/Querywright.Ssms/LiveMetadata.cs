@@ -153,7 +153,11 @@ ORDER BY fk.object_id, k.constraint_column_id;";
                 // Type and SQL error number only: messages can echo server or login names.
                 ActivityLog.TryLogWarning("Querywright", "Live metadata unavailable: " + error.GetType().Name
                     + (error is SqlException sqlError ? " " + sqlError.Number : ""));
-                cache.TryRemove(connection.Key, out _); // retry on next request
+                // Back off 30 s before the next attempt; Refresh clears the cache for an immediate retry.
+                if (cache.TryGetValue(connection.Key, out var failed))
+                    _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ =>
+                        ((ICollection<KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>>)cache).Remove(
+                            new KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>(connection.Key, failed)), TaskScheduler.Default);
                 return null;
             }
         }

@@ -12,7 +12,7 @@ Status vocabulary: missing, core-only, integrated, verified in SSMS.
 | Formatting | Selection/document, styles, shared settings, batch operation | core checked; document formatting and undo/redo verified in SSMS | Selection/styles host tests, SQLCMD and bulk files pending |
 | Refactoring | Local rename, qualification, wildcard expansion, brackets, semicolons, procedure extraction | rename, wildcard expansion (offline schema) and semicolons checked; host wiring unverified | Batch isolation, collision/EXEC handling checked; alias/public parameter rename, qualification, brackets, procedure extraction pending |
 | Database rename | Dependency-aware object rename script preview | missing | Identify unresolved dynamic references; never execute silently |
-| Analysis | Rule inventory, configurable severity/enablement, issue navigation, fixes, shared settings | four rules and settings checked; host wiring unverified | See analysis-rules.md; fixes and remaining catalog pending |
+| Analysis | Rule inventory, configurable severity/enablement, issue navigation, fixes, shared settings | 27 rules, inline suppression and settings checked; host wiring unverified | See analysis-rules.md; fixes and remaining catalog pending |
 | Navigation | Definitions, ALTER script generation, object explorer, script overview, unused declarations | F12 for variables/parameters/aliases/CTEs checked in core; objects defer to SSMS; host unverified | Correct object and scope; generated text only |
 | Editor | Execute statement, environment colors | missing | Exact statement boundaries; explicit execution action; accessible labels |
 | History | Open/closed tabs, search, restore, rename, retention, crash recovery | missing | Crash-safe writes, local privacy, restart recovery |

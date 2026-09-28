@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
@@ -49,7 +50,46 @@ namespace Querywright.Core
                     e.Message, e.Offset, e.Offset < sql.Length ? 1 : 0, e.Line, e.Column)));
             var visitor = new Rules(cancellationToken);
             fragment.Accept(visitor);
-            return new AnalysisResult(true, visitor.Diagnostics.Where(d => settings == null || settings.Severity(d.Rule) != RuleSeverity.Disabled));
+            var suppression = new Suppression(fragment.ScriptTokenStream);
+            return new AnalysisResult(true, visitor.Diagnostics.Where(d =>
+                (settings == null || settings.Severity(d.Rule) != RuleSeverity.Disabled) && !suppression.Suppressed(d)));
+        }
+
+        // Inline directives in comments: querywright-disable [IDs], querywright-enable [IDs], querywright-disable-next-line [IDs].
+        // No IDs means every rule. Only rule diagnostics pass through here; parse errors return earlier.
+        private sealed class Suppression
+        {
+            private static readonly Regex Directive = new Regex(@"^(?:--|/\*)\s*querywright-(disable-next-line|disable|enable)(?![\w-])(.*?)(?:\*/)?$",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+            private readonly List<(int Offset, bool Enable, string[] Rules)> toggles = new List<(int, bool, string[])>();
+            private readonly List<(int Line, string[] Rules)> nextLines = new List<(int, string[])>();
+
+            internal Suppression(IList<TSqlParserToken>? tokens)
+            {
+                foreach (var token in tokens ?? Array.Empty<TSqlParserToken>())
+                {
+                    if (token.TokenType != TSqlTokenType.SingleLineComment && token.TokenType != TSqlTokenType.MultilineComment) continue;
+                    var match = Directive.Match(token.Text.TrimEnd());
+                    if (!match.Success) continue;
+                    var rules = match.Groups[2].Value.Split(new[] { ' ', '\t', '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                        .TakeWhile(id => Regex.IsMatch(id, @"^SW\d+$", RegexOptions.IgnoreCase)).Select(id => id.ToUpperInvariant()).ToArray();
+                    var kind = match.Groups[1].Value.ToLowerInvariant();
+                    if (kind == "disable-next-line") nextLines.Add((token.Line + token.Text.Count(c => c == '\n') + 1, rules));
+                    else toggles.Add((token.Offset, kind == "enable", rules));
+                }
+            }
+
+            internal bool Suppressed(SqlDiagnostic diagnostic)
+            {
+                if (nextLines.Any(n => n.Line == diagnostic.Line && (n.Rules.Length == 0 || n.Rules.Contains(diagnostic.Rule)))) return true;
+                bool all = false, off = false; // off: this rule is individually disabled (or re-enabled while all is set).
+                foreach (var toggle in toggles.TakeWhile(t => t.Offset < diagnostic.Offset))
+                {
+                    if (toggle.Rules.Length == 0) { all = !toggle.Enable; off = false; }
+                    else if (toggle.Rules.Contains(diagnostic.Rule)) off = all ? toggle.Enable : !toggle.Enable;
+                }
+                return all != off;
+            }
         }
 
         private sealed class Rules : TSqlFragmentVisitor
@@ -131,10 +171,58 @@ namespace Querywright.Core
                 if (name != null && name.StartsWith("sp_", StringComparison.OrdinalIgnoreCase))
                     Add("SW012", "Procedure names starting with sp_ are looked up in master first.", node.ProcedureReference!);
                 if (node.StatementList == null) return; // CLR procedure.
-                var nocount = new NoCountFinder();
-                node.StatementList.Accept(nocount);
-                if (!nocount.Found) Add("SW015", "Procedure lacks SET NOCOUNT ON; row-count messages add network chatter.", node.ProcedureReference ?? (TSqlFragment)node);
+                var body = new ProcedureBody();
+                node.StatementList.Accept(body);
+                if (!body.NoCount) Add("SW015", "Procedure lacks SET NOCOUNT ON; row-count messages add network chatter.", node.ProcedureReference ?? (TSqlFragment)node);
+                foreach (var bare in body.BareReturns) Add("SW019", "RETURN without a value; return an explicit status code from procedures.", bare);
+                foreach (var delay in body.Delays) Add("SW025", "WAITFOR DELAY in a procedure holds its connection and locks while waiting.", delay);
             }
+            public override void Visit(CursorDefinition node)
+            {
+                if (!node.Options.Any(o => o.OptionKind == CursorOptionKind.Local || o.OptionKind == CursorOptionKind.Global))
+                    Add("SW018", "Declare the cursor LOCAL (or GLOBAL); the default scope depends on a database option.", node);
+            }
+            public override void Visit(CreateTableStatement node) => CheckNullability(node.Definition);
+            public override void Visit(DeclareTableVariableBody node) => CheckNullability(node.Definition);
+            private void CheckNullability(TableDefinition? table)
+            {
+                if (table == null) return;
+                var keys = new HashSet<string>(table.TableConstraints.OfType<UniqueConstraintDefinition>().Where(u => u.IsPrimaryKey)
+                    .SelectMany(u => u.Columns).Select(c => c.Column.MultiPartIdentifier.Identifiers.Last().Value), StringComparer.OrdinalIgnoreCase);
+                foreach (var column in table.ColumnDefinitions)
+                    if (column.ComputedColumnExpression == null && column.IdentityOptions == null && !keys.Contains(column.ColumnIdentifier.Value) &&
+                        !column.Constraints.Any(c => c is NullableConstraintDefinition || c is UniqueConstraintDefinition u && u.IsPrimaryKey))
+                        Add("SW020", "Specify NULL or NOT NULL; the default depends on session ANSI_NULL_DFLT settings.", column);
+            }
+            public override void Visit(ReadTextStatement node) => Add("SW021", "READTEXT is deprecated; use SUBSTRING on VARCHAR(MAX)/VARBINARY(MAX).", node);
+            public override void Visit(WriteTextStatement node) => Add("SW021", "WRITETEXT is deprecated; use UPDATE on VARCHAR(MAX)/VARBINARY(MAX).", node);
+            public override void Visit(UpdateTextStatement node) => Add("SW021", "UPDATETEXT is deprecated; use UPDATE ... .WRITE on VARCHAR(MAX)/VARBINARY(MAX).", node);
+            public override void Visit(AlterTableAddTableElementStatement node)
+            {
+                foreach (var column in node.Definition?.ColumnDefinitions ?? Enumerable.Empty<ColumnDefinition>())
+                    if (column.DefaultConstraint == null && column.ComputedColumnExpression == null && column.IdentityOptions == null &&
+                        column.Constraints.OfType<NullableConstraintDefinition>().Any(n => !n.Nullable))
+                        Add("SW022", "Adding a NOT NULL column without DEFAULT fails on a table that has rows.", column);
+            }
+            public override void Visit(SetRowCountStatement node) => Add("SW023", "SET ROWCOUNT is deprecated for INSERT/UPDATE/DELETE; use TOP.", node);
+            public override void Visit(TableHint node)
+            {
+                if (node.HintKind == TableHintKind.NoLock || node.HintKind == TableHintKind.ReadUncommitted)
+                    Add("SW024", "NOLOCK/READUNCOMMITTED reads uncommitted data and can skip or double-count rows.", node);
+            }
+            private readonly HashSet<QueryExpression> existsQueries = new HashSet<QueryExpression>();
+            public override void Visit(ExistsPredicate node) { if (node.Subquery?.QueryExpression != null) existsQueries.Add(node.Subquery.QueryExpression); }
+            public override void Visit(QuerySpecification node)
+            {
+                if (node.TopRowFilter != null && node.OrderByClause == null && !existsQueries.Contains(node))
+                    Add("SW026", "TOP without ORDER BY returns an arbitrary set of rows.", node.TopRowFilter);
+            }
+            public override void Visit(ExecuteSpecification node)
+            {
+                if (node.ExecutableEntity is ExecutableStringList)
+                    Add("SW027", "EXECUTE(string) runs unparameterized SQL; use sp_executesql with parameters.", node);
+            }
+            public override void Visit(TSqlStatement node) => cancellation.ThrowIfCancellationRequested();
             public override void Visit(FunctionCall node)
             {
                 if (string.Equals(node.FunctionName.Value, "ISNUMERIC", StringComparison.OrdinalIgnoreCase))
@@ -160,13 +248,17 @@ namespace Querywright.Core
                     Add("SW016", "Variable " + declared.Value + " is declared but never used.", declared);
             }
 
-            private sealed class NoCountFinder : TSqlFragmentVisitor
+            private sealed class ProcedureBody : TSqlFragmentVisitor
             {
-                internal bool Found;
+                internal bool NoCount;
+                internal readonly List<ReturnStatement> BareReturns = new List<ReturnStatement>();
+                internal readonly List<WaitForStatement> Delays = new List<WaitForStatement>();
                 public override void Visit(PredicateSetStatement node)
                 {
-                    if (node.IsOn && node.Options.HasFlag(SetOptions.NoCount)) Found = true;
+                    if (node.IsOn && node.Options.HasFlag(SetOptions.NoCount)) NoCount = true;
                 }
+                public override void Visit(ReturnStatement node) { if (node.Expression == null) BareReturns.Add(node); }
+                public override void Visit(WaitForStatement node) { if (node.WaitForOption == WaitForOption.Delay) Delays.Add(node); }
             }
 
             private sealed class VariableUsage : TSqlFragmentVisitor

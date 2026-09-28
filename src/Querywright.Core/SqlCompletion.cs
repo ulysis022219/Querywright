@@ -6,16 +6,50 @@ using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 namespace Querywright.Core
 {
+    public sealed class SchemaForeignKey
+    {
+        public IReadOnlyList<string> Columns { get; }
+        public string ReferencedSchema { get; }
+        public string ReferencedTable { get; }
+        public IReadOnlyList<string> ReferencedColumns { get; }
+        public SchemaForeignKey(string[] columns, string referencedSchema, string referencedTable, string[] referencedColumns)
+        {
+            if (columns == null || referencedColumns == null || columns.Length == 0 || columns.Length != referencedColumns.Length ||
+                columns.Concat(referencedColumns).Any(string.IsNullOrWhiteSpace) ||
+                string.IsNullOrWhiteSpace(referencedSchema) || string.IsNullOrWhiteSpace(referencedTable))
+                throw new ArgumentException("Foreign keys need nonempty names and matching column counts.");
+            Columns = Array.AsReadOnly((string[])columns.Clone()); ReferencedSchema = referencedSchema;
+            ReferencedTable = referencedTable; ReferencedColumns = Array.AsReadOnly((string[])referencedColumns.Clone());
+        }
+    }
+
     public sealed class SchemaTable
     {
         public string Schema { get; }
         public string Name { get; }
         public IReadOnlyList<string> Columns { get; }
-        public SchemaTable(string schema, string name, params string[] columns)
+        /// <summary>Data types parallel to <see cref="Columns"/>; null (or a null entry) means unknown.</summary>
+        public IReadOnlyList<string?>? ColumnTypes { get; }
+        public IReadOnlyList<SchemaForeignKey> ForeignKeys { get; }
+        public SchemaTable(string schema, string name, params string[] columns) : this(schema, name, columns, null, null) { }
+        public SchemaTable(string schema, string name, string[] columns, SchemaForeignKey[]? foreignKeys) : this(schema, name, columns, null, foreignKeys) { }
+        public SchemaTable(string schema, string name, string[] columns, string?[]? columnTypes, SchemaForeignKey[]? foreignKeys)
         {
             if (string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(name) || columns == null || columns.Any(string.IsNullOrWhiteSpace))
                 throw new ArgumentException("Schema, table and column names must be nonempty.");
+            if (columnTypes != null && columnTypes.Length != columns.Length)
+                throw new ArgumentException("Column types must parallel the column names.");
+            if (foreignKeys != null && foreignKeys.Any(k => k == null || k.Columns.Any(c => !columns.Contains(c, StringComparer.OrdinalIgnoreCase))))
+                throw new ArgumentException("Foreign key columns must belong to the table.");
             Schema = schema; Name = name; Columns = Array.AsReadOnly((string[])columns.Clone());
+            ColumnTypes = columnTypes == null ? null : Array.AsReadOnly((string?[])columnTypes.Clone());
+            ForeignKeys = Array.AsReadOnly(foreignKeys == null ? Array.Empty<SchemaForeignKey>() : (SchemaForeignKey[])foreignKeys.Clone());
+        }
+        internal string? TypeOf(string column)
+        {
+            if (ColumnTypes == null) return null;
+            for (int i = 0; i < Columns.Count; i++) if (string.Equals(Columns[i], column, StringComparison.OrdinalIgnoreCase)) return ColumnTypes[i];
+            return null;
         }
     }
 
@@ -49,47 +83,428 @@ namespace Querywright.Core
     public static class SqlCompletion
     {
         private const string Marker = "__QuerywrightCompletionMarker__";
+        private const int MaxItems = 200;
         private static string Quote(string name) => "[" + name.Replace("]", "]]") + "]";
+        private static string ColumnDescription(string? type, string source) => "column " + (type == null ? "" : type + " ") + source;
 
-        public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable> tables,
+        private static readonly HashSet<string> Keywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "ADD", "ALL", "ALTER", "AND", "ANY", "APPLY", "AS", "ASC", "BEGIN", "BETWEEN", "BREAK", "BY", "CASCADE", "CASE", "CATCH",
+            "CHECK", "CLOSE", "COLLATE", "COLUMN", "COMMIT", "CONSTRAINT", "CONTINUE", "CREATE", "CROSS", "CURSOR", "DEALLOCATE",
+            "DECLARE", "DEFAULT", "DELETE", "DESC", "DISTINCT", "DROP", "ELSE", "END", "EXCEPT", "EXEC", "EXECUTE", "EXISTS", "FETCH",
+            "FOR", "FOREIGN", "FROM", "FULL", "FUNCTION", "GO", "GOTO", "GROUP", "HAVING", "IDENTITY", "IF", "IN", "INDEX", "INNER",
+            "INSERT", "INTERSECT", "INTO", "IS", "JOIN", "KEY", "LEFT", "LIKE", "MERGE", "NEXT", "NOCOUNT", "NOT", "NULL", "OFFSET",
+            "ON", "OPEN", "OPTION", "OR", "ORDER", "OUTER", "OUTPUT", "OVER", "PARTITION", "PERCENT", "PIVOT", "PRIMARY", "PRINT",
+            "PROCEDURE", "RAISERROR", "REFERENCES", "RETURN", "RETURNS", "RIGHT", "ROLLBACK", "ROWS", "SCHEMA", "SELECT", "SET",
+            "TABLE", "THEN", "THROW", "TIES", "TOP", "TRAN", "TRANSACTION", "TRIGGER", "TRUNCATE", "TRY", "UNION", "UNIQUE",
+            "UNPIVOT", "UPDATE", "USE", "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WHILE", "WITH"
+        };
+        private static readonly string[] Functions =
+        {
+            "ABS", "AVG", "CAST", "CEILING", "CHARINDEX", "CHECKSUM", "CHOOSE", "COALESCE", "CONCAT", "CONCAT_WS", "CONVERT", "COUNT",
+            "COUNT_BIG", "CUME_DIST", "DATALENGTH", "DATEADD", "DATEDIFF", "DATEFROMPARTS", "DATENAME", "DATEPART", "DATETRUNC", "DAY",
+            "DENSE_RANK", "EOMONTH", "ERROR_MESSAGE", "ERROR_NUMBER", "EXP", "FIRST_VALUE", "FLOOR", "FORMAT", "GETDATE", "GETUTCDATE",
+            "GREATEST", "IIF", "ISNULL", "JSON_QUERY", "JSON_VALUE", "LAG", "LAST_VALUE", "LEAD", "LEAST", "LEFT", "LEN", "LOG", "LOWER",
+            "LTRIM", "MAX", "MIN", "MONTH", "NEWID", "NTILE", "NULLIF", "OBJECT_ID", "OPENJSON", "PARSE", "PATINDEX", "POWER", "QUOTENAME",
+            "RANK", "REPLACE", "REPLICATE", "REVERSE", "RIGHT", "ROUND", "ROW_NUMBER", "RTRIM", "SCOPE_IDENTITY", "SIGN", "SPACE", "SQRT",
+            "STRING_AGG", "STRING_SPLIT", "STUFF", "SUBSTRING", "SUM", "SYSDATETIME", "SYSDATETIMEOFFSET", "TRANSLATE", "TRIM",
+            "TRY_CAST", "TRY_CONVERT", "TRY_PARSE", "UPPER", "YEAR"
+        };
+        private static readonly HashSet<string> SourceKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "FROM", "JOIN", "UPDATE", "INTO", "USING", "APPLY", "MERGE" };
+        private static readonly HashSet<string> NotAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "APPLY", "OUTPUT", "TABLESAMPLE", "UNPIVOT", "PIVOT", "WINDOW", "SET", "VALUES" };
+        private static readonly HashSet<string> Clauses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "SELECT", "FROM", "JOIN", "WHERE", "ON", "HAVING", "BY", "SET", "INTO", "UPDATE", "VALUES", "USING", "APPLY", "DECLARE",
+            "EXEC", "EXECUTE", "PRINT", "RETURN", "WHEN", "THEN", "ELSE", "AND", "OR", "CASE", "IF", "WHILE"
+        };
+        private static readonly HashSet<string> ColumnClauses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "SELECT", "WHERE", "ON", "HAVING", "BY", "SET", "VALUES", "WHEN", "THEN", "ELSE", "AND", "OR", "CASE", "PRINT", "RETURN", "IF", "WHILE" };
+        private static readonly HashSet<string> DeclareEnds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "SELECT", "SET", "INSERT", "UPDATE", "DELETE", "IF", "WHILE", "EXEC", "EXECUTE", "RETURN", "BEGIN", "PRINT", "MERGE", "FOR" };
+
+        private enum Kind { Join, Column, Alias, Table, Variable, Function, Keyword }
+        private enum Context { General, Column, Table }
+
+        private readonly struct Tok
+        {
+            internal readonly TSqlTokenType Type;
+            internal readonly int Offset;
+            internal readonly string Text;
+            internal Tok(TSqlTokenType type, int offset, string text) { Type = type; Offset = offset; Text = text; }
+            internal bool IsName => Type == TSqlTokenType.Identifier || Type == TSqlTokenType.QuotedIdentifier;
+            internal bool Is(string word) => Type != TSqlTokenType.QuotedIdentifier && string.Equals(Text, word, StringComparison.OrdinalIgnoreCase);
+            internal bool IsAny(HashSet<string> words) => Type != TSqlTokenType.QuotedIdentifier && words.Contains(Text);
+            internal string Name => Type != TSqlTokenType.QuotedIdentifier || Text.Length < 2 ? Text
+                : Text.Substring(1, Text.Length - 2).Replace(Text[0] == '"' ? "\"\"" : "]]", Text[0] == '"' ? "\"" : "]");
+        }
+
+        private sealed class Source
+        {
+            internal string Alias = "";
+            internal bool Explicit;
+            internal int Offset;
+            internal SchemaTable? Table;
+            internal IReadOnlyList<string> Columns = Array.Empty<string>();
+            internal string Description = "";
+        }
+
+        private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '@' || c == '#' || c == '$';
+
+        // Bracket only names the lexer would not read back as one plain identifier (reserved words, spaces, symbols).
+        private static string QuoteIfNeeded(string name)
+        {
+            if (name.Length == 0 || !(char.IsLetter(name[0]) || name[0] == '_') || !name.All(c => char.IsLetterOrDigit(c) || c == '_')) return Quote(name);
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(name), out var errors).Where(t => t.TokenType != TSqlTokenType.EndOfFile).ToList();
+            return errors.Count == 0 && tokens.Count == 1 && tokens[0].TokenType == TSqlTokenType.Identifier ? name : Quote(name);
+        }
+
+        private static List<Tok> Tokenize(TSql170Parser parser, string text, int shift, out bool errors, out TSqlParserToken? last)
+        {
+            var result = new List<Tok>();
+            last = null;
+            var stream = parser.GetTokenStream(new StringReader(text), out var lexicalErrors);
+            errors = lexicalErrors.Count > 0;
+            foreach (var token in stream)
+            {
+                if (token.TokenType == TSqlTokenType.EndOfFile) continue;
+                last = token;
+                if (token.TokenType == TSqlTokenType.WhiteSpace || token.TokenType == TSqlTokenType.SingleLineComment ||
+                    token.TokenType == TSqlTokenType.MultilineComment) continue;
+                result.Add(new Tok(token.TokenType, token.Offset + shift, token.Text ?? ""));
+            }
+            return result;
+        }
+
+        public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable>? tables,
             string defaultSchema = "dbo", bool caseSensitive = false)
         {
-            if (sql == null || tables == null) throw new ArgumentNullException(sql == null ? nameof(sql) : nameof(tables));
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
             if (sql.Length > 1_000_000) throw new ArgumentException("Completion input exceeds 1,000,000 characters.");
-            var parser = new TSql170Parser(true);
-            var tokens = parser.GetTokenStream(new StringReader(sql), out var lexicalErrors);
+            var catalog = tables ?? Array.Empty<SchemaTable>();
+            var names = caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
             int start = position, end = position;
-            string prefix = "";
-            foreach (var token in tokens)
+            while (start > 0 && IsWordChar(sql[start - 1])) start--;
+            while (end < sql.Length && IsWordChar(sql[end])) end++;
+            string prefix = sql.Substring(start, position - start);
+            var parser = new TSql170Parser(true);
+            // The word at the caret is excluded; the text before it must lex cleanly or the caret sits in a literal, comment or quoted name.
+            var tokens = Tokenize(parser, sql.Substring(0, start), 0, out bool beforeErrors, out var last);
+            if (beforeErrors || (last?.TokenType == TSqlTokenType.SingleLineComment && !last.Text.EndsWith("\n")))
+                return new CompletionResult(position, 0, Array.Empty<CompletionItem>(), "Completion is inactive inside literals and comments.");
+            int caret = tokens.Count;
+            tokens.AddRange(Tokenize(parser, sql.Substring(end), end, out _, out _));
+            int segStart = caret, segEnd = caret, batchStart = caret;
+            while (segStart > 0 && tokens[segStart - 1].Type != TSqlTokenType.Semicolon && tokens[segStart - 1].Type != TSqlTokenType.Go) segStart--;
+            while (segEnd < tokens.Count && tokens[segEnd].Type != TSqlTokenType.Semicolon && tokens[segEnd].Type != TSqlTokenType.Go) segEnd++;
+            while (batchStart > 0 && tokens[batchStart - 1].Type != TSqlTokenType.Go) batchStart--;
+            var segment = tokens.GetRange(segStart, segEnd - segStart);
+            int at = caret - segStart;
+
+            Resolver? resolver = null;
+            if (!sql.Contains(Marker))
             {
-                int tokenEnd = token.Offset + (token.Text?.Length ?? 0);
-                if (token.Offset > position || tokenEnd < position) continue;
-                if (token.TokenType == TSqlTokenType.SingleLineComment || token.TokenType == TSqlTokenType.MultilineComment ||
-                    token.TokenType == TSqlTokenType.AsciiStringLiteral || token.TokenType == TSqlTokenType.UnicodeStringLiteral)
+                var fragment = parser.Parse(new StringReader(sql.Substring(0, start) + Marker + sql.Substring(end)), out var errors);
+                if (errors.Count == 0) { resolver = new Resolver(catalog, defaultSchema, names); fragment.Accept(resolver); }
+            }
+            var scan = new Scanner(sql, segment, catalog, defaultSchema, names);
+            var items = new List<(CompletionItem Item, Kind Kind)>();
+            void Add(Kind kind, string name, string insert, string description) => items.Add((new CompletionItem(name, insert, description), kind));
+
+            var context = Context.General;
+            List<string>? qualifier = null;
+            if (at > 0 && segment[at - 1].Type == TSqlTokenType.Dot && segment[at - 1].Offset == start - 1)
+            {
+                qualifier = new List<string>();
+                for (int i = at - 2; i >= 0 && segment[i].IsName; i -= 2)
                 {
-                    if (position < tokenEnd || token.TokenType == TSqlTokenType.SingleLineComment)
-                        return new CompletionResult(position, 0, Array.Empty<CompletionItem>(), "Completion is inactive inside literals and comments.");
-                }
-                if (token.TokenType == TSqlTokenType.Identifier)
-                {
-                    start = token.Offset; end = tokenEnd;
-                    prefix = sql.Substring(start, position - start);
-                    break;
+                    qualifier.Insert(0, segment[i].Name);
+                    if (i == 0 || segment[i - 1].Type != TSqlTokenType.Dot) break;
                 }
             }
-            if (lexicalErrors.Count > 0 || sql.Contains(Marker))
-                return new CompletionResult(start, end - start, Array.Empty<CompletionItem>(), "Lexical recovery required.");
-            string repaired = sql.Substring(0, start) + Marker + sql.Substring(end);
-            var fragment = parser.Parse(new StringReader(repaired), out var errors);
-            if (errors.Count > 0)
-                return new CompletionResult(start, end - start, Array.Empty<CompletionItem>(), "SQL outside the current identifier is incomplete or unsupported.");
-            var visitor = new Resolver(tables, defaultSchema, caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
-            fragment.Accept(visitor);
-            return new CompletionResult(start, end - start, visitor.Items
-                .Where(i => i.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                .GroupBy(i => i.InsertText, StringComparer.Ordinal).Select(g => g.First())
-                .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase));
+            if (qualifier != null)
+            {
+                bool alias = qualifier.Count == 1 && scan.Sources.Any(s => names.Equals(s.Alias, qualifier[0]));
+                if (resolver != null && resolver.Handled && (alias || resolver.TableMarker || resolver.Items.Count > 0))
+                    items.AddRange(resolver.Items.Select(i => (i, Kind.Column)));
+                else if (qualifier.Count > 0) Qualified(qualifier);
+            }
+            else
+            {
+                Tok? prev = at > 0 ? segment[at - 1] : (Tok?)null;
+                string? clause = null;
+                for (int i = at - 1, depth = 0; i >= 0 && clause == null; i--)
+                {
+                    if (segment[i].Type == TSqlTokenType.RightParenthesis) depth++;
+                    else if (segment[i].Type == TSqlTokenType.LeftParenthesis) depth = Math.Max(0, depth - 1);
+                    else if (depth == 0 && segment[i].IsAny(Clauses)) clause = segment[i].Text.ToUpperInvariant();
+                }
+                if (prev is Tok p && (p.IsAny(SourceKeywords) && !p.Is("APPLY") ||
+                    p.Is("TABLE") && at > 1 && (segment[at - 2].Is("TRUNCATE") || segment[at - 2].Is("DROP") || segment[at - 2].Is("ALTER")) ||
+                    p.Type == TSqlTokenType.Comma && clause == "FROM"))
+                    context = Context.Table;
+                else if (clause != null && ColumnClauses.Contains(clause) && prev is Tok o && ExpectsOperand(o, at > 1 ? segment[at - 2] : (Tok?)null))
+                    context = Context.Column;
+
+                var variables = Variables(tokens, batchStart, caret, names);
+                foreach (var cte in scan.Ctes.Keys) Add(Kind.Alias, cte, QuoteIfNeeded(cte), "cte");
+                foreach (var v in variables.Where(v => context != Context.Table || v.Value))
+                    Add(Kind.Variable, v.Key, v.Key, v.Value ? "table variable" : "variable");
+                foreach (var table in catalog)
+                    Add(Kind.Table, table.Name, Quote(table.Schema) + "." + Quote(table.Name), "table " + table.Schema + "." + table.Name);
+                if (context != Context.Table)
+                {
+                    foreach (var join in Joins(segment, at, scan, catalog, defaultSchema, names)) items.Add((join, Kind.Join));
+                    foreach (var k in Keywords) Add(Kind.Keyword, k, k, "keyword");
+                    foreach (var f in Functions) Add(Kind.Function, f, f + "(", "function");
+                    foreach (var s in scan.Sources.Where(s => s.Explicit)) Add(Kind.Alias, s.Alias, QuoteIfNeeded(s.Alias), "alias " + s.Description);
+                    if (scan.Sources.Count == 0 && context == Context.Column)
+                        foreach (var table in catalog)
+                            foreach (var column in table.Columns)
+                                Add(Kind.Column, column, Quote(column), ColumnDescription(table.TypeOf(column), table.Schema + "." + table.Name));
+                    else if (resolver != null && resolver.Handled && !resolver.TableMarker)
+                        items.AddRange(resolver.Items.Select(i => (i, Kind.Column)));
+                    else
+                    {
+                        var seen = new HashSet<string>(names);
+                        foreach (var s in scan.Sources.Where(s => seen.Add(s.Alias)))
+                            foreach (var column in s.Columns)
+                                Add(Kind.Column, column, Quote(s.Alias) + "." + Quote(column), ColumnDescription(s.Table?.TypeOf(column), s.Alias + "." + column));
+                    }
+                }
+            }
+
+            void Qualified(List<string> parts)
+            {
+                var source = parts.Count == 1 ? scan.Sources.Where(s => names.Equals(s.Alias, parts[0])).OrderBy(s => s.Columns.Count == 0).FirstOrDefault() : null;
+                var table = parts.Count > 2 ? null : catalog.FirstOrDefault(t => names.Equals(t.Name, parts[parts.Count - 1]) &&
+                    names.Equals(t.Schema, parts.Count == 2 ? parts[0] : defaultSchema));
+                if (source != null || table != null)
+                {
+                    string label = source?.Alias ?? table!.Name;
+                    foreach (var column in source?.Columns ?? table!.Columns)
+                        Add(Kind.Column, column, Quote(column), ColumnDescription((source?.Table ?? table)?.TypeOf(column), label + "." + column));
+                }
+                else if (parts.Count == 1 && scan.Ctes.TryGetValue(parts[0], out var cteColumns))
+                    foreach (var column in cteColumns) Add(Kind.Column, column, Quote(column), ColumnDescription(null, parts[0] + "." + column));
+                else if (parts.Count == 1)
+                    foreach (var t in catalog.Where(t => names.Equals(t.Schema, parts[0])))
+                        Add(Kind.Table, t.Name, Quote(t.Name), "table " + t.Schema + "." + t.Name);
+            }
+
+            int Rank(Kind kind) => kind == Kind.Join ? -1 : context == Context.Table ? 0
+                : context == Context.Column ? (kind == Kind.Column ? 0 : kind == Kind.Alias || kind == Kind.Table ? 1 : kind == Kind.Variable ? 2 : kind == Kind.Function ? 3 : 4)
+                : (kind == Kind.Keyword ? 0 : kind == Kind.Variable ? 1 : kind == Kind.Alias || kind == Kind.Function ? 2 : 3);
+            var ordered = items
+                .Where(i => i.Item.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .GroupBy(i => i.Item.InsertText, StringComparer.Ordinal).Select(g => g.OrderBy(i => Rank(i.Kind)).First())
+                .OrderBy(i => i.Kind == Kind.Join ? 0 : 1)
+                .ThenBy(i => prefix.Length > 0 && string.Equals(i.Item.Name, prefix, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ThenBy(i => Rank(i.Kind)).ThenBy(i => i.Item.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(MaxItems).Select(i => i.Item);
+            return new CompletionResult(start, end - start, ordered);
+        }
+
+        // An operand is expected unless the previous token already completes one (name, literal, closing parenthesis, SELECT *).
+        private static bool ExpectsOperand(Tok prev, Tok? before)
+        {
+            if (prev.IsName || prev.Type == TSqlTokenType.Variable || prev.Type == TSqlTokenType.RightParenthesis || prev.Is("NULL") ||
+                prev.Type == TSqlTokenType.Integer || prev.Type == TSqlTokenType.Numeric || prev.Type == TSqlTokenType.Real ||
+                prev.Type == TSqlTokenType.Money || prev.Type == TSqlTokenType.HexLiteral ||
+                prev.Type == TSqlTokenType.AsciiStringLiteral || prev.Type == TSqlTokenType.UnicodeStringLiteral) return false;
+            return !(prev.Type == TSqlTokenType.Star && before is Tok b && (b.Is("SELECT") || b.Type == TSqlTokenType.Comma || b.Type == TSqlTokenType.Dot));
+        }
+
+        // Variables declared by DECLARE or in a CREATE/ALTER PROCEDURE/FUNCTION header before the caret; value marks table variables.
+        private static Dictionary<string, bool> Variables(List<Tok> tokens, int from, int to, StringComparer names)
+        {
+            var result = new Dictionary<string, bool>(names);
+            int mode = 0, depth = 0;
+            for (int i = from; i < to; i++)
+            {
+                var t = tokens[i];
+                if (t.Type == TSqlTokenType.LeftParenthesis) depth++;
+                else if (t.Type == TSqlTokenType.RightParenthesis) depth--;
+                else if (t.Type == TSqlTokenType.Semicolon) mode = 0;
+                else if (t.Is("DECLARE")) { mode = 1; depth = 0; }
+                else if ((t.Is("PROCEDURE") || t.Is("PROC") || t.Is("FUNCTION")) && i > from && (tokens[i - 1].Is("CREATE") || tokens[i - 1].Is("ALTER")))
+                { mode = 2; depth = 0; }
+                else if (mode == 2 && depth == 0 && t.Is("AS")) mode = 0;
+                else if (mode == 1 && depth == 0 && t.IsAny(DeclareEnds)) mode = 0;
+                else if (t.Type == TSqlTokenType.Variable && (mode == 1 && depth == 0 && i > from && (tokens[i - 1].Is("DECLARE") || tokens[i - 1].Type == TSqlTokenType.Comma) ||
+                    mode == 2 && depth <= 1))
+                {
+                    int n = i + 1 < to && tokens[i + 1].Is("AS") ? i + 2 : i + 1;
+                    result[t.Text] = n < to && tokens[n].Is("TABLE");
+                }
+            }
+            return result;
+        }
+
+        // Full join conditions when the caret follows JOIN <table> [[AS] alias] ON and a foreign key links it to an earlier source.
+        private static IEnumerable<CompletionItem> Joins(List<Tok> seg, int at, Scanner scan, IReadOnlyList<SchemaTable> catalog, string defaultSchema, StringComparer names)
+        {
+            int k = at - 1;
+            if (k < 2 || !seg[k].Is("ON")) yield break;
+            k--;
+            string? alias = null;
+            if (seg[k].IsName && !seg[k].IsAny(NotAliases) && seg[k - 1].Type != TSqlTokenType.Dot) { alias = seg[k].Name; k--; }
+            if (k >= 0 && seg[k].Is("AS")) k--;
+            var parts = new List<string>();
+            if (alias != null && k >= 0 && seg[k].Is("JOIN")) { parts.Add(alias); alias = null; }
+            else
+                for (; k >= 0 && seg[k].IsName; k -= 2)
+                {
+                    parts.Insert(0, seg[k].Name);
+                    if (k == 0 || seg[k - 1].Type != TSqlTokenType.Dot) { k--; break; }
+                }
+            if (parts.Count == 0 || parts.Count > 2 || k < 0 || !seg[k].Is("JOIN")) yield break;
+            var joined = catalog.FirstOrDefault(t => names.Equals(t.Name, parts[parts.Count - 1]) && names.Equals(t.Schema, parts.Count == 2 ? parts[0] : defaultSchema));
+            if (joined == null) yield break;
+            string left = QuoteIfNeeded(alias ?? joined.Name);
+            bool Refers(SchemaForeignKey key, SchemaTable table) => names.Equals(key.ReferencedSchema, table.Schema) && names.Equals(key.ReferencedTable, table.Name);
+            CompletionItem Item(IEnumerable<(string J, string S)> pairs, string right, SchemaTable from, SchemaTable to)
+            {
+                string text = string.Join(" AND ", pairs.Select(p => left + "." + QuoteIfNeeded(p.J) + " = " + right + "." + QuoteIfNeeded(p.S)));
+                return new CompletionItem(text, text, "foreign key " + from.Schema + "." + from.Name + " -> " + to.Schema + "." + to.Name);
+            }
+            foreach (var source in scan.Sources.Where(s => s.Offset < seg[k].Offset && s.Table != null))
+            {
+                string right = QuoteIfNeeded(source.Alias);
+                foreach (var key in joined.ForeignKeys.Where(f => Refers(f, source.Table!)))
+                    yield return Item(key.Columns.Zip(key.ReferencedColumns, (c, r) => (c, r)), right, joined, source.Table!);
+                foreach (var key in source.Table!.ForeignKeys.Where(f => Refers(f, joined)))
+                    yield return Item(key.ReferencedColumns.Zip(key.Columns, (r, c) => (r, c)), right, source.Table!, joined);
+            }
+        }
+
+        private static IEnumerable<string> BodyColumns(string body)
+        {
+            var fragment = new TSql170Parser(true).Parse(new StringReader(body), out var errors);
+            var statement = errors.Count == 0 ? (fragment as TSqlScript)?.Batches.SelectMany(b => b.Statements).FirstOrDefault() as SelectStatement : null;
+            return statement == null ? Array.Empty<string>() : Projection(statement.QueryExpression).ToArray();
+        }
+
+        private static IEnumerable<string> Projection(QueryExpression expression)
+        {
+            if (expression is QueryParenthesisExpression parenthesis) return Projection(parenthesis.QueryExpression);
+            if (expression is BinaryQueryExpression binary) return Projection(binary.FirstQueryExpression);
+            if (!(expression is QuerySpecification query)) return Array.Empty<string>();
+            return query.SelectElements.OfType<SelectScalarExpression>().Select(column => column.ColumnName?.Value
+                ?? (column.Expression as ColumnReferenceExpression)?.MultiPartIdentifier?.Identifiers.LastOrDefault()?.Value)
+                .Where(name => name != null).Select(name => name!);
+        }
+
+        /// <summary>Token-level CTE and FROM-source discovery for one statement; works on SQL that does not parse.</summary>
+        private sealed class Scanner
+        {
+            internal readonly Dictionary<string, IReadOnlyList<string>> Ctes;
+            internal readonly List<Source> Sources = new List<Source>();
+            private readonly string sql;
+            private readonly List<Tok> seg;
+            private readonly IReadOnlyList<SchemaTable> catalog;
+            private readonly string defaultSchema;
+            private readonly StringComparer names;
+
+            internal Scanner(string sql, List<Tok> seg, IReadOnlyList<SchemaTable> catalog, string defaultSchema, StringComparer names)
+            {
+                this.sql = sql; this.seg = seg; this.catalog = catalog; this.defaultSchema = defaultSchema; this.names = names;
+                Ctes = new Dictionary<string, IReadOnlyList<string>>(names);
+                for (int i = 0; i + 1 < seg.Count; i++)
+                    if (seg[i].Is("WITH") && seg[i + 1].IsName) ReadCtes(i + 1);
+                for (int i = 0; i < seg.Count; i++)
+                {
+                    if (!seg[i].IsAny(SourceKeywords)) continue;
+                    int j = i + 1;
+                    while (true)
+                    {
+                        j = ReadSource(j, seg[i].Offset);
+                        if (!seg[i].Is("FROM") || j >= seg.Count || seg[j].Type != TSqlTokenType.Comma) break;
+                        j++;
+                    }
+                }
+            }
+
+            private int Match(int open)
+            {
+                for (int i = open, depth = 0; i < seg.Count; i++)
+                {
+                    if (seg[i].Type == TSqlTokenType.LeftParenthesis) depth++;
+                    else if (seg[i].Type == TSqlTokenType.RightParenthesis && --depth == 0) return i;
+                }
+                return -1;
+            }
+
+            private bool Open(int i) => i < seg.Count && seg[i].Type == TSqlTokenType.LeftParenthesis;
+
+            private string Body(int open, int close) => close <= open + 1 ? "" : sql.Substring(seg[open + 1].Offset, seg[close].Offset - seg[open + 1].Offset);
+
+            private List<string> NameList(int open, int close) => seg.GetRange(open + 1, close - open - 1).Where(t => t.IsName).Select(t => t.Name).ToList();
+
+            private void ReadCtes(int j)
+            {
+                while (j < seg.Count && seg[j].IsName)
+                {
+                    string name = seg[j++].Name;
+                    List<string>? columns = null;
+                    if (Open(j))
+                    {
+                        int close = Match(j);
+                        if (close < 0) return;
+                        columns = NameList(j, close); j = close + 1;
+                    }
+                    if (j >= seg.Count || !seg[j].Is("AS") || !Open(j + 1)) return;
+                    int end = Match(j + 1);
+                    Ctes[name] = columns ?? (end < 0 ? new List<string>() : BodyColumns(Body(j + 1, end)).ToList());
+                    if (end < 0 || end + 1 >= seg.Count || seg[end + 1].Type != TSqlTokenType.Comma) return;
+                    j = end + 2;
+                }
+            }
+
+            private int ReadSource(int j, int offset)
+            {
+                if (j >= seg.Count) return j;
+                var source = new Source { Offset = offset };
+                List<string>? parts = null;
+                bool derived = false;
+                if (Open(j))
+                {
+                    int close = Match(j);
+                    if (close < 0) return seg.Count;
+                    source.Columns = BodyColumns(Body(j, close)).ToList(); source.Description = "derived table";
+                    derived = true; j = close + 1;
+                }
+                else if (seg[j].Type == TSqlTokenType.Variable) { source.Alias = seg[j].Text; source.Description = "table variable"; j++; }
+                else if (seg[j].IsName)
+                {
+                    parts = new List<string> { seg[j++].Name };
+                    while (j + 1 < seg.Count && seg[j].Type == TSqlTokenType.Dot && seg[j + 1].IsName) { parts.Add(seg[j + 1].Name); j += 2; }
+                    if (j < seg.Count && seg[j].Type == TSqlTokenType.Dot) return j; // Incomplete name at the caret.
+                    if (Open(j)) { int close = Match(j); j = close < 0 ? seg.Count : close + 1; }
+                    source.Alias = parts[parts.Count - 1];
+                }
+                else return j;
+                if (j < seg.Count && seg[j].Is("AS")) j++;
+                if (j < seg.Count && seg[j].IsName && !seg[j].IsAny(NotAliases))
+                {
+                    source.Alias = seg[j++].Name; source.Explicit = true;
+                    if (derived && Open(j)) { int close = Match(j); if (close > 0) { source.Columns = NameList(j, close); j = close + 1; } }
+                }
+                if (source.Alias.Length == 0) return j;
+                if (parts != null)
+                {
+                    if (parts.Count == 1 && Ctes.TryGetValue(parts[0], out var cte)) { source.Columns = cte; source.Description = "cte " + parts[0]; }
+                    else
+                    {
+                        source.Table = parts.Count > 2 ? null : catalog.FirstOrDefault(t => names.Equals(t.Name, parts[parts.Count - 1]) &&
+                            names.Equals(t.Schema, parts.Count == 2 ? parts[0] : defaultSchema));
+                        source.Columns = source.Table?.Columns ?? Array.Empty<string>();
+                        source.Description = source.Table == null ? string.Join(".", parts) : source.Table.Schema + "." + source.Table.Name;
+                    }
+                }
+                Sources.Add(source);
+                return j;
+            }
         }
 
         public static TextEdit ExpandWildcard(string sql, int position, IReadOnlyList<SchemaTable> tables,
@@ -115,6 +530,7 @@ namespace Querywright.Core
         {
             internal readonly List<CompletionItem> Items = new List<CompletionItem>();
             internal TextEdit? Expansion;
+            internal bool Handled, TableMarker;
             private readonly int wildcardPosition = -1;
             private readonly IReadOnlyList<SchemaTable> tables;
             private readonly string defaultSchema;
@@ -180,15 +596,17 @@ namespace Querywright.Core
                 if (node.SchemaObject.BaseIdentifier.Value != Marker) return;
                 string? schema = node.SchemaObject.SchemaIdentifier?.Value;
                 if (node.SchemaObject.DatabaseIdentifier != null || node.SchemaObject.ServerIdentifier != null) return;
+                Handled = TableMarker = true;
                 foreach (var table in tables.Where(t => schema == null || names.Equals(t.Schema, schema)))
                     Items.Add(new CompletionItem(table.Name, schema == null ? Quote(table.Schema) + "." + Quote(table.Name) : Quote(table.Name),
-                        table.Schema + "." + table.Name));
+                        "table " + table.Schema + "." + table.Name));
             }
 
             public override void Visit(ColumnReferenceExpression node)
             {
                 var ids = node.MultiPartIdentifier?.Identifiers;
                 if (ids == null || ids.Count == 0 || ids[ids.Count - 1].Value != Marker || ids.Count > 2) return;
+                Handled = true;
                 string? qualifier = ids.Count == 2 ? ids[0].Value : null;
                 var seen = new HashSet<string>(names);
                 int boundary = scopeBoundaries.Count == 0 ? 0 : scopeBoundaries.Peek();
@@ -200,9 +618,10 @@ namespace Querywright.Core
                         string? alias = reference?.Alias?.Value ?? (reference as NamedTableReference)?.SchemaObject.BaseIdentifier.Value;
                         if (alias == null) continue;
                         if (!seen.Add(alias) || (qualifier != null && !names.Equals(alias, qualifier))) continue;
+                        var table = reference is NamedTableReference named && !IsCte(named) ? Find(named) : null;
                         foreach (string column in Columns(reference!))
-                                Items.Add(new CompletionItem(column, qualifier == null ? Quote(alias) + "." + Quote(column) : Quote(column),
-                                    alias + "." + column));
+                            Items.Add(new CompletionItem(column, qualifier == null ? Quote(alias) + "." + Quote(column) : Quote(column),
+                                ColumnDescription(table?.TypeOf(column), alias + "." + column)));
                         if (qualifier != null) return; // Inner aliases shadow outer aliases, even when metadata is missing.
                     }
                 }
@@ -220,15 +639,8 @@ namespace Querywright.Core
                 return Find(named)?.Columns ?? Array.Empty<string>();
             }
 
-            private static IEnumerable<string> Projection(QueryExpression expression)
-            {
-                if (expression is QueryParenthesisExpression parenthesis) return Projection(parenthesis.QueryExpression);
-                if (expression is BinaryQueryExpression binary) return Projection(binary.FirstQueryExpression);
-                if (!(expression is QuerySpecification query)) return Array.Empty<string>();
-                return query.SelectElements.OfType<SelectScalarExpression>().Select(column => column.ColumnName?.Value
-                    ?? (column.Expression as ColumnReferenceExpression)?.MultiPartIdentifier?.Identifiers.LastOrDefault()?.Value)
-                    .Where(name => name != null).Select(name => name!);
-            }
+            private bool IsCte(NamedTableReference named) =>
+                named.SchemaObject.SchemaIdentifier == null && cteScopes.Any(scope => scope.ContainsKey(named.SchemaObject.BaseIdentifier.Value));
 
             private SchemaTable? Find(NamedTableReference reference)
             {

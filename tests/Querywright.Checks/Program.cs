@@ -150,6 +150,9 @@ using var canceled = new CancellationTokenSource();
 canceled.Cancel();
 try { SqlAnalysis.Analyze("SELECT *", canceled.Token); throw new Exception("Expected cancellation"); }
 catch (OperationCanceledException) { checks++; }
+var peopleCatalog = new[] { new SchemaTable("dbo", "People", new[] { "Id", "FullName" }) };
+var peopleEdit = SqlCompletion.ExpandWildcard("SELECT *\r\nFROM dbo.People;", 7, peopleCatalog);
+Check(peopleEdit.Text.Contains("FullName"), "wildcard before CRLF FROM: " + peopleEdit.Text);
 Console.WriteLine($"PASS: {checks} total checks. SSMS integration not tested.");
 
 var renameSql = "DECLARE @id int = 1; SELECT @id; -- @id\r\nEXEC dbo.P @id = @id; SELECT N'@id';\r\nGO\r\nDECLARE @id int; SELECT @id;";
@@ -216,10 +219,10 @@ CompletionResult Complete(string text)
     return SqlCompletion.Complete(text.Remove(position, 1), position, catalog);
 }
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Count == 3, "alias columns");
-Check(Complete("SELECT p.Na|me FROM dbo.People p;").Items.Single().InsertText == "[Name]", "partial identifier replacement");
+Check(Complete("SELECT p.Na|me FROM dbo.People p;").Items.Single().InsertText == "Name", "partial identifier replacement");
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Any(i => i.InsertText == "[odd]]column]"), "escaped insertion");
-Check(Complete("SELECT 1 FROM dbo.Pe|;").Items.Single().InsertText == "[People]", "schema objects");
-Check(Complete("SELECT 1 FROM Pe|;").Items.Single().InsertText == "[dbo].[People]", "qualified object insertion");
+Check(Complete("SELECT 1 FROM dbo.Pe|;").Items.Single().InsertText == "People", "schema objects");
+Check(Complete("SELECT 1 FROM Pe|;").Items.Single().InsertText == "dbo.People", "qualified object insertion");
 Check(Complete("SELECT p.| FROM dbo.People p INNER JOIN dbo.Orders o ON p.Id=o.PersonId;").Items.Count == 3, "join scope");
 Check(Complete("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT p.| FROM dbo.Orders p);").Items.All(i => i.Name != "Name"), "inner alias shadows outer");
 Check(Complete("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT p.| FROM dbo.Orders o);").Items.Count == 3, "correlated scope");
@@ -254,11 +257,11 @@ void RejectExpand(string text)
     catch (InvalidOperationException) { checks++; return; }
     throw new Exception("Expected wildcard rejection for " + text);
 }
-Check(Expand("SELECT *| FROM dbo.People;").Text == "[Id], [Name], [odd]]column]", "single-table wildcard");
-Check(Expand("SELECT o.*|, 1 FROM dbo.People p JOIN dbo.Orders o ON p.Id = o.PersonId;") is var q && q.Text == "[o].[OrderId], [o].[PersonId]" && q.Start == 7 && q.Length == 3, "qualified wildcard span");
-Check(Expand("SELECT |* FROM People p, dbo.Orders o;").Text.StartsWith("[p].[Id], [p].[Name], [p].[odd]]column], [o].[OrderId]"), "multi-table wildcard order");
-Check(Expand("WITH c AS (SELECT OrderId FROM dbo.Orders) SELECT *| FROM c;").Text == "[OrderId]", "CTE wildcard");
-Check(Expand("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT *| FROM dbo.Orders);").Text == "[OrderId], [PersonId]", "inner scope wildcard");
+Check(Expand("SELECT *| FROM dbo.People;").Text == "Id, Name, [odd]]column]", "single-table wildcard");
+Check(Expand("SELECT o.*|, 1 FROM dbo.People p JOIN dbo.Orders o ON p.Id = o.PersonId;") is var q && q.Text == "o.OrderId, o.PersonId" && q.Start == 7 && q.Length == 3, "qualified wildcard span");
+Check(Expand("SELECT |* FROM People p, dbo.Orders o;").Text.StartsWith("p.Id, p.Name, p.[odd]]column], o.OrderId"), "multi-table wildcard order");
+Check(Expand("WITH c AS (SELECT OrderId FROM dbo.Orders) SELECT *| FROM c;").Text == "OrderId", "CTE wildcard");
+Check(Expand("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT *| FROM dbo.Orders);").Text == "OrderId, PersonId", "inner scope wildcard");
 RejectExpand("SELECT *| FROM dbo.Missing;");
 RejectExpand("SELECT *| FROM dbo.People p CROSS APPLY OPENJSON(p.Name) j;");
 RejectExpand("SELECT x.*| FROM dbo.People p;");
@@ -549,12 +552,12 @@ catch (ArgumentException) { checks++; }
 Console.WriteLine($"PASS: {checks} total checks including foreign keys and column types. SSMS integration not tested.");
 
 var nameItem = CompleteAt("SELECT p.| FROM dbo.People p;", fkCatalog).Items.Single(i => i.Name == "Name");
-Check(nameItem.Description == "column nvarchar(100) p.Name" && nameItem.InsertText == "[Name]", "typed column description");
+Check(nameItem.Description == "column nvarchar(100) p.Name" && nameItem.InsertText == "Name", "typed column description");
 Check(CompleteAt("SELECT Na|me FROM dbo.People;", fkCatalog).Items[0].Description == "column nvarchar(100) People.Name", "typed unqualified column");
 Check(CompleteAt("SELECT * FROM |", fkCatalog).Items.Single(i => i.Name == "Orders").Description == "table dbo.Orders", "table description");
 var noFrom = CompleteAt("SELECT Na|", fkCatalog);
-Check(noFrom.Items[0].Name == "Name" && noFrom.Items[0].InsertText == "[Name]" && noFrom.Start == 7 && noFrom.Length == 2, "SELECT column without FROM");
-Check(Names(CompleteAt("SELECT * FROM dbo.|", fkCatalog)).SequenceEqual(new[] { "Orders", "People" }) && CompleteAt("SELECT * FROM dbo.|", fkCatalog).Items[0].InsertText == "[Orders]", "schema-dot tables");
+Check(noFrom.Items[0].Name == "Name" && noFrom.Items[0].InsertText == "Name" && noFrom.Start == 7 && noFrom.Length == 2, "SELECT column without FROM");
+Check(Names(CompleteAt("SELECT * FROM dbo.|", fkCatalog)).SequenceEqual(new[] { "Orders", "People" }) && CompleteAt("SELECT * FROM dbo.|", fkCatalog).Items[0].InsertText == "Orders", "schema-dot tables");
 Check(Names(CompleteAt("SELECT * FROM sales.| WHERE", fkCatalog)).SequenceEqual(new[] { "Lines", "Notes" }), "schema-dot tables in unparsable SQL");
 Check(Names(CompleteAt("SELECT * FROM sales.L|", fkCatalog)).SequenceEqual(new[] { "Lines" }), "schema-dot prefix");
 Check(CompleteAt("SELECT p.| FROM dbo.People p WHERE", fkCatalog).Items.Count == 3, "alias-dot columns in unparsable SQL");

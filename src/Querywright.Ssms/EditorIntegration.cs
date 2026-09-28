@@ -63,6 +63,16 @@ namespace Querywright.Ssms
         private static bool IsGoToDefinition(Guid group, uint id) =>
             group == VSConstants.GUID_VSStandardCommandSet97 && id == (uint)VSConstants.VSStd97CmdID.GotoDefn;
 
+        /// <summary>False when the typed word is not a prefix of the selected item, so Tab never swaps in an unrelated name.</summary>
+        private bool SelectionMatches()
+        {
+            var session = completion.GetSession(view);
+            if (session == null || session.IsDismissed) return true;
+            string typed = session.ApplicableToSpan.GetText(view.TextBuffer.CurrentSnapshot);
+            var selected = session.GetComputedItems(CancellationToken.None).SelectedItem;
+            return typed.Length == 0 || selected?.FilterText.StartsWith(typed, StringComparison.OrdinalIgnoreCase) == true;
+        }
+
         public int Exec(ref Guid group, uint id, uint options, IntPtr input, IntPtr output)
         {
             Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
@@ -78,7 +88,7 @@ namespace Querywright.Ssms
             if (package != null)
             {
                 // SQL Prompt: Tab on a typed snippet shortcut expands it even while the suggestion list is open.
-                if (IsTab(group, id) && completion.IsCompletionActive(view) && package.HasSnippetShortcut(view))
+                if (IsTab(group, id) && completion.IsCompletionActive(view) && (package.HasSnippetShortcut(view) || !SelectionMatches()))
                     completion.GetSession(view)?.Dismiss();
                 if (IsTab(group, id) && !completion.IsCompletionActive(view))
                 {
@@ -154,7 +164,8 @@ namespace Querywright.Ssms
                 // ponytail: typing must never raise dialogs; explicit commands report schema errors.
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }
             }, token).ConfigureAwait(false);
-            var snippets = applicableTo.IsEmpty ? Array.Empty<KeyValuePair<string, string>>() : package.SnippetList();
+            bool member = applicableTo.Start.Position > 0 && location.Snapshot[applicableTo.Start.Position - 1] == '.';
+            var snippets = applicableTo.IsEmpty || member ? Array.Empty<KeyValuePair<string, string>>() : package.SnippetList();
             if ((result == null || result.Items.Count == 0) && snippets.Count == 0) return CompletionContext.Empty;
             // Snippets insert their shortcut; Tab then expands it (see EditorCommandFilter).
             var items = snippets.Select(s => new VsCompletionItem(s.Key, this, null!, ImmutableArray<CompletionFilter>.Empty,

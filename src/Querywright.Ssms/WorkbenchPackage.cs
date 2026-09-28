@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.Design;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -47,6 +48,35 @@ namespace Querywright.Ssms
         }
 
         internal bool SchemaConfigured => !string.IsNullOrWhiteSpace(options?.SchemaFile);
+
+        /// <summary>Live metadata merged over the offline schema; null when neither is available. Never blocks or throws (typing path).</summary>
+        internal IReadOnlyList<SchemaTable> CurrentTables()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            IReadOnlyList<SchemaTable> offline = null;
+            try { offline = LoadSchema(); } catch (Exception error) when (!(error is OutOfMemoryException)) { }
+            var live = options?.LiveMetadata != false ? LiveMetadata.TryGet(LiveMetadata.Capture()) : null;
+            return Merge(live, offline);
+        }
+
+        /// <summary>For explicit commands: waits for live metadata and reports offline schema errors.</summary>
+        private async Task<IReadOnlyList<SchemaTable>> RequireTablesAsync()
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            var offline = await Task.Run(LoadSchema);
+            var tables = Merge(await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(20)), offline);
+            if (tables == null)
+                throw new InvalidOperationException("Connect the query window to a database, or set an offline schema SQL file under Tools > Options > Querywright.");
+            return tables;
+        }
+
+        private static IReadOnlyList<SchemaTable> Merge(IReadOnlyList<SchemaTable> live, IReadOnlyList<SchemaTable> offline)
+        {
+            if (live == null || offline == null) return live ?? offline;
+            var names = new HashSet<string>(live.Select(t => t.Schema + "." + t.Name), StringComparer.OrdinalIgnoreCase);
+            return live.Concat(offline.Where(t => !names.Contains(t.Schema + "." + t.Name))).ToArray();
+        }
 
         /// <summary>Offline schema, reparsed only when the file changes. Null when none is configured. Thread-safe.</summary>
         internal IReadOnlyList<SchemaTable> LoadSchema()
@@ -108,10 +138,11 @@ namespace Querywright.Ssms
                 var snapshot = view.TextSnapshot;
                 int caret = view.Caret.Position.BufferPosition.Position;
                 var line = view.Caret.Position.BufferPosition.GetContainingLine();
-                if (caret > 0 && snapshot[caret - 1] == '*' && SchemaConfigured)
+                IReadOnlyList<SchemaTable> tables;
+                if (caret > 0 && snapshot[caret - 1] == '*' && (tables = CurrentTables()) != null)
                 {
                     TextEdit edit;
-                    try { edit = SqlCompletion.ExpandWildcard(snapshot.GetText(), caret - 1, LoadSchema()); }
+                    try { edit = SqlCompletion.ExpandWildcard(snapshot.GetText(), caret - 1, tables); }
                     catch (FormatException) { return false; } // Incomplete SQL while typing: ordinary Tab.
                     ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
                     return true;
@@ -184,9 +215,8 @@ namespace Querywright.Ssms
                 var snapshot = view.TextSnapshot;
                 string sql = snapshot.GetText();
                 int position = view.Caret.Position.BufferPosition.Position;
-                if (!SchemaConfigured)
-                    throw new InvalidOperationException("Set an offline schema SQL file under Tools > Options > Querywright. Live metadata integration is pending.");
-                var edit = await Task.Run(() => SqlCompletion.ExpandWildcard(sql, position, LoadSchema()));
+                var tables = await RequireTablesAsync();
+                var edit = await Task.Run(() => SqlCompletion.ExpandWildcard(sql, position, tables));
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
             }
@@ -232,14 +262,13 @@ namespace Querywright.Ssms
                 var snapshot = view.TextSnapshot;
                 int position = view.Caret.Position.BufferPosition.Position;
                 string sql = snapshot.GetText();
-                if (!SchemaConfigured)
-                    throw new InvalidOperationException("Set an offline schema SQL file under Tools > Options > Querywright. Live metadata integration is pending.");
-                var result = await Task.Run(() => SqlCompletion.Complete(sql, position, LoadSchema()));
+                var tables = await RequireTablesAsync();
+                var result = await Task.Run(() => SqlCompletion.Complete(sql, position, tables));
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (view.IsClosed || view.TextSnapshot != snapshot) throw new InvalidOperationException("Query changed. Request suggestions again.");
                 if (result.Items.Count == 0)
                 {
-                    ShowWarning(string.IsNullOrEmpty(result.Limitation) ? "No matching columns or tables in the configured offline schema." : result.Limitation);
+                    ShowWarning(string.IsNullOrEmpty(result.Limitation) ? "No matching columns or tables in the database metadata." : result.Limitation);
                     return;
                 }
                 var picker = new CompletionPicker(result.Items);

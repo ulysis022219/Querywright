@@ -9,8 +9,13 @@ namespace Querywright.Ssms
     {
         [Category("Completion")]
         [DisplayName("Offline schema SQL file")]
-        [Description("Optional CREATE TABLE script used for offline completion. Live connection metadata is not yet implemented.")]
+        [Description("Optional CREATE TABLE script used for completion when not connected, or for tables missing from the connection.")]
         public string SchemaFile { get; set; } = "";
+
+        [Category("Completion")]
+        [DisplayName("Read live metadata")]
+        [Description("Read table and column names from the query window's connection with one fixed catalog query (sys.objects, sys.columns). Never runs your SQL.")]
+        public bool LiveMetadata { get; set; } = true;
 
         [Category("Shared settings")]
         [DisplayName("Settings file")]

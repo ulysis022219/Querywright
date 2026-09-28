@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.ComponentModel.Composition;
 using System.Linq;
@@ -43,6 +44,7 @@ namespace Querywright.Ssms
                 "Editor opened: content type " + type.TypeName + " (" + string.Join(",", type.BaseTypes.Select(b => b.TypeName)) + ")");
             if (!IsSql(type)) return;
             WorkbenchPackage.EnsureLoaded();
+            WorkbenchPackage.Instance?.CurrentTables(); // start the live metadata load before the first keystroke
             var filter = new EditorCommandFilter(view, Completion);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
         }
@@ -104,11 +106,15 @@ namespace Querywright.Ssms
     internal sealed class CompletionSource : IAsyncCompletionSource
     {
         private static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
+        private volatile IReadOnlyList<SchemaTable>? tables;
 
         public CompletionStartData InitializeCompletion(CompletionTrigger trigger, SnapshotPoint location, CancellationToken token)
         {
-            if (!EditorListener.IsSql(location.Snapshot.ContentType) || WorkbenchPackage.Instance?.SchemaConfigured != true)
+            if (!EditorListener.IsSql(location.Snapshot.ContentType) || WorkbenchPackage.Instance == null)
                 return CompletionStartData.DoesNotParticipateInCompletion;
+            // Connection lookup needs the UI thread, where the broker normally calls this.
+            if (Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess()) tables = WorkbenchPackage.Instance.CurrentTables();
+            if (tables == null) return CompletionStartData.DoesNotParticipateInCompletion;
             if (trigger.Reason == CompletionTriggerReason.Insertion &&
                 !(char.IsLetter(trigger.Character) || trigger.Character == '_' || trigger.Character == '.' || trigger.Character == ' '))
                 return CompletionStartData.DoesNotParticipateInCompletion;
@@ -126,11 +132,11 @@ namespace Querywright.Ssms
             if (package == null) return CompletionContext.Empty;
             string sql = location.Snapshot.GetText();
             int position = location.Position;
+            var tables = this.tables;
             var result = await Task.Run(() =>
             {
                 try
                 {
-                    var tables = package.LoadSchema();
                     return tables == null ? null : SqlCompletion.Complete(sql, position, tables);
                 }
                 // ponytail: typing must never raise dialogs; explicit commands report schema errors.

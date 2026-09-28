@@ -21,19 +21,28 @@ using VsCompletionItem = Microsoft.VisualStudio.Language.Intellisense.AsyncCompl
 namespace Querywright.Ssms
 {
     /// <summary>Hooks Tab (snippet shortcuts, wildcard expansion) and F12 (go to definition) in SQL editors.</summary>
+    // ponytail: exported for all text so SSMS's query-editor content type (name unconfirmed) is covered; filtered in code.
     [Export(typeof(IVsTextViewCreationListener))]
-    [ContentType("SQL")]
-    [ContentType("T-SQL")]
+    [ContentType("text")]
     [TextViewRole(PredefinedTextViewRoles.Editable)]
     internal sealed class EditorListener : IVsTextViewCreationListener
     {
         [Import] internal IVsEditorAdaptersFactoryService Adapters = null!;
         [Import] internal IAsyncCompletionBroker Completion = null!;
 
+        internal static bool IsSql(IContentType type) =>
+            type.IsOfType("SQL") || type.IsOfType("T-SQL") || type.TypeName.IndexOf("SQL", StringComparison.OrdinalIgnoreCase) >= 0;
+
         public void VsTextViewCreated(IVsTextView adapter)
         {
+            Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
             var view = Adapters.GetWpfTextView(adapter);
             if (view == null) return;
+            var type = view.TextBuffer.ContentType;
+            Microsoft.VisualStudio.Shell.ActivityLog.TryLogInformation("Querywright",
+                "Editor opened: content type " + type.TypeName + " (" + string.Join(",", type.BaseTypes.Select(b => b.TypeName)) + ")");
+            if (!IsSql(type)) return;
+            WorkbenchPackage.EnsureLoaded();
             var filter = new EditorCommandFilter(view, Completion);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
         }
@@ -56,7 +65,12 @@ namespace Querywright.Ssms
             var package = WorkbenchPackage.Instance;
             if (package != null)
             {
-                if (IsTab(group, id) && !completion.IsCompletionActive(view) && package.TryTabExpand(view)) return VSConstants.S_OK;
+                if (IsTab(group, id) && !completion.IsCompletionActive(view))
+                {
+                    bool expanded = package.TryTabExpand(view);
+                    Microsoft.VisualStudio.Shell.ActivityLog.TryLogInformation("Querywright", "Tab received; expanded=" + expanded);
+                    if (expanded) return VSConstants.S_OK;
+                }
                 if (IsGoToDefinition(group, id) && package.TryGoToDefinition(view)) return VSConstants.S_OK;
             }
             return Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
@@ -79,8 +93,7 @@ namespace Querywright.Ssms
 
     [Export(typeof(IAsyncCompletionSourceProvider))]
     [Name("Querywright schema completion")]
-    [ContentType("SQL")]
-    [ContentType("T-SQL")]
+    [ContentType("text")]
     internal sealed class CompletionSourceProvider : IAsyncCompletionSourceProvider
     {
         public IAsyncCompletionSource GetOrCreate(ITextView textView) =>
@@ -94,7 +107,8 @@ namespace Querywright.Ssms
 
         public CompletionStartData InitializeCompletion(CompletionTrigger trigger, SnapshotPoint location, CancellationToken token)
         {
-            if (WorkbenchPackage.Instance?.SchemaConfigured != true) return CompletionStartData.DoesNotParticipateInCompletion;
+            if (!EditorListener.IsSql(location.Snapshot.ContentType) || WorkbenchPackage.Instance?.SchemaConfigured != true)
+                return CompletionStartData.DoesNotParticipateInCompletion;
             if (trigger.Reason == CompletionTriggerReason.Insertion &&
                 !(char.IsLetter(trigger.Character) || trigger.Character == '_' || trigger.Character == '.' || trigger.Character == ' '))
                 return CompletionStartData.DoesNotParticipateInCompletion;

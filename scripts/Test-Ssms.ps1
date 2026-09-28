@@ -48,12 +48,18 @@ function Invoke-Named([int]$id, [string]$pattern) {
     foreach ($window in $auto::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition)) {
         if ($window.Current.ProcessId -ne $id) { continue }
         $match = $window.FindAll('Descendants', [System.Windows.Automation.Condition]::TrueCondition) |
-            Where-Object { $_.Current.Name -match $pattern } | Select-Object -First 1
+            Where-Object { $_.Current.Name -match $pattern -and $_.Current.ControlType.ProgrammaticName -match 'Button|Hyperlink' } |
+            Select-Object -First 1
         if (-not $match) { continue }
         Write-Host "dismiss: [$($match.Current.Name)] in [$($window.Current.Name)]"
+        try {
+            $parent = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($match)
+            $context = $parent.FindAll('Descendants', [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }
+            Write-Host "dismiss context: [$($parent.Current.Name)] $($context -join ' | ')"
+        } catch { }
         $invoke = $null
         if ($match.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) { $invoke.Invoke() }
-        else { $match.SetFocus(); Keys ' ' 0 }
+        else { try { $match.SetFocus(); Keys ' ' 0 } catch { Write-Host "dismiss failed: $_" } }
         Start-Sleep 3
         return $true
     }
@@ -109,6 +115,7 @@ function Session([string]$name, [string]$text, [string[]]$extra, [string]$steps)
         Snap "$name-done"
         Thumbnail $name | Write-Host
         if ($id) { Windows $id | Write-Host }
+        if (Test-Path "$result.trace") { Get-Content "$result.trace" | ForEach-Object { "trace ${name}: $_" } | Write-Host }
         if (-not (Test-Path $result)) { return 'error: self-test wrote no result within 4 minutes' }
         return [IO.File]::ReadAllText($result)
     } catch {

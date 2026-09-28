@@ -55,37 +55,72 @@ Write-Output "SSMS $([Diagnostics.FileVersionInfo]::GetVersionInfo($ssms).Produc
 & (Join-Path $PSScriptRoot 'Install-Development.ps1') -SsmsDirectory $ide -Package $Package
 
 $results = [ordered]@{}
-$sql = Join-Path $Out 'snippet.sql'
-[IO.File]::WriteAllText($sql, 'ssf')
-$process = Start-Process $ssms -ArgumentList "`"$sql`"", '-nosplash', '/log' -PassThru
-try {
-    Start-Sleep 60
-    Snap 'started'
-    # Dismiss first-run and connection prompts; a disconnected editor is enough for Tab expansion.
-    1..3 | ForEach-Object { [void][Microsoft.VisualBasic.Interaction]::AppActivate($process.Id); Keys '{ESC}' 1500 }
-    Snap 'dialogs-dismissed'
-    [void][Microsoft.VisualBasic.Interaction]::AppActivate($process.Id)
-    Keys '^{END}'
-    Keys '{TAB}' 2000
-    Snap 'after-tab'
-    Windows $process.Id
-    Thumbnail 'after-tab'
-    Keys '^s' 3000
-    $text = [IO.File]::ReadAllText($sql)
-    $results['ssf + Tab'] = if ($text -eq 'SELECT * FROM ') { 'PASS' } else { "FAIL: file contains [$text]" }
-} finally {
-    Snap 'final'
-    if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-    Get-ChildItem "$env:APPDATA\Microsoft\SSMS" -Recurse -Filter ActivityLog.xml -ErrorAction SilentlyContinue |
-        Copy-Item -Destination $Out
+function Session([string]$name, [string]$text, [string[]]$extra, [scriptblock]$keys) {
+    # One SSMS instance per scenario; returns the saved file text.
+    $file = Join-Path $Out "$name.sql"
+    [IO.File]::WriteAllText($file, $text)
+    $process = Start-Process $ssms -ArgumentList (@("`"$file`"") + $extra + '-nosplash', '/log') -PassThru
+    try {
+        Start-Sleep 60
+        Snap "$name-started"
+        # Dismiss first-run prompts; a disconnected editor is enough for the offline scenarios.
+        1..3 | ForEach-Object { [void][Microsoft.VisualBasic.Interaction]::AppActivate($process.Id); Keys '{ESC}' 1500 }
+        [void][Microsoft.VisualBasic.Interaction]::AppActivate($process.Id)
+        & $keys
+        Snap "$name-done"
+        Windows $process.Id | Write-Host
+        Keys '^s' 3000
+        return [IO.File]::ReadAllText($file)
+    } catch {
+        return "error: $_"
+    } finally {
+        if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+        Get-ChildItem "$env:APPDATA\Microsoft\SSMS" -Recurse -Filter ActivityLog.xml -ErrorAction SilentlyContinue |
+            Select-Object -First 1 | Copy-Item -Destination (Join-Path $Out "ActivityLog-$name.xml")
+    }
 }
-$log = Get-ChildItem $Out -Filter ActivityLog.xml | Select-Object -First 1
-if ($log) {
+function Expect([string]$name, [string]$actual, [scriptblock]$ok) {
+    $results[$name] = if (& $ok $actual) { 'PASS' } else { "FAIL: file contains [$actual]" }
+}
+
+$text = Session 'snippet' 'ssf' @() { Keys '^{END}'; Keys '{TAB}' 2000; Thumbnail 'snippet' | Write-Host }
+Expect 'ssf + Tab' $text { param($t) $t -eq 'SELECT * FROM ' }
+
+$text = Session 'definition' "DECLARE @abc int;`r`nSELECT @abc;" @() { Keys '^{END}'; Keys '{LEFT 2}'; Keys '{F12}' 2000; Keys 'Z' }
+Expect 'F12 local variable' $text { param($t) $t -eq "DECLARE Z int;`r`nSELECT @abc;" }
+
+# Live metadata against LocalDB on the disposable runner (the only database this test writes to).
+$server = '(localdb)\MSSQLLocalDB'
+try {
+    $localdb = (Get-Command SqlLocalDB.exe -ErrorAction SilentlyContinue).Source
+    if (-not $localdb) {
+        choco install sqllocaldb -y --no-progress | Out-Null
+        $localdb = Get-ChildItem 'C:\Program Files\Microsoft SQL Server\*\Tools\Binn\SqlLocalDB.exe' | Select-Object -Last 1 -ExpandProperty FullName
+    }
+    & $localdb create MSSQLLocalDB 2>&1 | Out-Null
+    & $localdb start MSSQLLocalDB | Out-Null
+    $connection = New-Object System.Data.SqlClient.SqlConnection "Server=$server;Integrated Security=true;Initial Catalog=master"
+    $connection.Open()
+    foreach ($statement in "IF DB_ID('QwTest') IS NULL CREATE DATABASE QwTest;",
+        "USE QwTest; IF OBJECT_ID('dbo.People') IS NULL CREATE TABLE dbo.People (Id int NOT NULL, FullName nvarchar(100) NULL);") {
+        $command = $connection.CreateCommand(); $command.CommandText = $statement; [void]$command.ExecuteNonQuery()
+    }
+    $connection.Close()
+    $live = $true
+} catch { $results['LocalDB setup'] = "FAIL: $($_.Exception.Message)"; $live = $false }
+if ($live) {
+    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-E') {
+        Keys '^{HOME}'; Keys '{END}'; Keys '{TAB}' 3000; Thumbnail 'wildcard' | Write-Host
+    }
+    Expect '* + Tab from live metadata' $text { param($t) $t -match 'FullName' -and $t -notmatch '\*' }
+}
+
+foreach ($log in Get-ChildItem $Out -Filter 'ActivityLog-*.xml') {
     [xml]$activity = Get-Content $log.FullName
     $activity.activity.entry | Where-Object { ($_.description + $_.source + $_.path) -match 'Querywright|a13c1b0c' } |
-        ForEach-Object { "activity: $($_.type) $($_.source): $($_.description)" }
+        ForEach-Object { "$($log.BaseName): $($_.type) $($_.source): $($_.description)" }
     $ours = $activity.activity.entry | Where-Object { $_.type -eq 'Error' -and ($_.description + $_.source + $_.path) -match 'Querywright|a13c1b0c' }
-    $results['package load errors'] = if ($ours) { 'FAIL: ' + (($ours | ForEach-Object description) -join ' | ') } else { 'PASS' }
+    $results["package errors ($($log.BaseName))"] = if ($ours) { 'FAIL: ' + (($ours | ForEach-Object description) -join ' | ') } else { 'PASS' }
 }
 $results.GetEnumerator() | ForEach-Object { Write-Output ("{0}: {1}" -f $_.Key, $_.Value) }
 if ($results.Values -match '^FAIL') { exit 1 }

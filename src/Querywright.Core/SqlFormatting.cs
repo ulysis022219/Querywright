@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
-namespace SqlWorkbench.Core
+namespace Querywright.Core
 {
     public sealed class FormattingStyle
     {

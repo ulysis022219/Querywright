@@ -1,11 +1,11 @@
-param([string]$Path = "$PSScriptRoot/../src/SqlWorkbench.Ssms/bin/Debug/net472/SqlWorkbench.Ssms.vsix")
+param([string]$Path = "$PSScriptRoot/../src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix")
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $Path))
 try {
     $names = @($archive.Entries.FullName)
-    foreach ($required in @('extension.vsixmanifest', 'SqlWorkbench.Ssms.dll', 'SqlWorkbench.Ssms.pkgdef',
-        'SqlWorkbench.Core.dll', 'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt')) {
+    foreach ($required in @('extension.vsixmanifest', 'Querywright.Ssms.dll', 'Querywright.Ssms.pkgdef',
+        'Querywright.Core.dll', 'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt')) {
         if ($names -notcontains $required) { throw "Package missing $required" }
     }
     if ($names -match '(^|/)Microsoft\.VisualStudio\..*\.dll$') { throw 'Host SDK assemblies must not be bundled.' }

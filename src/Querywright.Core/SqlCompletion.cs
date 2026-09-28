@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
-namespace SqlWorkbench.Core
+namespace Querywright.Core
 {
     public sealed class SchemaTable
     {
@@ -48,7 +48,7 @@ namespace SqlWorkbench.Core
 
     public static class SqlCompletion
     {
-        private const string Marker = "__SqlWorkbenchCompletionMarker__";
+        private const string Marker = "__QuerywrightCompletionMarker__";
         private static string Quote(string name) => "[" + name.Replace("]", "]]") + "]";
 
         public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable> tables,

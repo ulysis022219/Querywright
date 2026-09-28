@@ -593,3 +593,7 @@ Check(typed.Items[0].Name == "o.PersonId = p.Id" && typed.Start == 48 && typed.L
 Check(CompleteAt("SELECT * FROM dbo.People p JOIN sales.Notes n ON |", fkCatalog).Items.All(i => !i.Name.Contains(" = ")), "no FK, no join condition");
 Check(CompleteAt("SELECT * FROM dbo.People p WHERE |", fkCatalog).Items.All(i => !i.Name.Contains(" = ")), "join conditions only after ON");
 Console.WriteLine($"PASS: {checks} total checks including FK join completion. SSMS integration not tested.");
+
+var unusedItems = SqlRefactoring.UnusedDeclarationItems("DECLARE @a int;\nDECLARE @b int = 1;\nSELECT @a;");
+Check(unusedItems.Count == 1 && unusedItems[0].Target == "@b" && unusedItems[0].Line == 2 && unusedItems[0].Offset == 24 && unusedItems[0].Length == 2, "unused declaration spans");
+Console.WriteLine($"PASS: {checks} total checks including unused declaration spans. SSMS integration not tested.");

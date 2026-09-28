@@ -11,7 +11,35 @@ namespace SqlWorkbench.Core
             if (string.IsNullOrWhiteSpace(folder)) throw new ArgumentException("Choose a snippet folder.", nameof(folder));
             Directory.CreateDirectory(folder);
             Seed(Path.Combine(folder, "Select.sql"), "SELECT $SELECTIONSTART$column_name$SELECTIONEND$\r\nFROM table_name;$CURSOR$");
+            // File name is the Tab-expansion shortcut, as in SQL Prompt (ssf + Tab).
+            Seed(Path.Combine(folder, "ssf.sql"), "SELECT * FROM $CURSOR$");
+            Seed(Path.Combine(folder, "sst.sql"), "SELECT TOP 100 * FROM $CURSOR$");
+            Seed(Path.Combine(folder, "scf.sql"), "SELECT COUNT(*) FROM $CURSOR$");
+            Seed(Path.Combine(folder, "ii.sql"), "INSERT INTO $CURSOR$");
+            Seed(Path.Combine(folder, "ups.sql"), "UPDATE $CURSOR$\r\nSET ");
+            Seed(Path.Combine(folder, "df.sql"), "DELETE FROM $CURSOR$");
+            Seed(Path.Combine(folder, "be.sql"), "BEGIN\r\n    $CURSOR$\r\nEND");
             Seed(Path.Combine(folder, "Create procedure.sql"), "CREATE PROCEDURE dbo.$SELECTIONSTART$ProcedureName$SELECTIONEND$\r\nAS\r\nBEGIN\r\n    SET NOCOUNT ON;\r\n    $CURSOR$\r\nEND;\r\n");
+        }
+
+        /// <summary>Returns the shortcut word ending at <paramref name="caret"/>, or null.</summary>
+        public static string? ShortcutBefore(string text, int caret)
+        {
+            if (text == null) throw new ArgumentNullException(nameof(text));
+            if (caret < 0 || caret > text.Length) throw new ArgumentOutOfRangeException(nameof(caret));
+            int start = caret;
+            while (start > 0 && caret - start < 64 && (char.IsLetterOrDigit(text[start - 1]) || text[start - 1] == '_')) start--;
+            if (start == caret || (start > 0 && (text[start - 1] == '@' || text[start - 1] == '#' || text[start - 1] == '.' || text[start - 1] == '['))) return null;
+            return text.Substring(start, caret - start);
+        }
+
+        /// <summary>Path of the snippet named by <paramref name="shortcut"/>, or null.</summary>
+        public static string? FindShortcut(string folder, string shortcut)
+        {
+            if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrEmpty(shortcut)) return null;
+            foreach (char c in shortcut) if (!char.IsLetterOrDigit(c) && c != '_') return null;
+            string path = Path.Combine(folder, shortcut + ".sql");
+            return File.Exists(path) ? path : null;
         }
 
         private static void Seed(string path, string text)

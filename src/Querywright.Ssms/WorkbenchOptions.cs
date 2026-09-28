@@ -3,7 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using Microsoft.VisualStudio.Shell;
 
-namespace SqlWorkbench.Ssms
+namespace Querywright.Ssms
 {
     public sealed class WorkbenchOptions : DialogPage
     {
@@ -21,6 +21,6 @@ namespace SqlWorkbench.Ssms
         [DisplayName("Snippet folder")]
         [Description("Folder of editable .sql templates. Use a shared folder for team snippets.")]
         public string SnippetFolder { get; set; } = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SqlWorkbench", "Snippets");
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "Snippets");
     }
 }

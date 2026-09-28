@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 
-namespace SqlWorkbench.Core
+namespace Querywright.Core
 {
     public static class SnippetFiles
     {

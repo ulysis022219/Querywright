@@ -11,35 +11,35 @@
     <Buttons>
       <Button guid="CommandsGuid" id="AddSemicolons" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>SqlWorkbench: insert semicolons</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: insert semicolons</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ExpandWildcard" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>SqlWorkbench: expand wildcard</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: expand wildcard</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameVariable" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>SqlWorkbench: rename local variable...</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: rename local variable...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CompleteSql" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>SqlWorkbench: suggest from offline schema...</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: suggest from offline schema...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FormatSql" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>SqlWorkbench: format SQL selection/document</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: format SQL selection/document</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AnalyzeDocument" priority="0x0080" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>SqlWorkbench: analyze SQL document</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: analyze SQL document</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="InsertSnippet" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>SqlWorkbench: insert snippet...</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: insert snippet...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SnippetCheck" priority="0x0100" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>SqlWorkbench: snippet smoke check</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: snippet smoke check</ButtonText></Strings>
       </Button>
     </Buttons>
   </Commands>

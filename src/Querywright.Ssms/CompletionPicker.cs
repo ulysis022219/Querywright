@@ -2,9 +2,9 @@ using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using SqlWorkbench.Core;
+using Querywright.Core;
 
-namespace SqlWorkbench.Ssms
+namespace Querywright.Ssms
 {
     internal sealed class CompletionPicker : Window
     {
@@ -13,7 +13,7 @@ namespace SqlWorkbench.Ssms
 
         internal CompletionPicker(IReadOnlyList<CompletionItem> items)
         {
-            Title = "SqlWorkbench: offline schema suggestions";
+            Title = "Querywright: offline schema suggestions";
             Width = 520; Height = 380; MinWidth = 300; MinHeight = 220;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var panel = new DockPanel { Margin = new Thickness(12) };

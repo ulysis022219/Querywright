@@ -1,4 +1,4 @@
-# SqlWorkbench
+# Querywright
 
 Independent open-source SQL productivity extension in development. Working name.
 Target: latest stable SSMS (22.10.1, verified September 28, 2026).
@@ -19,7 +19,7 @@ See [feature inventory](docs/features.md) for remaining scope and acceptance cri
 Requires .NET 10 SDK:
 
 ```powershell
-dotnet run --project tests/SqlWorkbench.Checks
+dotnet run --project tests/Querywright.Checks
 ```
 
 The core targets .NET Standard 2.0 for reuse from the Windows/.NET Framework SSMS host.
@@ -28,23 +28,23 @@ The checks use .NET 10; they do not prove SSMS runtime compatibility.
 ## Build the development VSIX
 
 ```powershell
-dotnet build src/SqlWorkbench.Ssms/SqlWorkbench.Ssms.csproj
+dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj
 powershell -NoProfile -File scripts/Test-Package.ps1
 ```
 
-Output: `src/SqlWorkbench.Ssms/bin/Debug/net472/SqlWorkbench.Ssms.vsix`.
+Output: `src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix`.
 Build does not install the package or start SSMS. The manifest targets SSMS 22 x64;
 installer recognition and runtime loading are not yet verified. SSMS updates may
 require compatibility changes. Microsoft does not officially support third-party extensions.
 
 After the user's SSMS setup finishes, validate the VSIX with SSMS 22's installer,
-then start a separate SSMS 22 session. Under Tools, run **SqlWorkbench: snippet smoke
+then start a separate SSMS 22 session. Under Tools, run **Querywright: snippet smoke
 check** and verify the preview appears. Confirm the command does not modify a query,
 and uninstall the package to verify clean removal. Do not interrupt SSMS 19 sessions.
 
 Validation on September 28, 2026:
-- `dotnet run --project tests/SqlWorkbench.Checks`: 106 checks passed (0.2.0 core).
-- `dotnet build src/SqlWorkbench.Ssms/SqlWorkbench.Ssms.csproj --no-restore`:
+- `dotnet run --project tests/Querywright.Checks`: 106 checks passed (0.2.0 core).
+- `dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj --no-restore`:
   VSIX generated, zero warnings/errors.
 - Archive inspected: extension/core assemblies, pkgdef and manifest included.
 - SSMS installation, menu visibility, runtime behavior and uninstall: pending.
@@ -59,14 +59,14 @@ autoloads in the background so they are active as soon as a query window opens.
   `df.sql`, `be.sql` are seeded; existing files are kept). Add your own `name.sql` to the snippet folder.
   Words that are not shortcuts, and Tab while a completion list is open, behave normally.
 - **Wildcard expansion:** with the caret right after `*` (or `alias.*`), Tab replaces it with
-  the column list from the offline schema. Also on Tools > SqlWorkbench: expand wildcard.
+  the column list from the offline schema. Also on Tools > Querywright: expand wildcard.
 - **F12 go to definition:** variables and parameters jump to their DECLARE, aliases to their
   FROM entry, CTE names to the WITH clause. Tables, views and procedures fall through to SSMS's
   own F12 for the connected database.
 - **Completion popup while typing:** tables after FROM/JOIN and columns after SELECT or `alias.`,
   from the offline schema file. Soft-selected after a space so Enter still inserts a newline.
   SSMS's built-in IntelliSense may show its own list alongside; live metadata is still pending.
-- **Insert semicolons:** Tools > SqlWorkbench: insert semicolons terminates every statement,
+- **Insert semicolons:** Tools > Querywright: insert semicolons terminates every statement,
   including inside IF/ELSE, TRY/CATCH and procedure bodies. Only semicolons change; verified by tokens.
 
 Pending runtime checks: Tab/F12 command routing in the SSMS 22 SQL editor, async completion
@@ -74,14 +74,14 @@ coexistence with native IntelliSense, and single undo for each expansion.
 
 ## Snippets and analysis prototype
 
-Tools > SqlWorkbench: insert snippet creates starter `.sql` templates in the local
+Tools > Querywright: insert snippet creates starter `.sql` templates in the local
 snippet folder and opens a file picker. Existing template content is preserved.
-Edit the files in any editor; Tools > Options > SqlWorkbench > General changes the
+Edit the files in any editor; Tools > Options > Querywright > General changes the
 folder, including to a team share. CURSOR, selection markers, DATE, TIME, MACHINE,
 and PASTE are implemented. SERVER, DBNAME, and USER require connection integration;
 insertion rejects templates requesting unavailable values before modifying SQL.
 
-Tools > SqlWorkbench: analyze SQL document runs four syntax-tree rules in the background
+Tools > Querywright: analyze SQL document runs four syntax-tree rules in the background
 and publishes results to Error List. Double-click navigation rejects stale snapshots.
 See [analysis coverage](docs/analysis-rules.md). No SQL is executed.
 
@@ -91,7 +91,7 @@ analysis navigation, edited/closed queries, and UI responsiveness.
 
 ## Formatting and team settings
 
-Tools > SqlWorkbench: format SQL selection/document formats selected complete SQL
+Tools > Querywright: format SQL selection/document formats selected complete SQL
 statements, or the full document when selection is empty. One undo transaction.
 Original text remains unchanged when parsing, protected-token checks or normalized
 SQL structure checks fail. These checks reduce accidental changes; they do not prove
@@ -104,13 +104,13 @@ keyword case, comma placement, multiline columns and FROM placement. More style
 options, previews, bulk file formatting and per-connection dialect remain pending.
 
 Copy [example settings](examples/team-settings.xml) to a local/shared file. Set its
-path under Tools > Options > SqlWorkbench > General > Settings file. Rule values:
+path under Tools > Options > Querywright > General > Settings file. Rule values:
 Disabled, Info, Warning, Error. Parse errors cannot be disabled. Settings are read
 on each invocation off the UI thread; invalid settings stop the operation.
 
 ## Offline completion prototype
 
-Set **Offline schema SQL file** in Tools > Options > SqlWorkbench to a script containing
+Set **Offline schema SQL file** in Tools > Options > Querywright to a script containing
 only CREATE TABLE statements (see examples/offline-schema.sql). No SQL is executed.
 At an identifier or after an alias dot, run **suggest from offline schema**. The picker
 inserts the chosen table/column with brackets and one undo transaction. Metadata is

@@ -3,9 +3,9 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using SqlWorkbench.Core;
+using Querywright.Core;
 
-namespace SqlWorkbench.Ssms
+namespace Querywright.Ssms
 {
     internal sealed class RenameVariableDialog : Window
     {
@@ -13,7 +13,7 @@ namespace SqlWorkbench.Ssms
 
         internal RenameVariableDialog(string sql, int position)
         {
-            Title = "SqlWorkbench: rename local variable";
+            Title = "Querywright: rename local variable";
             Width = 1000; Height = 650; MinWidth = 600; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };

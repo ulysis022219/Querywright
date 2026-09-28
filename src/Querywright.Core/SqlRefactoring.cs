@@ -219,15 +219,19 @@ namespace Querywright.Core
                 .Select(s => { var (start, length) = SqlNavigation.Span(s); return new OutlineItem(start, length, s.StartLine, Kind(s), Target(s)); }).ToArray();
         }
 
-        public static IReadOnlyList<string> UnusedDeclarations(string sql)
+        public static IReadOnlyList<string> UnusedDeclarations(string sql) => UnusedDeclarationItems(sql).Select(i => i.Target).ToArray();
+
+        /// <summary>Unused variables, table variables and parameters with their declaration spans (Kind "UNUSED").</summary>
+        public static IReadOnlyList<OutlineItem> UnusedDeclarationItems(string sql)
         {
             var script = Parse(new TSql170Parser(true), sql, "finding unused declarations");
-            var unused = new List<string>();
+            var unused = new List<OutlineItem>();
             foreach (var batch in script.Batches)
             {
                 var usage = new Usage();
                 batch.Accept(usage);
-                unused.AddRange(usage.Declared.Where(d => !usage.Used.Contains(d.Value)).Select(d => d.Value));
+                unused.AddRange(usage.Declared.Where(d => !usage.Used.Contains(d.Value))
+                    .Select(d => new OutlineItem(d.StartOffset, d.FragmentLength, d.StartLine, "UNUSED", d.Value)));
             }
             return unused;
         }

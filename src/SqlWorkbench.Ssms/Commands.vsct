@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable">
+  <Extern href="stdidcmd.h" />
+  <Extern href="vsshlids.h" />
+  <Commands package="PackageGuid">
+    <Groups>
+      <Group guid="CommandsGuid" id="ToolsGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS" />
+      </Group>
+    </Groups>
+    <Buttons>
+      <Button guid="CommandsGuid" id="RenameVariable" priority="0x0050" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>SqlWorkbench: rename local variable...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="CompleteSql" priority="0x0060" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>SqlWorkbench: suggest from offline schema...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="FormatSql" priority="0x0070" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>SqlWorkbench: format SQL selection/document</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AnalyzeDocument" priority="0x0080" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>SqlWorkbench: analyze SQL document</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="InsertSnippet" priority="0x0090" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>SqlWorkbench: insert snippet...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="SnippetCheck" priority="0x0100" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>SqlWorkbench: snippet smoke check</ButtonText></Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+  <Symbols>
+    <GuidSymbol name="PackageGuid" value="{a13c1b0c-af94-4f53-8d06-edf816e39450}" />
+    <GuidSymbol name="CommandsGuid" value="{b48a692b-82fb-47cf-bfc9-bdf13483d6c7}">
+      <IDSymbol name="ToolsGroup" value="0x1020" />
+      <IDSymbol name="SnippetCheck" value="0x0100" />
+      <IDSymbol name="InsertSnippet" value="0x0101" />
+      <IDSymbol name="AnalyzeDocument" value="0x0102" />
+      <IDSymbol name="FormatSql" value="0x0103" />
+      <IDSymbol name="CompleteSql" value="0x0104" />
+      <IDSymbol name="RenameVariable" value="0x0105" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>

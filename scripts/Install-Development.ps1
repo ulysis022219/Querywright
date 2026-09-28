@@ -1,7 +1,16 @@
-param([string]$SsmsDirectory = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE')
+param(
+    [string]$SsmsDirectory = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE',
+    [string]$Package,
+    [switch]$Uninstall
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$package = Join-Path $root 'src\SqlWorkbench.Ssms\bin\Debug\net472\SqlWorkbench.Ssms.vsix'
+# Release zip: the VSIX sits next to this script. Source tree: the build output.
+if (-not $Package) {
+    $Package = Join-Path $PSScriptRoot 'SqlWorkbench.Ssms.vsix'
+    if (-not (Test-Path -LiteralPath $Package)) { $Package = Join-Path $root 'src\SqlWorkbench.Ssms\bin\Debug\net472\SqlWorkbench.Ssms.vsix' }
+}
+$package = $Package
 $installer = Join-Path $SsmsDirectory 'VSIXInstaller.exe'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Visual Studio installer discovery tool not found.' }
@@ -9,14 +18,13 @@ $instances = & $vswhere -products Microsoft.VisualStudio.Product.Ssms -format js
 $instance = @($instances | Where-Object { $_.productPath -eq (Join-Path $SsmsDirectory 'SSMS.exe') -and $_.isComplete })
 if ($instance.Count -ne 1) { throw 'Expected one complete SSMS instance matching the requested directory.' }
 if (-not (Test-Path -LiteralPath $installer)) { throw 'SSMS VSIX installer not found.' }
-if (-not (Test-Path -LiteralPath $package)) { throw 'Build the VSIX first.' }
+if (-not $Uninstall -and -not (Test-Path -LiteralPath $package)) { throw 'Build the VSIX first.' }
 $running = Get-Process ssms -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $SsmsDirectory 'SSMS.exe') }
 if ($running) { throw 'Close SSMS 22 after saving your work before installation. No processes were stopped.' }
-& "$PSScriptRoot\Test-Package.ps1" -Path $package
-$artifacts = Join-Path $root 'artifacts'
-New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-$log = Join-Path $artifacts 'vsix-install.log'
-$arguments = @('/quiet', ('/instanceIds:' + $instance[0].instanceId), ('/logFile:"' + $log + '"'), ('"' + $package + '"'))
+if (-not $Uninstall) { & "$PSScriptRoot\Test-Package.ps1" -Path $package }
+$log = Join-Path $env:TEMP 'SqlWorkbench-vsix-install.log'
+$target = if ($Uninstall) { '/uninstall:SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450' } else { '"' + $package + '"' }
+$arguments = @('/quiet', ('/instanceIds:' + $instance[0].instanceId), ('/logFile:"' + $log + '"'), $target)
 $result = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait -WindowStyle Hidden
 Write-Output "VSIX installer exit code: $($result.ExitCode)."
 if (Test-Path -LiteralPath $log) { Write-Output "Log: $log" }

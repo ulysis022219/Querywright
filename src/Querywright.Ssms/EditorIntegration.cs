@@ -67,6 +67,14 @@ namespace Querywright.Ssms
         {
             Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
             var package = WorkbenchPackage.Instance;
+            // ponytail: no commit manager is registered for SQL, so the session would otherwise span spaces and dots and
+            // Tab would replace the whole run. Punctuation closes the list without inserting; Tab/Enter still commit.
+            if (group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.TYPECHAR && input != IntPtr.Zero &&
+                completion.IsCompletionActive(view))
+            {
+                char typed = (char)(ushort)System.Runtime.InteropServices.Marshal.GetObjectForNativeVariant(input);
+                if (!char.IsLetterOrDigit(typed) && typed != '_' && typed != '@' && typed != '#') completion.GetSession(view)?.Dismiss();
+            }
             if (package != null)
             {
                 // SQL Prompt: Tab on a typed snippet shortcut expands it even while the suggestion list is open.

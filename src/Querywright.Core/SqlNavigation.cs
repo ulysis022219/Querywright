@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
-namespace SqlWorkbench.Core
+namespace Querywright.Core
 {
     /// <summary>Either a span in the same script (Offset >= 0) or a database object name.</summary>
     public sealed class DefinitionTarget

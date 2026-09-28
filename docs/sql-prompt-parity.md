@@ -67,19 +67,15 @@ These need SSMS results-grid integration, which has no public API; investigate f
 
 ## 6. Code analysis (as-you-type squiggles + Error List)
 
-Querywright rules today: SW001–SW017, mapped in analysis-rules.md. Remaining syntax-only candidates:
+Querywright rules today: SW001–SW027, mapped in analysis-rules.md, with inline `-- querywright-disable`
+suppression. Remaining syntax-only candidates:
 
 | SQL Prompt | Meaning |
 |---|---|
 | PE002 | Unqualified table/view name (needs default-schema awareness to avoid noise) |
-| BP015 | Cursor scope not specified |
-| BP016 | RETURN without value |
-| BP014 | NOT NULL not specified in CREATE/DECLARE TABLE |
-| DEP002 | READTEXT/WRITETEXT/UPDATETEXT |
-| EI028 | Adding NOT NULL column without default |
 | ST011 / ST012 | Temp table vs table variable hints |
 
-Also: live squiggles while typing (currently command-driven), inline `-- querywright-disable` suppression,
+Also: live squiggles while typing (currently command-driven; core analysis is fast enough, see analysis-rules.md),
 and auto-fixes where one is unambiguous.
 
 ## Suggested order

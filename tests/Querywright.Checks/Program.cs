@@ -245,3 +245,105 @@ Check(Rules("EXEC GetPeople;").SequenceEqual(new[] { "SW017" }) && Rules("EXEC d
 var strict = new WorkbenchSettings { SW005 = RuleSeverity.Disabled };
 Check(SqlAnalysis.Analyze("DELETE FROM dbo.T;", settings: strict).Diagnostics.Count == 0 && strict.Severity("PARSE1") == RuleSeverity.Error, "new rules configurable");
 Console.WriteLine($"PASS: {checks} total checks including analysis batch 2. SSMS integration not tested.");
+
+void Throws<T>(Action action, string name) where T : Exception
+{
+    try { action(); }
+    catch (T) { checks++; return; }
+    throw new Exception("Expected " + typeof(T).Name + ": " + name);
+}
+Check(SqlRefactoring.ApplyCasing("select count(*), cast(a as nvarchar(max)), dateadd(day, 1, getdate()) from dbo.t where x is not null") ==
+    "SELECT COUNT(*), CAST(a AS NVARCHAR(MAX)), DATEADD(DAY, 1, GETDATE()) FROM dbo.t WHERE x IS NOT NULL", "keyword, type and function casing");
+Check(SqlRefactoring.ApplyCasing("select N'select from', [select], \"from\", @select -- select\n/* from */ from t") ==
+    "SELECT N'select from', [select], \"from\", @select -- select\n/* from */ FROM t", "casing skips strings comments quoted and variables");
+Check(SqlRefactoring.ApplyCasing("SELECT Count, Name, MyFunc FROM dbo.Orders o JOIN Sales.Count c ON o.Id = c.Id") ==
+    "SELECT Count, Name, MyFunc FROM dbo.Orders o JOIN Sales.Count c ON o.Id = c.Id", "casing leaves identifiers named like functions");
+Check(SqlRefactoring.ApplyCasing("begin try set nocount on; throw; end try begin catch end catch\ngo\ndeclare @x Int; exec p @a = abc;") ==
+    "BEGIN TRY SET NOCOUNT ON; THROW; END TRY BEGIN CATCH END CATCH\nGO\nDECLARE @x INT; EXEC p @a = abc;", "casing non-reserved keywords, GO and identifier literals");
+Check(SqlRefactoring.ApplyCasing("SELECT COUNT(*) FROM T WHERE X IS NULL", false) == "select count(*) from T where X is null", "lowercase keywords");
+Check(SqlRefactoring.ApplyCasing("SELECT dbo.Max(1), s.Len FROM dbo.fn() s") == "SELECT dbo.Max(1), s.Len FROM dbo.fn() s", "schema-qualified function kept");
+Throws<FormatException>(() => SqlRefactoring.ApplyCasing("select from"), "casing syntax error");
+
+Check(SqlRefactoring.AddBrackets("SELECT o.Id, Name AS n, COUNT(*) c FROM dbo.Orders o JOIN #t t ON t.Id = o.Id WHERE o.Note = N'x.y'") ==
+    "SELECT [o].[Id], [Name] AS [n], COUNT(*) [c] FROM [dbo].[Orders] [o] JOIN #t [t] ON [t].[Id] = [o].[Id] WHERE [o].[Note] = N'x.y'", "add brackets");
+Check(SqlRefactoring.AddBrackets("WITH c (x) AS (SELECT 1 AS y) SELECT \"q\", [z] FROM c; DECLARE @v int; SELECT @v; EXEC dbo.P;") ==
+    "WITH [c] ([x]) AS (SELECT 1 AS [y]) SELECT \"q\", [z] FROM [c]; DECLARE @v int; SELECT @v; EXEC [dbo].[P];", "add brackets CTE, quoted, variables, EXEC");
+Check(SqlRefactoring.AddBrackets("SELECT DATEADD(day, 1, x), CAST(y AS int) FROM t -- t\n") ==
+    "SELECT DATEADD(day, 1, [x]), CAST([y] AS int) FROM [t] -- t\n", "add brackets skips dateparts and types");
+Check(SqlRefactoring.RemoveBrackets("SELECT [o].[Id], [order], [my col], [1x], \"Name\", [window] FROM [dbo].[Orders] [o] WHERE [o].[a$b] = N'[x]'") ==
+    "SELECT o.Id, [order], [my col], [1x], \"Name\", [window] FROM dbo.Orders o WHERE o.a$b = N'[x]'", "remove brackets keeps reserved and irregular names");
+Check(SqlRefactoring.RemoveBrackets("SELECT [@x], [#t], [go], [key], [Name] FROM [#t]") == "SELECT [@x], #t, [go], [key], Name FROM #t", "remove brackets special names");
+var bracketed = "CREATE TABLE [dbo].[T] ([Id] [int], [select] int); SELECT [x]]y] FROM [T];";
+Check(SqlRefactoring.RemoveBrackets(SqlRefactoring.AddBrackets(bracketed)) == "CREATE TABLE dbo.T (Id int, [select] int); SELECT [x]]y] FROM T;", "bracket round trip");
+Throws<FormatException>(() => SqlRefactoring.AddBrackets("SELECT FROM"), "add brackets syntax error");
+Throws<FormatException>(() => SqlRefactoring.RemoveBrackets("SELECT [a FROM t"), "remove brackets syntax error");
+
+Check(SqlRefactoring.QualifyObjectNames("SELECT * FROM Orders o JOIN Sales.People p ON 1 = 1; UPDATE Orders SET x = 1; INSERT INTO Log (a) VALUES (1); DELETE FROM Log; EXEC GetPeople;") ==
+    "SELECT * FROM dbo.Orders o JOIN Sales.People p ON 1 = 1; UPDATE dbo.Orders SET x = 1; INSERT INTO dbo.Log (a) VALUES (1); DELETE FROM dbo.Log; EXEC dbo.GetPeople;", "qualify DML and EXEC");
+Check(SqlRefactoring.QualifyObjectNames("WITH c AS (SELECT id FROM T) SELECT * FROM c JOIN #tmp ON 1 = 1 JOIN @tv v ON 1 = 1 CROSS APPLY STRING_SPLIT(N'a', N',') s; EXEC sp_who; SELECT * FROM c;") ==
+    "WITH c AS (SELECT id FROM dbo.T) SELECT * FROM c JOIN #tmp ON 1 = 1 JOIN @tv v ON 1 = 1 CROSS APPLY STRING_SPLIT(N'a', N',') s; EXEC sp_who; SELECT * FROM dbo.c;", "qualify excludes CTE temp variable built-in and sp_");
+Check(SqlRefactoring.QualifyObjectNames("UPDATE p SET Name = N'' FROM People p; DELETE o FROM Orders AS o; MERGE Target t USING Source s ON t.Id = s.Id WHEN MATCHED THEN DELETE;", "Sales") ==
+    "UPDATE p SET Name = N'' FROM Sales.People p; DELETE o FROM Sales.Orders AS o; MERGE Sales.Target t USING Sales.Source s ON t.Id = s.Id WHEN MATCHED THEN DELETE;", "qualify alias targets and MERGE");
+Check(SqlRefactoring.QualifyObjectNames("SELECT * FROM db..T, [T2], x.dbo.T3 -- FROM T4\n", "my schema") == "SELECT * FROM db..T, [my schema].[T2], x.dbo.T3 -- FROM T4\n", "qualify bracketed schema, skip multipart");
+Check(SqlRefactoring.QualifyObjectNames("SELECT * FROM dbo.fnRows(1); SELECT * FROM fnRows(1);") == "SELECT * FROM dbo.fnRows(1); SELECT * FROM dbo.fnRows(1);", "qualify table functions");
+Throws<FormatException>(() => SqlRefactoring.QualifyObjectNames("SELECT * FROM"), "qualify syntax error");
+
+RenameResult Alias(string text, string newName)
+{
+    int position = text.IndexOf('|');
+    return SqlRefactoring.RenameAlias(text.Remove(position, 1), position, newName);
+}
+var aliasRename = Alias("SELECT p.Name, p.* FROM dbo.People p| WHERE p.Id = 1 ORDER BY p.Name; SELECT p.Id FROM dbo.Other p;", "person");
+Check(aliasRename.Text == "SELECT person.Name, person.* FROM dbo.People person WHERE person.Id = 1 ORDER BY person.Name; SELECT p.Id FROM dbo.Other p;" &&
+    aliasRename.OldName == "p" && aliasRename.Changes == 5, "alias rename from definition, statement scope");
+Check(Alias("SELECT |a.x FROM dbo.A a WHERE EXISTS (SELECT 1 FROM dbo.B a WHERE a.y = 1) AND EXISTS (SELECT 1 FROM dbo.C c WHERE c.z = a.x);", "ao").Text ==
+    "SELECT ao.x FROM dbo.A ao WHERE EXISTS (SELECT 1 FROM dbo.B a WHERE a.y = 1) AND EXISTS (SELECT 1 FROM dbo.C c WHERE c.z = ao.x);", "alias rename nested shadowing and correlation");
+Check(Alias("SELECT a.x FROM dbo.A a WHERE EXISTS (SELECT 1 FROM dbo.B a WHERE |a.y = 1);", "[inner b]").Text ==
+    "SELECT a.x FROM dbo.A a WHERE EXISTS (SELECT 1 FROM dbo.B [inner b] WHERE [inner b].y = 1);", "alias rename inner scope from qualifier");
+Check(Alias("UPDATE p SET p.Name = N'p.x' FROM dbo.People p| WHERE p.Id = 1;", "pe").Text == "UPDATE pe SET pe.Name = N'p.x' FROM dbo.People pe WHERE pe.Id = 1;", "alias rename UPDATE FROM");
+Check(Alias("DELETE |o FROM dbo.Orders o JOIN dbo.People p ON p.Id = o.PersonId; -- o.Id\n", "ord").Text ==
+    "DELETE ord FROM dbo.Orders ord JOIN dbo.People p ON p.Id = ord.PersonId; -- o.Id\n", "alias rename DELETE target");
+Check(Alias("SELECT d.n FROM (SELECT x.Name AS n FROM dbo.X x) |d;", "derived").Text == "SELECT derived.n FROM (SELECT x.Name AS n FROM dbo.X x) derived;", "derived table alias");
+Throws<InvalidOperationException>(() => Alias("SELECT |a.x FROM dbo.A a JOIN dbo.B b ON a.x = b.x;", "b"), "alias conflict in scope");
+Throws<InvalidOperationException>(() => Alias("SELECT |a.x FROM dbo.A a JOIN dbo.B ON 1 = 1;", "B"), "alias conflict with unaliased table");
+Throws<InvalidOperationException>(() => Alias("SELECT 1 FROM dbo.A |a WHERE EXISTS (SELECT 1 FROM dbo.B b WHERE b.x = a.x);", "b"), "alias capture by inner scope");
+Throws<InvalidOperationException>(() => Alias("SELECT 1 FROM dbo.A a WHERE EXISTS (SELECT 1 FROM dbo.B |b WHERE b.x = a.x);", "a"), "alias shadows outer reference");
+Throws<InvalidOperationException>(() => Alias("SELECT |People.Name FROM dbo.People;", "p"), "table qualifier is not an alias");
+Throws<InvalidOperationException>(() => Alias("SELECT |1 FROM dbo.People p;", "q"), "caret not on alias");
+Throws<ArgumentException>(() => Alias("SELECT 1 FROM dbo.People |p;", "q; DROP TABLE t; --"), "invalid alias name");
+Throws<ArgumentException>(() => Alias("SELECT 1 FROM dbo.People |p;", "order"), "reserved alias name");
+Throws<FormatException>(() => Alias("SELECT 1 FROM dbo.People |p WHERE", "q"), "alias rename syntax error");
+
+StatementSpan? At(string text, out string statement)
+{
+    int position = text.IndexOf('|');
+    string sql = text.Remove(position, 1);
+    var span = SqlNavigation.StatementAt(sql, position);
+    statement = span == null ? "" : sql.Substring(span.Start, span.Length);
+    return span;
+}
+Check(At("SELECT 1;\nSELECT |2 FROM t;\nSELECT 3", out var current) != null && current == "SELECT 2 FROM t;", "statement at caret with semicolon");
+Check(At("SELECT 1;\n\n|\nSELECT 2;", out current) != null && current == "SELECT 1;", "caret between statements");
+Check(At("SELECT 1;|SELECT 2;", out current) != null && current == "SELECT 2;", "caret at statement start");
+Check(At("IF 1 = 1\nBEGIN\n  SELECT |1;\n  SELECT 2;\nEND\nSELECT 3;", out current) != null && current == "IF 1 = 1\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND", "compound statement");
+Check(At("CREATE PROCEDURE p AS\nSELECT 1;\nSELECT |2;\nGO\nSELECT 3;", out current) != null && current == "CREATE PROCEDURE p AS\nSELECT 1;\nSELECT 2;", "procedure is one statement");
+Check(At("SELECT 1;\nGO\n|SELECT 2;", out current) != null && current == "SELECT 2;", "GO-aware region");
+Check(At("SELECT 1;\nGO\n-- |only a comment\nGO\nSELECT 2;", out _) == null, "empty batch region");
+Check(At("SELECT 1;\nGO\n  SELECT * FRM |t WHERE\n\nGO\nSELECT 2;", out current) != null && current == "SELECT * FRM t WHERE", "syntax error falls back to trimmed batch");
+Check(At("SELECT * FROM;\nGO\nSELECT |2;", out current) != null && current == "SELECT 2;", "syntax error in another batch ignored");
+Check(At("SELECT N'\nGO\n' AS |x;", out current) != null && current == "SELECT N'\nGO\n' AS x;", "GO inside string is not a separator");
+Check(At("|", out _) == null, "empty script");
+
+var outline = SqlRefactoring.Summarize("CREATE PROCEDURE dbo.GetPeople AS SELECT 1;\nGO\nUPDATE p SET Name = N'' FROM dbo.People p;\nSELECT * FROM dbo.Orders o JOIN dbo.People p ON 1 = 1;\nDECLARE @x int;\nIF 1 = 1 BEGIN SELECT 1; END\nINSERT @t (a) VALUES (1);\nEXEC dbo.P;\nSELECT 1;");
+Check(outline.Select(o => o.Kind).SequenceEqual(new[] { "CREATE PROCEDURE", "UPDATE", "SELECT", "DECLARE", "IF", "INSERT", "EXEC", "SELECT" }), "outline kinds");
+Check(outline.Select(o => o.Target).SequenceEqual(new[] { "dbo.GetPeople", "dbo.People", "dbo.Orders", "", "", "@t", "dbo.P", "" }), "outline targets");
+Check(outline[1] is { Line: 3, Offset: 47, Length: 42 } && outline[0].Length == 43, "outline positions");
+Check(SqlRefactoring.Summarize("").Count == 0, "empty outline");
+Throws<FormatException>(() => SqlRefactoring.Summarize("SELECT FROM"), "outline syntax error");
+
+Check(SqlRefactoring.UnusedDeclarations("DECLARE @used int = 1, @unused int; DECLARE @t TABLE (x int); SELECT @used; -- @unused\nEXEC dbo.P @unused = 1;").SequenceEqual(new[] { "@unused", "@t" }), "unused locals");
+Check(SqlRefactoring.UnusedDeclarations("CREATE PROCEDURE dbo.P @a int, @b int, @c dbo.Tvp READONLY AS SELECT @a FROM @c;\nGO\nDECLARE @b int;").SequenceEqual(new[] { "@b", "@b" }), "unused parameters and batch isolation");
+Check(SqlRefactoring.UnusedDeclarations("CREATE FUNCTION dbo.F (@a int, @b int) RETURNS @r TABLE (x int) AS BEGIN INSERT @r VALUES (@a); RETURN; END").SequenceEqual(new[] { "@b" }), "unused function parameter");
+Check(SqlRefactoring.UnusedDeclarations("CREATE FUNCTION dbo.G (@a int) RETURNS TABLE AS RETURN SELECT @a AS x").Count == 0, "inline function parameter used");
+Throws<FormatException>(() => SqlRefactoring.UnusedDeclarations("DECLARE @x"), "unused syntax error");
+Console.WriteLine($"PASS: {checks} total checks including casing, brackets, qualification, alias rename, statement lookup, outline and unused declarations. SSMS integration not tested.");

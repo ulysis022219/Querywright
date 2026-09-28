@@ -19,8 +19,10 @@
     <Reference Include="PresentationCore" />
     <Reference Include="WindowsBase" />
     <Reference Include="System.Xaml" />
+    <Reference Include="System.ComponentModel.Composition" />
     <PackageReference Include="Microsoft.VisualStudio.Editor" Version="17.14.249" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VisualStudio.Text.UI.Wpf" Version="17.14.249" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VisualStudio.Language" Version="17.14.249" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VisualStudio.Shell.15.0" Version="17.14.40264" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.9.820" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />

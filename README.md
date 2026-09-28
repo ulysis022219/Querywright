@@ -43,11 +43,34 @@ check** and verify the preview appears. Confirm the command does not modify a qu
 and uninstall the package to verify clean removal. Do not interrupt SSMS 19 sessions.
 
 Validation on September 28, 2026:
-- `dotnet run --project tests/SqlWorkbench.Checks`: 77 checks passed (updated September 29).
+- `dotnet run --project tests/SqlWorkbench.Checks`: 106 checks passed (0.2.0 core).
 - `dotnet build src/SqlWorkbench.Ssms/SqlWorkbench.Ssms.csproj --no-restore`:
   VSIX generated, zero warnings/errors.
 - Archive inspected: extension/core assemblies, pkgdef and manifest included.
 - SSMS installation, menu visibility, runtime behavior and uninstall: pending.
+
+## SQL Prompt-style editor behavior (0.2.0, unverified in SSMS)
+
+These run inside the SQL editor itself rather than through the Tools menu. The package now
+autoloads in the background so they are active as soon as a query window opens.
+
+- **Snippet shortcuts:** type a shortcut then press Tab, e.g. `ssf` + Tab gives `SELECT * FROM `.
+  The shortcut is the snippet file name (`ssf.sql`, `sst.sql`, `scf.sql`, `ii.sql`, `ups.sql`,
+  `df.sql`, `be.sql` are seeded; existing files are kept). Add your own `name.sql` to the snippet folder.
+  Words that are not shortcuts, and Tab while a completion list is open, behave normally.
+- **Wildcard expansion:** with the caret right after `*` (or `alias.*`), Tab replaces it with
+  the column list from the offline schema. Also on Tools > SqlWorkbench: expand wildcard.
+- **F12 go to definition:** variables and parameters jump to their DECLARE, aliases to their
+  FROM entry, CTE names to the WITH clause. Tables, views and procedures fall through to SSMS's
+  own F12 for the connected database.
+- **Completion popup while typing:** tables after FROM/JOIN and columns after SELECT or `alias.`,
+  from the offline schema file. Soft-selected after a space so Enter still inserts a newline.
+  SSMS's built-in IntelliSense may show its own list alongside; live metadata is still pending.
+- **Insert semicolons:** Tools > SqlWorkbench: insert semicolons terminates every statement,
+  including inside IF/ELSE, TRY/CATCH and procedure bodies. Only semicolons change; verified by tokens.
+
+Pending runtime checks: Tab/F12 command routing in the SSMS 22 SQL editor, async completion
+coexistence with native IntelliSense, and single undo for each expansion.
 
 ## Snippets and analysis prototype
 

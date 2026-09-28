@@ -7,13 +7,13 @@ Status vocabulary: missing, core-only, integrated, verified in SSMS.
 | Area | Required behavior | Status | Acceptance evidence required |
 |---|---|---|---|
 | Host | SSMS 22.10.1 package, menus, settings, shortcuts, undo, install/uninstall | install, package load, six menus and formatting undo/redo verified | Settings, shortcuts, other commands and uninstall pending |
-| Completion | Objects, columns, aliases, parameters, joins, fuzzy matches, column picker, metadata refresh | offline resolver checked; picker wiring unverified | Alias/CTE/derived scopes checked; live metadata, inline popup and broader SQL recovery pending |
-| Snippets | User templates, context values, date/time, caret/selection, sharing | core verified; host wiring unverified | 17 core/file checks; editor undo and connected context pending |
+| Completion | Objects, columns, aliases, parameters, joins, fuzzy matches, column picker, metadata refresh | offline resolver checked; as-you-type popup and picker wiring unverified | Alias/CTE/derived scopes checked; live metadata, inline popup and broader SQL recovery pending |
+| Snippets | User templates, Tab shortcuts (ssf), context values, date/time, caret/selection, sharing | core and shortcut lookup checked; Tab wiring unverified | 17 core/file checks; editor undo and connected context pending |
 | Formatting | Selection/document, styles, shared settings, batch operation | core checked; document formatting and undo/redo verified in SSMS | Selection/styles host tests, SQLCMD and bulk files pending |
-| Refactoring | Local rename, qualification, wildcard expansion, brackets, semicolons, procedure extraction | local-variable rename checked; preview wiring unverified | Batch isolation, collision/EXEC handling checked; alias/public parameter rename and other refactorings pending |
+| Refactoring | Local rename, qualification, wildcard expansion, brackets, semicolons, procedure extraction | rename, wildcard expansion (offline schema) and semicolons checked; host wiring unverified | Batch isolation, collision/EXEC handling checked; alias/public parameter rename, qualification, brackets, procedure extraction pending |
 | Database rename | Dependency-aware object rename script preview | missing | Identify unresolved dynamic references; never execute silently |
 | Analysis | Rule inventory, configurable severity/enablement, issue navigation, fixes, shared settings | four rules and settings checked; host wiring unverified | See analysis-rules.md; fixes and remaining catalog pending |
-| Navigation | Definitions, ALTER script generation, object explorer, script overview, unused declarations | missing | Correct object and scope; generated text only |
+| Navigation | Definitions, ALTER script generation, object explorer, script overview, unused declarations | F12 for variables/parameters/aliases/CTEs checked in core; objects defer to SSMS; host unverified | Correct object and scope; generated text only |
 | Editor | Execute statement, environment colors | missing | Exact statement boundaries; explicit execution action; accessible labels |
 | History | Open/closed tabs, search, restore, rename, retention, crash recovery | missing | Crash-safe writes, local privacy, restart recovery |
 | Results | IN-list copy, INSERT scripts, spreadsheet export | missing | Nulls, Unicode, quotes, types, large grids, spreadsheet formula injection |

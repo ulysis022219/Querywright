@@ -8,16 +8,16 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 
 | Behavior | SQL Prompt | Querywright | Next step |
 |---|---|---|---|
-| Suggestions as you type | Popup on every identifier, keyword, after `.`/space | host (offline schema only) | Live metadata from the SSMS connection; keywords, functions, variables |
-| Ctrl+Space / refresh suggestions | Show list; Ctrl+Shift+D refreshes metadata | missing | Bind to popup trigger + cache refresh |
-| JOIN ON suggestions | Proposes join conditions from foreign keys | missing | Needs FK metadata |
+| Suggestions as you type | Popup on every identifier, keyword, after `.`/space | host (live connection metadata or offline schema; keywords, functions, variables, CTEs, aliases, snippets) | — |
+| Ctrl+Space / refresh suggestions | Show list; Ctrl+Shift+D refreshes metadata | host (Ctrl+Space is the editor's own; Ctrl+Shift+D bound) | — |
+| JOIN ON suggestions | Proposes join conditions from foreign keys | host (FKs from live metadata or offline DDL) | — |
 | Column picker | Tick columns in a list for SELECT/INSERT | missing | WPF picker over resolved scope |
 | INSERT/EXEC parameter fill | Expands column list / parameters for INSERT and EXEC | missing | Needs metadata |
-| Snippet shortcut + Tab | `ssf` Tab → `SELECT * FROM` | host | Also offer snippets in the popup |
-| Wildcard expansion with Tab | `*` Tab → column list | host (offline schema) | Live metadata |
+| Snippet shortcut + Tab | `ssf` Tab → `SELECT * FROM` | host (also listed in the popup; Tab expands with the list open) | — |
+| Wildcard expansion with Tab | `*` Tab → column list | host | — |
 | F12 | Scripts object as ALTER in new tab; local declarations | host (locals); objects defer to SSMS | Script ALTER from metadata |
-| Execute current statement | Shift+F5 runs the statement under the caret | missing | Statement bounds from ScriptDOM → select + native Execute |
-| Tab coloring | Color query tabs per server/database environment | missing | Rules in settings file |
+| Execute current statement | Shift+F5 runs the statement under the caret | host (selects the statement, then SSMS's own Query.Execute — only on explicit keypress) | — |
+| Tab coloring | Color query tabs per server/database environment | host (colored strip above the editor; rules in Options) | — |
 | Tab history | Searchable history of opened/closed tabs, restore after crash | missing | Local, crash-safe store |
 | Quick info | Hover shows object definition / column type | missing | Needs metadata |
 
@@ -27,9 +27,9 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 |---|---|
 | Format document / selection | done + verified in SSMS |
 | Style editor, shared styles | partial (5 options, XML file) |
-| Apply casing (keywords, types, functions) | missing |
-| Add/remove square brackets | missing |
-| Qualify object names (Ctrl+B Ctrl+Q) | missing (needs default schema / metadata) |
+| Apply casing (keywords, types, functions) | host |
+| Add/remove square brackets | host |
+| Qualify object names | host (dbo default) |
 | Insert semicolons | host |
 | Expand wildcards | host |
 | Format on bulk files / folders | missing |
@@ -39,21 +39,21 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 Popular SQL Prompt shortcuts (community list) that Querywright should seed:
 `ssf sst ss0 st100 scf sd smf ii df ij lj rj fj cj j loj roj foj gb ob be bt ctr rt tc cte ct ctt cv cp csf ctf citf at ata atd ac ap af dt dp dv dfn di inn lk isns isnn rnum cw ifs today trim sph spt w2`.
 Placeholders used by those: `$CURSOR$`, `$SELECTEDTEXT$`, `$PASTE$`, `$DATE$`, `$TIME$`, `$USER$`, `$SERVER$`, `$DBNAME$`.
-Querywright: 7 seeded; `$SELECTEDTEXT$` and connected placeholders missing.
+Querywright: 56 seeded (the list above) plus Select / Create procedure; all listed placeholders supported.
 
 ## 4. Refactoring
 
 | Refactor | Querywright |
 |---|---|
-| Rename local variable / alias | variable done; alias missing |
+| Rename local variable / alias | host (variable and alias, with preview) |
 | Smart rename object (updates dependents) | missing (script preview only, never silent execution) |
 | Split table | missing |
 | Encapsulate as new stored procedure | missing |
-| Find unused variables and parameters | missing (also MI005 below) |
-| Summarize script (outline of statements) | missing |
+| Find unused variables and parameters | host (Error List) |
+| Summarize script (outline of statements) | host (Error List, click to navigate) |
 | Find invalid objects | missing (metadata) |
 | Script object as ALTER / CREATE | missing |
-| Remove square brackets / add brackets | missing |
+| Remove square brackets / add brackets | host |
 
 ## 5. Results grid
 
@@ -63,7 +63,7 @@ Querywright: 7 seeded; `$SELECTEDTEXT$` and connected placeholders missing.
 | Script as INSERT (temp table + values) | missing |
 | Open in Excel | missing (CSV/xlsx with formula-injection guard) |
 
-These need SSMS results-grid integration, which has no public API; investigate first.
+Not feasible: SSMS exposes no public or stable API for the results grid. Out of scope.
 
 ## 6. Code analysis (as-you-type squiggles + Error List)
 
@@ -75,18 +75,13 @@ suppression. Remaining syntax-only candidates:
 | PE002 | Unqualified table/view name (needs default-schema awareness to avoid noise) |
 | ST011 / ST012 | Temp table vs table variable hints |
 
-Also: live squiggles while typing (currently command-driven; core analysis is fast enough, see analysis-rules.md),
-and auto-fixes where one is unambiguous.
+Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: missing.
 
-## Suggested order
+## Remaining
 
-1. Live metadata from the active SSMS connection (unblocks completion, wildcard, qualify, F12 ALTER, JOIN ON).
-2. Next analysis batch above + squiggles while typing.
-3. Execute current statement, seeded snippet library, `$SELECTEDTEXT$`.
-4. Casing / brackets / qualify actions; alias rename; unused declarations.
-5. Tab coloring and tab history.
-6. Results-grid actions (after confirming an integration route).
-7. Object-level refactors (smart rename, split table, encapsulate) as reviewable scripts.
+Column picker, INSERT/EXEC parameter fill, quick info, tab history, F12 scripting of database objects as ALTER,
+object-level refactors (smart rename, split table, encapsulate; would be reviewable scripts only), analysis auto-fixes.
+Results-grid actions are out of scope (no API).
 
 ## Sources
 

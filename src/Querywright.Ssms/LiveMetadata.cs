@@ -86,6 +86,21 @@ ORDER BY fk.object_id, k.constraint_column_id;";
             return await Task.WhenAny(task, Task.Delay(timeout)) == task ? await task : null;
         }
 
+        /// <summary>Module text for F12 (OBJECT_DEFINITION; null for tables or no permission). Read-only, parameterized.</summary>
+        internal static string Definition(ActiveConnection connection, string schema, string name)
+        {
+            string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
+            using (var sql = connection.Open())
+            {
+                sql.Open();
+                using (var command = new SqlCommand("SELECT OBJECT_DEFINITION(OBJECT_ID(@name));", sql) { CommandTimeout = 10 })
+                {
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : Quote(schema) + ".") + Quote(name);
+                    return command.ExecuteScalar() as string;
+                }
+            }
+        }
+
         private static IReadOnlyList<SchemaTable> Load(ActiveConnection connection)
         {
             try

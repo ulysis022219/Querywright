@@ -60,7 +60,7 @@ namespace Querywright.Core
             return visitor.Object == null ? null : Object(visitor.Object, visitor, position);
         }
 
-        private static DefinitionTarget Object(SchemaObjectName name, Finder visitor, int position)
+        private static DefinitionTarget? Object(SchemaObjectName name, Finder visitor, int position)
         {
             if (name.SchemaIdentifier == null && name.DatabaseIdentifier == null)
             {
@@ -69,6 +69,7 @@ namespace Querywright.Core
                 if (cte != null) return new DefinitionTarget(cte.ExpressionName.StartOffset, cte.ExpressionName.FragmentLength);
             }
             // ponytail: database/server parts are left to the host's native navigation.
+            if (name.DatabaseIdentifier != null || name.ServerIdentifier != null) return null;
             return new DefinitionTarget(name.SchemaIdentifier?.Value, name.BaseIdentifier.Value);
         }
 

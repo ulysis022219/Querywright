@@ -112,6 +112,22 @@ namespace Querywright.Core
             return Rewrite(parser, sql, script, edits, StringComparer.OrdinalIgnoreCase, "Casing changed SQL structure; original text retained.");
         }
 
+        /// <summary>Turns a module definition (CREATE [OR ALTER] PROC/VIEW/FUNCTION/TRIGGER) into ALTER; comments and strings are untouched.</summary>
+        public static string CreateToAlter(string definition)
+        {
+            if (definition == null) throw new ArgumentNullException(nameof(definition));
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(definition), out _);
+            bool Trivia(TSqlParserToken t) => t.TokenType == TSqlTokenType.WhiteSpace || t.TokenType == TSqlTokenType.SingleLineComment
+                || t.TokenType == TSqlTokenType.MultilineComment;
+            var code = tokens.Where(t => !Trivia(t) && t.TokenType != TSqlTokenType.EndOfFile).ToList();
+            int i = code.FindIndex(t => t.TokenType == TSqlTokenType.Create);
+            if (i < 0) return definition;
+            int end = code[i].Offset + code[i].Text.Length;
+            if (i + 2 < code.Count && code[i + 1].TokenType == TSqlTokenType.Or && code[i + 2].TokenType == TSqlTokenType.Alter)
+                end = code[i + 2].Offset + code[i + 2].Text.Length;
+            return definition.Substring(0, code[i].Offset) + "ALTER" + definition.Substring(end);
+        }
+
         public static string AddBrackets(string sql)
         {
             var parser = new TSql170Parser(true);

@@ -218,12 +218,55 @@ namespace Querywright.Ssms
             DefinitionTarget target;
             try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), view.Caret.Position.BufferPosition.Position); }
             catch (FormatException) { return false; }
-            if (target == null || target.Offset < 0) return false;
+            if (target == null) return false;
+            if (target.Offset < 0)
+            {
+                if (bypassDefinition || target.Name == null || options?.LiveMetadata == false) return false;
+                var connection = LiveMetadata.Capture();
+                if (connection == null) return false;
+                _ = JoinableTaskFactory.RunAsync(() => ScriptObjectAsync(connection, target.Schema, target.Name));
+                return true;
+            }
             var snapshot = view.TextSnapshot;
             view.Selection.Select(new SnapshotSpan(snapshot, target.Offset, target.Length), false);
             view.Caret.MoveTo(new SnapshotPoint(snapshot, target.Offset));
             view.Caret.EnsureVisible();
             return true;
+        }
+
+        private bool bypassDefinition;
+
+        /// <summary>SQL Prompt's F12: procedure/view/function/trigger opens as an ALTER script in a new query; tables go to SSMS's own F12.</summary>
+        private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name)
+        {
+            try
+            {
+                string definition = await Task.Run(() => LiveMetadata.Definition(connection, schema, name));
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var dte = await GetServiceAsync(typeof(SDTE));
+                if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
+                void Run(string command) => dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { command, "" });
+                if (definition == null)
+                {
+                    bypassDefinition = true;
+                    try { Run("Edit.GoToDefinition"); }
+                    finally { bypassDefinition = false; }
+                    return;
+                }
+                var source = GetSqlView();
+                Run("File.NewQuery");
+                var view = GetSqlView();
+                if (view == source) throw new InvalidOperationException("Could not open a new query window.");
+                string text = SqlRefactoring.CreateToAlter(definition);
+                ReplaceText(view, new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length), text, 0, 0, 0, "Script " + name);
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                // SqlException text can name the server or login; show only what failed.
+                ShowWarning(error is System.Data.SqlClient.SqlException sqlError ? "Could not read the definition (SQL error " + sqlError.Number + ")."
+                    : (error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
+            }
         }
 
         private async Task AddSemicolonsAsync()

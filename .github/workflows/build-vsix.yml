@@ -47,3 +47,23 @@ jobs:
           gh release create "$tag" dist/SqlWorkbench-ssms22.zip --prerelease --target "$GITHUB_SHA" \
             --title "SqlWorkbench dev build ($GITHUB_REF_NAME)" \
             --notes "Untested development build from ${GITHUB_SHA}. See INSTALL.txt inside the zip."
+
+  e2e:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: SqlWorkbench-ssms22
+      - name: SSMS 22 end-to-end
+        shell: powershell
+        run: |
+          Expand-Archive SqlWorkbench-ssms22.zip -DestinationPath pkg
+          scripts/Test-Ssms.ps1 -Package (Resolve-Path pkg/SqlWorkbench.Ssms.vsix)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-evidence
+          path: e2e

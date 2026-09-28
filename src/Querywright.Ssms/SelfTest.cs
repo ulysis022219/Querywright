@@ -33,6 +33,7 @@ namespace Querywright.Ssms
                 await package.JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (View == null || Adapter == null) throw new InvalidOperationException("no SQL editor opened");
                 var view = View;
+                var trace = new System.Text.StringBuilder();
                 var target = (IOleCommandTarget)Adapter;
                 foreach (string step in steps.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries))
                 {
@@ -45,12 +46,22 @@ namespace Querywright.Ssms
                         case "end": Move(view, view.TextSnapshot.Length); break;
                         case "right": Move(view, view.Caret.Position.BufferPosition.Position + int.Parse(arg)); break;
                         case "left": Move(view, view.Caret.Position.BufferPosition.Position - int.Parse(arg)); break;
-                        case "type": foreach (char c in arg) Type(target, c); break;
+                        case "type":
+                            foreach (char c in arg)
+                            {
+                                Type(target, c);
+                                // Yield between keys like real typing, so the async completion session can filter.
+                                await Task.Delay(80);
+                                await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            }
+                            break;
                         case "tab": Exec(target, VSConstants.VSStd2K, (uint)VSConstants.VSStd2KCmdID.TAB); break;
                         case "f12": Exec(target, VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn); break;
                         default: throw new ArgumentException("unknown step " + name);
                     }
+                    trace.AppendLine(step + " => " + view.TextSnapshot.GetText().Replace("\r\n", "\\n"));
                 }
+                File.WriteAllText(result + ".trace", trace.ToString());
                 File.WriteAllText(result, view.TextSnapshot.GetText());
             }
             catch (Exception error) when (!(error is OutOfMemoryException))

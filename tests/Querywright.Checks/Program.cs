@@ -35,6 +35,14 @@ Reject("$DBNAME(x)$");
 Reject("$DATE()$");
 context.Remove("SERVER");
 Reject("$SERVER$");
+context["SELECTEDTEXT"] = "$PASTE$ $CURSOR$";
+var wrapped = Snippets.Expand("BEGIN $SELECTEDTEXT$$CURSOR$ END", context, now);
+Check(wrapped.Text == "BEGIN $PASTE$ $CURSOR$ END" && wrapped.Caret == 22, "nonrecursive selected text");
+context["SELECTEDTEXT"] = "";
+Check(Snippets.Expand("[$SELECTEDTEXT$]", context, now).Text == "[]", "empty selected text");
+Reject("$SELECTEDTEXT(x)$");
+context.Remove("SELECTEDTEXT");
+Reject("$SELECTEDTEXT$");
 Console.WriteLine($"PASS: {checks} snippet checks. SSMS integration not tested.");
 
 var folder = Path.Combine(Path.GetTempPath(), "Querywright-check-" + Guid.NewGuid().ToString("N"));
@@ -52,6 +60,81 @@ try
 }
 finally { Directory.Delete(folder, true); }
 Console.WriteLine($"PASS: {checks} total checks including snippet files. SSMS integration not tested.");
+
+var library = Path.Combine(Path.GetTempPath(), "Querywright-library-" + Guid.NewGuid().ToString("N"));
+try
+{
+    SnippetFiles.Initialize(library);
+    var shortcuts = ("ssf sst ss0 st100 scf sd smf ii df ij lj rj fj cj j loj roj foj gb ob be bt " +
+        "ctr rt tc cte ct ctt cv cp csf ctf citf at ata atd ac ap af dt dp dv dfn di " +
+        "inn lk isns isnn rnum cw ifs today trim sph spt w2").Split(' ');
+    Check(shortcuts.All(s => File.Exists(Path.Combine(library, s + ".sql"))), "seeded SQL Prompt shortcuts");
+    File.WriteAllText(Path.Combine(library, "ssf.sql"), "SELECT 'mine';");
+    SnippetFiles.Initialize(library);
+    Check(File.ReadAllText(Path.Combine(library, "ssf.sql")) == "SELECT 'mine';", "seed does not overwrite shortcut");
+    File.Delete(Path.Combine(library, "ssf.sql"));
+    SnippetFiles.Initialize(library);
+
+    var snippetContext = new Dictionary<string, string>(context) { ["SERVER"] = "localhost", ["SELECTEDTEXT"] = "SELECT 1;" };
+    var fragments = new Dictionary<string, string>
+    {
+        ["ssf"] = "dbo.T;", ["sst"] = "dbo.T;", ["ss0"] = "dbo.T", ["st100"] = "dbo.T;", ["scf"] = "dbo.T;",
+        ["sd"] = "x", ["smf"] = "x", ["ii"] = "dbo.T", ["df"] = "dbo.T WHERE Id = 1;",
+        ["cj"] = "dbo.B b", ["gb"] = "x", ["ob"] = "x", ["cte"] = "SELECT 1 AS x", ["ct"] = "Name nvarchar(50) NULL", ["ctt"] = "Name nvarchar(50) NULL",
+        ["cv"] = "SELECT 1 AS x;", ["csf"] = "@param + 1", ["af"] = "@param + 1", ["ctf"] = "INSERT @result VALUES (@param);",
+        ["citf"] = "SELECT @param AS Id", ["at"] = "dbo.T ADD x int NULL", ["ata"] = "x int NULL", ["atd"] = "x", ["ac"] = "x bigint NOT NULL",
+        ["dt"] = "dbo.X", ["dp"] = "dbo.X", ["dv"] = "dbo.X", ["dfn"] = "dbo.X", ["di"] = "IX_T", ["lk"] = "abc",
+        ["isns"] = "x", ["isnn"] = "x", ["rnum"] = "x", ["cw"] = "x = 1", ["trim"] = "x", ["ifs"] = "dbo.T", ["sph"] = "dbo.T", ["spt"] = "dbo.T",
+    };
+    var wraps = new Dictionary<string, string> { ["cj"] = "SELECT * FROM dbo.A a {0};", ["gb"] = "SELECT x, COUNT(*) FROM dbo.T {0};",
+        ["ob"] = "SELECT x FROM dbo.T {0};", ["inn"] = "SELECT * FROM dbo.T WHERE x {0};", ["lk"] = "SELECT * FROM dbo.T WHERE x {0};" };
+    foreach (var join in new[] { "ij", "lj", "rj", "fj", "j", "loj", "roj", "foj" })
+    {
+        fragments[join] = "dbo.B b";
+        wraps[join] = "SELECT * FROM dbo.A a {0}a.Id = b.Id;";
+    }
+    foreach (var expression in new[] { "isns", "isnn", "rnum", "cw", "today", "trim" }) wraps[expression] = "SELECT {0} FROM dbo.T;";
+    foreach (var path in Directory.GetFiles(library, "*.sql"))
+    {
+        var name = Path.GetFileNameWithoutExtension(path);
+        var expansion = Snippets.Expand(SnippetFiles.Read(path), snippetContext, now);
+        Check(!expansion.Text.Contains('$'), "expand seeded " + name);
+        var sql = expansion.Text.Insert(expansion.Caret, fragments.GetValueOrDefault(name, ""));
+        new Microsoft.SqlServer.TransactSql.ScriptDom.TSql170Parser(true).Parse(new StringReader(wraps.GetValueOrDefault(name, "{0}").Replace("{0}", sql)), out var errors);
+        Check(errors.Count == 0, "parse seeded " + name);
+    }
+
+    var listed = SnippetFiles.List(library);
+    Check(listed.Select(p => p.Key).SequenceEqual(shortcuts.Append("Select").Order(StringComparer.Ordinal)), "list valid seeded shortcuts in ordinal order");
+    Check(listed.Single(p => p.Key == "ssf").Value == "SELECT * FROM $CURSOR$", "list first line");
+    Check(listed.Single(p => p.Key == "tc").Value == "BEGIN TRY", "list multiline first line");
+}
+finally { Directory.Delete(library, true); }
+
+var listFolder = Path.Combine(Path.GetTempPath(), "Querywright-list-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Check(SnippetFiles.List(listFolder).Count == 0, "list missing folder");
+    Directory.CreateDirectory(listFolder);
+    File.WriteAllText(Path.Combine(listFolder, "b_1.sql"), "\r\n   \r\n  first line  \r\nsecond");
+    File.WriteAllText(Path.Combine(listFolder, "long.sql"), new string('x', 200));
+    File.WriteAllText(Path.Combine(listFolder, "emoji.sql"), new string('a', 79) + "😀tail");
+    File.WriteAllText(Path.Combine(listFolder, "empty.sql"), "");
+    File.WriteAllText(Path.Combine(listFolder, "bad-name.sql"), "x");
+    File.WriteAllText(Path.Combine(listFolder, "a b.sql"), "x");
+    File.WriteAllText(Path.Combine(listFolder, "notes.sqlx"), "x");
+    File.WriteAllText(Path.Combine(listFolder, "huge.sql"), new string('x', 4_000_001));
+    File.WriteAllBytes(Path.Combine(listFolder, "invalid.sql"), new byte[] { 0xC3, 0x28 });
+    var small = SnippetFiles.List(listFolder).ToDictionary(p => p.Key, p => p.Value);
+    Check(small.Keys.Order(StringComparer.Ordinal).SequenceEqual(new[] { "b_1", "emoji", "empty", "long" }), "list filters names, size and encoding");
+    Check(small["b_1"] == "first line" && small["empty"] == "", "list skips blank lines");
+    Check(small["long"].Length == 80 && small["emoji"] == new string('a', 79), "list truncates to 80 without splitting surrogates");
+    for (int i = 0; i < 510; i++) File.WriteAllText(Path.Combine(listFolder, $"s{i:D3}.sql"), "x");
+    var capped = SnippetFiles.List(listFolder);
+    Check(capped.Count == 500 && capped[0].Key == "b_1" && capped.Select(p => p.Key).SequenceEqual(capped.Select(p => p.Key).Order(StringComparer.Ordinal)), "list cap and order");
+}
+finally { Directory.Delete(listFolder, true); }
+Console.WriteLine($"PASS: {checks} total checks including snippet library. SSMS integration not tested.");
 
 var issues = SqlAnalysis.Analyze("SELECT * FROM dbo.T; INSERT dbo.T VALUES (1); SELECT CASE WHEN x = NULL THEN 1 END FROM dbo.T;");
 Check(issues.Parsed, "parse valid batch");

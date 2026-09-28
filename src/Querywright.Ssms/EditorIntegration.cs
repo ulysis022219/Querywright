@@ -45,6 +45,12 @@ namespace Querywright.Ssms
             if (!IsSql(type)) return;
             WorkbenchPackage.EnsureLoaded();
             WorkbenchPackage.Instance?.CurrentTables(); // start the live metadata load before the first keystroke
+            // ponytail: SSMS raises no public connect event; a cheap poll starts the load once the window connects.
+            // TryGet only starts a background load when the connection key is new, so repeats are no-ops.
+            var poll = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            poll.Tick += (s, e) => { if (view.HasAggregateFocus && WorkbenchPackage.Instance?.LiveMetadataEnabled == true) LiveMetadata.TryGet(LiveMetadata.Capture()); };
+            view.Closed += (s, e) => poll.Stop();
+            poll.Start();
             var filter = new EditorCommandFilter(view, Completion);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
             SelfTest.Adapter = adapter;

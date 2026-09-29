@@ -7,7 +7,7 @@ Status vocabulary: missing, core-only, integrated, verified in SSMS.
 | Area | Required behavior | Status | Acceptance evidence required |
 |---|---|---|---|
 | Host | SSMS 22.10.1 package, menus, settings, shortcuts, undo, install/uninstall | verified in SSMS (install, package load, menus, formatting undo/redo; e2e job) | Uninstall pending |
-| Completion | Objects, columns, aliases, parameters, joins, fuzzy matches, column picker, metadata refresh | integrated: as-you-type popup, live metadata (tables, views, columns, FK joins), Ctrl+Shift+D refresh, column picker, INSERT/EXEC fill, hover quick info | e2e keyword and live column scenarios |
+| Completion | Objects, columns, aliases, parameters, joins, fuzzy matches, column picker, metadata refresh | integrated: as-you-type popup, live metadata (tables, views, columns, FK joins), Ctrl+Shift+D refresh, column picker, INSERT/EXEC fill (Tab after the name, or when the suggestion is committed), hover quick info | e2e keyword and live column scenarios |
 | Snippets | User templates, Tab shortcuts (ssf), context values, date/time, caret/selection, sharing | integrated: 56 seeded, all placeholders, listed in popup, Tab with popup open | e2e ssf and typed-ssf scenarios |
 | Formatting | Selection/document, styles, shared settings, batch operation | verified in SSMS (document); casing, brackets, qualify, style editor (13 options), bulk folder formatting integrated | Bulk encoding/newline preservation checked in core |
 | Refactoring | Local rename, qualification, wildcard expansion, brackets, semicolons, procedure extraction | integrated: variable/alias rename, qualification, wildcard (live or offline), brackets, semicolons, encapsulate as procedure (script in new window) | e2e wildcard scenario |
@@ -16,7 +16,7 @@ Status vocabulary: missing, core-only, integrated, verified in SSMS.
 | Navigation | Definitions, ALTER script generation, object explorer, script overview, unused declarations | integrated: F12 locals/aliases/CTEs; modules scripted as ALTER in a new query; summarize script, unused declarations | e2e F12 variable scenario |
 | Editor | Execute statement, environment colors | integrated: Shift+F5 (explicit keypress only), environment color strip, server · database label at the bottom right | Statement boundaries checked in core |
 | History | Open/closed tabs, search, restore, rename, retention, crash recovery | integrated: local store (60 s + on close, 200 kept), search, preview, reopen, rename, delete, opt-out | Crash-safe writes, local privacy, restart recovery |
-| Results | IN-list copy, INSERT scripts, spreadsheet export | integrated via grid right-click menu: copy as IN clause, script as INSERT (new window, not executed), open in Excel, save as CSV; formula-injection guard | e2e grid script-as-INSERT scenario; grid read by reflection (no public API) |
+| Results | IN-list copy, INSERT scripts, spreadsheet export | integrated via grid right-click menu: copy as IN clause, script as INSERT (DROP/CREATE #Results temp table plus VALUES, new window, not executed), open in Excel, save as CSV; formula-injection guard | e2e grid script-as-INSERT scenario; grid read by reflection (no public API) |
 | Teams | Shared snippets, formatting and analysis policies; bulk processing | integrated: shared snippet folder, shared settings file (style + rule severities), bulk folder formatting | Shared paths are ordinary files; no server component |
 
 AI excluded explicitly: text-to-SQL, explanations, AI suggestions, index/query AI

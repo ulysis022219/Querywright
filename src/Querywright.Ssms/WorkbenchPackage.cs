@@ -206,6 +206,30 @@ namespace Querywright.Ssms
             catch (Exception error) when (!(error is OutOfMemoryException)) { return false; }
         }
 
+        /// <summary>After a suggestion is committed: INSERT INTO t / EXEC p gets its column list or parameters right away.</summary>
+        internal void TryFillAfterCommit(IWpfTextView view)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (view.IsClosed || !view.Selection.IsEmpty || view.Caret.InVirtualSpace) return;
+            try { Fill(view, view.TextSnapshot, view.Caret.Position.BufferPosition.Position); }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { ShowWarning(error.Message); }
+        }
+
+        // Tab after INSERT INTO t / EXEC p writes the column list or parameters.
+        private bool Fill(IWpfTextView view, ITextSnapshot snapshot, int caret)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            // ponytail: cheap keyword gate so ordinary Tabs never parse the whole script on the UI thread.
+            int from = Math.Max(0, caret - 300);
+            string recent = snapshot.GetText(from, caret - from);
+            string text = recent.IndexOf("INSERT", StringComparison.OrdinalIgnoreCase) >= 0 || recent.IndexOf("EXEC", StringComparison.OrdinalIgnoreCase) >= 0
+                ? snapshot.GetText() : null;
+            var fill = text == null ? null : SqlAssist.FillStatement(text, caret, CurrentTables(), CurrentProcedures(text));
+            if (fill == null) return false;
+            ReplaceText(view, new SnapshotSpan(snapshot, fill.Start, fill.Length), fill.Text, fill.Text.Length, 0, 0, "Fill statement");
+            return true;
+        }
+
         internal bool TryTabExpand(IWpfTextView view)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
@@ -240,18 +264,7 @@ namespace Querywright.Ssms
                     ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
                     return true;
                 }
-                // SQL Prompt: Tab after INSERT INTO t / EXEC p writes the column list or parameters.
-                // ponytail: cheap keyword gate so ordinary Tabs never parse the whole script on the UI thread.
-                int from = Math.Max(0, caret - 300);
-                string recent = snapshot.GetText(from, caret - from);
-                string text = recent.IndexOf("INSERT", StringComparison.OrdinalIgnoreCase) >= 0 || recent.IndexOf("EXEC", StringComparison.OrdinalIgnoreCase) >= 0
-                    ? snapshot.GetText() : null;
-                var fill = text == null ? null : SqlAssist.FillStatement(text, caret, CurrentTables(), CurrentProcedures(text));
-                if (fill != null)
-                {
-                    ReplaceText(view, new SnapshotSpan(snapshot, fill.Start, fill.Length), fill.Text, fill.Text.Length, 0, 0, "Fill statement");
-                    return true;
-                }
+                if (Fill(view, snapshot, caret)) return true;
                 string shortcut = SnippetFiles.ShortcutBefore(line.GetText(), caret - line.Start.Position);
                 if (shortcut == null) return false;
                 if (!Directory.Exists(options.SnippetFolder)) SnippetFiles.Initialize(options.SnippetFolder);

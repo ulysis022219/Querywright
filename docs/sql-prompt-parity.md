@@ -61,7 +61,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 |---|---|
 | Copy as IN clause | host (distinct values, numbers bare, NULL dropped) |
 | Script as INSERT (temp table + values) | host (`#Results` with reported column types, 1000-row batches, new window, never executed) |
-| Open in Excel | host (UTF-16 tab-delimited .csv in %TEMP%, removed after a day; formula-injection guard) |
+| Open in Excel | host (.xlsx in %TEMP%, removed after a day; cells are Text so dates and codes match the grid exactly, numeric columns stay numbers with the grid's decimals; no formulas) |
 | Save as CSV | host (RFC 4180, UTF-8, formula-injection guard) |
 
 In the results grid's right-click menu and the Tools menu. SSMS has no public grid API, so the

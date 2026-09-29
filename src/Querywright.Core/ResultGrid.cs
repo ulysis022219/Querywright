@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -150,6 +152,105 @@ namespace Querywright.Core
             Line(ColumnNames(headers));
             foreach (var row in rows) Line(row);
             return builder.ToString();
+        }
+
+        private static readonly Regex PlainDecimal = new Regex(@"^-?(0|[1-9]\d*)(\.(\d+))?$", RegexOptions.CultureInvariant);
+        private static readonly Regex XmlInvalid = new Regex(@"[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]", RegexOptions.CultureInvariant);
+
+        private static string Xml(string value) => System.Security.SecurityElement.Escape(XmlInvalid.Replace(value, ""));
+
+        private static string CellRef(int column, int row)
+        {
+            string letters = "";
+            for (int c = column + 1; c > 0; c = (c - 1) / 26) letters = (char)('A' + (c - 1) % 26) + letters;
+            return letters + row;
+        }
+
+        /// <summary>
+        /// Minimal .xlsx with the grid's display text kept 1:1: every cell is Text-formatted, so Excel never re-parses
+        /// dates, codes like 007 or long numbers. Only plain decimals in numeric columns become numbers, formatted with
+        /// the grid's own decimal places. Strings are never evaluated, so there is no formula risk. NULL is an empty cell.
+        /// </summary>
+        public static void Xlsx(Stream output, IReadOnlyList<string?> headers, IReadOnlyList<string?>? types, IReadOnlyList<string?[]> rows)
+        {
+            if (headers.Count == 0) throw new InvalidOperationException("The results have no columns.");
+            if (rows.Count >= 1048576) throw new InvalidOperationException("Excel holds at most 1,048,575 rows plus the header.");
+            if (rows.Any(r => r.Length != headers.Count)) throw new ArgumentException("Every row needs one value per column.");
+            var numeric = Enumerable.Range(0, headers.Count).Select(c => types != null && c < types.Count && BaseType(types[c]) is string t && NumericTypes.Contains(t)).ToList();
+            // Style 0 default, 1 bold header, 2 text; 3+ numbers with 0..n decimals (numFmt 164+).
+            var decimals = new List<int>();
+            var names = ColumnNames(headers);
+            var widths = names.Select(n => n.Length).ToArray();
+            var sheet = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetViews><sheetView workbookViewId=\"0\"><pane ySplit=\"1\" topLeftCell=\"A2\" activePane=\"bottomLeft\" state=\"frozen\"/></sheetView></sheetViews>");
+            var data = new StringBuilder("<sheetData>");
+            void Text(int c, int r, string value, int style) =>
+                // ponytail: Excel's cell limit is 32,767 characters; longer grid text is cut there.
+                data.Append("<c r=\"").Append(CellRef(c, r)).Append("\" s=\"").Append(style).Append("\" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
+                    .Append(Xml(value.Length > 32767 ? value.Substring(0, 32767) : value)).Append("</t></is></c>");
+            data.Append("<row r=\"1\">");
+            for (int c = 0; c < names.Count; c++) Text(c, 1, names[c], 1);
+            data.Append("</row>");
+            for (int r = 0; r < rows.Count; r++)
+            {
+                data.Append("<row r=\"").Append(r + 2).Append("\">");
+                for (int c = 0; c < names.Count; c++)
+                {
+                    string? value = rows[r][c];
+                    if (value == null) continue;
+                    widths[c] = Math.Max(widths[c], Math.Min(value.Length, 100));
+                    var match = numeric[c] ? PlainDecimal.Match(value) : Match.Empty;
+                    // Doubles hold 15 significant digits; longer values stay text so no digit changes.
+                    if (match.Success && value.Count(char.IsDigit) <= 15)
+                    {
+                        int places = match.Groups[3].Length;
+                        int index = decimals.IndexOf(places);
+                        if (index < 0) { decimals.Add(places); index = decimals.Count - 1; }
+                        data.Append("<c r=\"").Append(CellRef(c, r + 2)).Append("\" s=\"").Append(3 + index).Append("\"><v>").Append(value).Append("</v></c>");
+                    }
+                    else Text(c, r + 2, value, 2);
+                }
+                data.Append("</row>");
+            }
+            data.Append("</sheetData>");
+            sheet.Append("<cols>");
+            for (int c = 0; c < names.Count; c++)
+                sheet.Append("<col min=\"").Append(c + 1).Append("\" max=\"").Append(c + 1).Append("\" width=\"").Append(Math.Min(widths[c] + 2, 60)).Append("\" customWidth=\"1\"/>");
+            sheet.Append("</cols>").Append(data).Append("</worksheet>");
+
+            var styles = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
+            if (decimals.Count > 0)
+            {
+                styles.Append("<numFmts count=\"").Append(decimals.Count).Append("\">");
+                for (int i = 0; i < decimals.Count; i++)
+                    styles.Append("<numFmt numFmtId=\"").Append(164 + i).Append("\" formatCode=\"").Append(decimals[i] == 0 ? "0" : "0." + new string('0', decimals[i])).Append("\"/>");
+                styles.Append("</numFmts>");
+            }
+            styles.Append("<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font><font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>")
+                .Append("<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>")
+                .Append("<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>")
+                .Append("<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>")
+                .Append("<cellXfs count=\"").Append(3 + decimals.Count).Append("\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>")
+                .Append("<xf numFmtId=\"49\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\" applyNumberFormat=\"1\"/>")
+                .Append("<xf numFmtId=\"49\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>");
+            for (int i = 0; i < decimals.Count; i++)
+                styles.Append("<xf numFmtId=\"").Append(164 + i).Append("\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>");
+            styles.Append("</cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>");
+
+            const string head = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>";
+            const string rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+            var parts = new[]
+            {
+                ("[Content_Types].xml", head + "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/></Types>"),
+                ("_rels/.rels", head + "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + rel + "/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"),
+                ("xl/workbook.xml", head + "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"" + rel + "\"><sheets><sheet name=\"Results\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"),
+                ("xl/_rels/workbook.xml.rels", head + "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + rel + "/worksheet\" Target=\"worksheets/sheet1.xml\"/><Relationship Id=\"rId2\" Type=\"" + rel + "/styles\" Target=\"styles.xml\"/></Relationships>"),
+                ("xl/styles.xml", styles.ToString()),
+                ("xl/worksheets/sheet1.xml", sheet.ToString()),
+            };
+            using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+                foreach (var (name, content) in parts)
+                    using (var writer = new StreamWriter(zip.CreateEntry(name, CompressionLevel.Fastest).Open(), new UTF8Encoding(false)))
+                        writer.Write(content);
         }
     }
 }

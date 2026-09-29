@@ -26,6 +26,7 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - Suggestions as you type: tables, views, columns and joins from the connected database.
   Press **Ctrl+Shift+D** to reload them after schema changes.
 - Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`.
+- Typing `'` inserts `''` with the cursor inside; typing `'` again steps over the closing quote (turn off under Tools > Options > Querywright).
   56 built in; add your own `.sql` files or share a team folder.
 - Expand `*` into a column list, or pick the columns you want.
 - **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view, function or trigger it opens an ALTER script in a new query and on a table a CREATE TABLE script (also in scripts with syntax errors elsewhere), including three-part names in another database on the same server (`OtherDb.dbo.Proc`).

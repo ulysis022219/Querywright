@@ -213,4 +213,49 @@ namespace Querywright.Ssms
             Loaded += (s, e) => Keyboard.Focus(search);
         }
     }
+
+    /// <summary>Formatting style editor: property grid with a live preview. Edits a copy; the caller saves on OK.</summary>
+    internal sealed class FormattingStyleDialog : System.Windows.Forms.Form
+    {
+        private const string Sample = "select c.CustomerId, c.Name, count(*) as Orders from dbo.Customer c join dbo.[Order] o on o.CustomerId = c.CustomerId\r\n" +
+            "where c.Active = 1 and o.Placed >= '20240101' group by c.CustomerId, c.Name having count(*) > 1 order by Orders desc\r\n" +
+            "insert into dbo.Audit (Id, Note) values (1, N'x')";
+        internal Querywright.Core.FormattingStyle Style { get; }
+
+        internal FormattingStyleDialog(Querywright.Core.FormattingStyle current, string settingsPath)
+        {
+            // ponytail: copy through XML so the dialog never mutates the caller's settings until OK.
+            var serializer = new System.Xml.Serialization.XmlSerializer(typeof(Querywright.Core.FormattingStyle));
+            using (var buffer = new MemoryStream())
+            {
+                serializer.Serialize(buffer, current);
+                buffer.Position = 0;
+                Style = (Querywright.Core.FormattingStyle)serializer.Deserialize(buffer);
+            }
+            Text = "Querywright: formatting style (" + settingsPath + ")";
+            Width = 1000; Height = 600;
+            StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
+            var grid = new System.Windows.Forms.PropertyGrid { SelectedObject = Style, Dock = System.Windows.Forms.DockStyle.Left, Width = 380, ToolbarVisible = false };
+            var preview = new System.Windows.Forms.TextBox
+            {
+                Multiline = true, ReadOnly = true, WordWrap = false, ScrollBars = System.Windows.Forms.ScrollBars.Both,
+                Dock = System.Windows.Forms.DockStyle.Fill, Font = new System.Drawing.Font("Consolas", 10f)
+            };
+            var buttons = new System.Windows.Forms.FlowLayoutPanel { Dock = System.Windows.Forms.DockStyle.Bottom, FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft, Height = 40 };
+            var cancel = new System.Windows.Forms.Button { Text = "Cancel", DialogResult = System.Windows.Forms.DialogResult.Cancel, Width = 90 };
+            var ok = new System.Windows.Forms.Button { Text = "Save", DialogResult = System.Windows.Forms.DialogResult.OK, Width = 90 };
+            buttons.Controls.Add(cancel); buttons.Controls.Add(ok);
+            AcceptButton = ok; CancelButton = cancel;
+            Controls.Add(preview); Controls.Add(grid); Controls.Add(buttons);
+            void Render()
+            {
+                if (Style.IndentSize < 1 || Style.IndentSize > 16) { preview.Text = "Indent size must be between 1 and 16."; ok.Enabled = false; return; }
+                ok.Enabled = true;
+                try { preview.Text = Querywright.Core.SqlFormatting.Format(Sample, Style); }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { preview.Text = error.Message; }
+            }
+            grid.PropertyValueChanged += (s, e) => Render();
+            Render();
+        }
+    }
 }

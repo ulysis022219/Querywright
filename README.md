@@ -99,9 +99,16 @@ semantic equivalence for every supported SQL construct.
 
 Formatter handles ordinary GO separators and repetition counts; SQLCMD directives
 and incomplete statement selections remain unsupported. It uses ScriptDOM with
-SQL Server 2025 grammar and QUOTED_IDENTIFIER ON. Styles currently expose indentation,
-keyword case, comma placement, multiline columns and FROM placement. More style
-options, previews, bulk file formatting and per-connection dialect remain pending.
+SQL Server 2025 grammar and QUOTED_IDENTIFIER ON. Tools > Querywright: formatting style...
+edits 13 options (indentation, keyword case, commas, clause line breaks, alignment, list
+layout, semicolons) with a live preview and saves them to the settings file (created under
+%LocalAppData%\Querywright when none is set; point teammates at a shared copy).
+
+Tools > Querywright: format SQL files in folder... formats every .sql file under a folder
+(hidden, system and linked folders skipped). It previews the count and asks before writing;
+files keep their encoding and line endings; non-UTF-8/UTF-16, oversized or unparsable files are
+left untouched and listed in a report opened in a new window. There is no undo, so use
+source control. Per-connection dialect remains pending.
 
 Copy [example settings](examples/team-settings.xml) to a local/shared file. Set its
 path under Tools > Options > Querywright > General > Settings file. Rule values:

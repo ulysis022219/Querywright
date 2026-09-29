@@ -166,6 +166,8 @@ namespace Querywright.Ssms
             Add(0x011A, SaveAsCsvAsync);
             Add(0x011B, FindInvalidObjectsAsync);
             Add(0x011C, SplitTableAsync);
+            Add(0x011D, EditFormattingStyleAsync);
+            Add(0x011E, FormatFolderAsync);
             Instance = this;
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
@@ -828,6 +830,88 @@ namespace Querywright.Ssms
             await Task.Run(() => File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, ','), new UTF8Encoding(true)));
             await GridStatusAsync($"saved {cells.Rows.Count} rows.", cells);
         });
+
+        private Task EditFormattingStyleAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            string path = options.SettingsFile;
+            bool created = string.IsNullOrWhiteSpace(path);
+            if (created) path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "settings.xml");
+            var settings = File.Exists(path) ? await Task.Run(() => WorkbenchSettings.Load(path)) : new WorkbenchSettings();
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            using (var dialog = new FormattingStyleDialog(settings.Formatting, path))
+            {
+                if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+                settings.Formatting = dialog.Style;
+            }
+            await Task.Run(() => settings.Save(path));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (created) { options.SettingsFile = path; options.SaveSettingsToStorage(); }
+            (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: formatting style saved to " + path);
+        });
+
+        /// <summary>Formats every .sql file under a folder after a preview count and confirmation. Never touches a database.</summary>
+        private Task FormatFolderAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            string folder;
+            using (var picker = new System.Windows.Forms.FolderBrowserDialog { Description = "Querywright: format all .sql files in this folder and its subfolders", ShowNewFolderButton = false })
+            {
+                if (picker.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+                folder = picker.SelectedPath;
+            }
+            var style = (await ReadSettingsAsync()).Formatting;
+            var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            status?.SetText("Querywright: checking .sql files...");
+            var files = await Task.Run(() => SqlFiles(folder));
+            var preview = await Task.Run(() => SqlFormatting.FormatFiles(files, style, write: false));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            int changes = preview.Count(r => r.Status == SqlFormatting.FileStatus.Changed), failed = preview.Count(r => r.Status == SqlFormatting.FileStatus.Failed);
+            var results = preview;
+            if (changes > 0)
+            {
+                string question = $"Format {changes} of {files.Count} .sql file(s) in place?\n\n{files.Count - changes - failed} already formatted, {failed} cannot be formatted (left untouched).\n" +
+                    "Files keep their encoding and line endings. There is no undo; use source control or a copy.";
+                if (VsShellUtilities.ShowMessageBox(this, question, "Querywright", OLEMSGICON.OLEMSGICON_QUERY, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) != 6) return; // 6 = IDYES
+                status?.SetText("Querywright: formatting " + changes + " file(s)...");
+                var targets = preview.Where(r => r.Status == SqlFormatting.FileStatus.Changed).Select(r => r.Path).ToList();
+                var written = await Task.Run(() => SqlFormatting.FormatFiles(targets, style, write: true));
+                results = preview.Where(r => r.Status != SqlFormatting.FileStatus.Changed).Concat(written).OrderBy(r => r.Path, StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            var report = new StringBuilder($"-- Querywright bulk format: {folder}\r\n");
+            foreach (var group in results.GroupBy(r => r.Status).OrderByDescending(g => g.Key))
+            {
+                report.Append($"--\r\n-- {group.Key} ({group.Count()})\r\n");
+                foreach (var item in group) report.Append("--   " + item.Path + (item.Message == null ? "" : "  : " + System.Text.RegularExpressions.Regex.Replace(item.Message, @"\s+", " ")) + "\r\n");
+            }
+            if (files.Count == 0) report.Append("-- No .sql files found.\r\n");
+            await OpenInNewQueryAsync(report.ToString(), "Bulk format report");
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            status?.SetText($"Querywright: formatted {results.Count(r => r.Status == SqlFormatting.FileStatus.Changed)} file(s); {results.Count(r => r.Status == SqlFormatting.FileStatus.Failed)} failed.");
+        });
+
+        /// <summary>*.sql files under a folder; skips hidden, system and link folders (.git, junction loops) and unreadable ones.</summary>
+        private static List<string> SqlFiles(string root)
+        {
+            const int Limit = 20_000;
+            var files = new List<string>();
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.Count > 0 && files.Count < Limit)
+            {
+                string folder = pending.Pop();
+                try
+                {
+                    files.AddRange(Directory.EnumerateFiles(folder, "*.sql").Where(f => f.EndsWith(".sql", StringComparison.OrdinalIgnoreCase)).Take(Limit - files.Count));
+                    foreach (string child in Directory.EnumerateDirectories(folder))
+                        if ((File.GetAttributes(child) & (FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint)) == 0) pending.Push(child);
+                }
+                catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+            }
+            files.Sort(StringComparer.OrdinalIgnoreCase);
+            return files;
+        }
 
         private async Task<WorkbenchSettings> ReadSettingsAsync()
         {

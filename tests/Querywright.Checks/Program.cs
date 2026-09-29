@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using Querywright.Core;
 
@@ -389,6 +390,49 @@ Check(Rules("EXEC master.dbo.xp_cmdshell 'dir';").SequenceEqual(new[] { "SW046" 
     Rules("EXEC dbo.xp_other;").Length == 0, "xp_cmdshell");
 Check(Rules("-- querywright-disable SW029\nGOTO done; done: SELECT 1;").Length == 0, "new rule suppression");
 Console.WriteLine($"PASS: {checks} total checks including analysis batch 4. SSMS integration not tested.");
+var styled = SqlFormatting.Format("select a, b from dbo.T t where a = 1 and b = 2 group by a, b order by a", new FormattingStyle
+{ NewLineBeforeWhere = false, NewLineBeforeJoin = false, NewLineBeforeGrouping = false, MultilinePredicates = false, MultilineColumns = false, NewLineBeforeFrom = false, IncludeSemicolons = true });
+Check(!styled.Trim().Contains('\n') && styled.TrimEnd().EndsWith(";"), "style options single line + semicolon");
+var defaultStyled = SqlFormatting.Format("select a from dbo.T where a = 1 and b = 2");
+Check(defaultStyled.Contains("\nWHERE") && Regex.IsMatch(defaultStyled, @"\n\s+AND b = 2"), "default style unchanged");
+var styleDir = Path.Combine(Path.GetTempPath(), "qw-style-" + Guid.NewGuid().ToString("N"));
+try
+{
+    var saved = new WorkbenchSettings { SW005 = RuleSeverity.Error };
+    saved.Formatting.LeadingCommas = true; saved.Formatting.IndentSize = 2;
+    string settingsPath = Path.Combine(styleDir, "sub", "settings.xml");
+    saved.Save(settingsPath); saved.Formatting.IndentSize = 3; saved.Save(settingsPath);
+    var loaded = WorkbenchSettings.Load(settingsPath);
+    Check(loaded.Formatting.LeadingCommas && loaded.Formatting.IndentSize == 3 && loaded.SW005 == RuleSeverity.Error && loaded.Formatting.NewLineBeforeJoin
+        && Directory.GetFiles(Path.GetDirectoryName(settingsPath)!).Length == 1, "settings save round trip");
+    File.WriteAllText(settingsPath, "<WorkbenchSettings><Formatting><IndentSize>4</IndentSize></Formatting></WorkbenchSettings>");
+    Check(WorkbenchSettings.Load(settingsPath).Formatting.AlignClauseBodies, "old settings file keeps new defaults");
+
+    string F(string name, byte[] bytes) { string p = Path.Combine(styleDir, name); File.WriteAllBytes(p, bytes); return p; }
+    var utf8 = new UTF8Encoding(false);
+    var changed = F("a.sql", utf8.GetBytes("select a from dbo.T\r\nwhere a = 1\r\n"));
+    var bom16 = F("b.sql", Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("select N'é' from dbo.T")).ToArray());
+    var clean = F("c.sql", utf8.GetBytes(SqlFormatting.Format("SELECT a FROM dbo.T;").Replace("\r\n", "\n")));
+    var broken = F("d.sql", utf8.GetBytes("select from where"));
+    var ansi = F("e.sql", new byte[] { (byte)'s', (byte)'e', (byte)'l', (byte)'e', (byte)'c', (byte)'t', (byte)' ', (byte)'\'', 0xE9, (byte)'\'' });
+    var empty = F("f.sql", new byte[0]);
+    var all = new[] { changed, bom16, clean, broken, ansi, empty };
+    var before = all.Select(File.ReadAllBytes).ToArray();
+    var preview = SqlFormatting.FormatFiles(all, null, write: false);
+    Check(preview.Select(r => r.Status).SequenceEqual(new[] { SqlFormatting.FileStatus.Changed, SqlFormatting.FileStatus.Changed, SqlFormatting.FileStatus.Unchanged,
+        SqlFormatting.FileStatus.Failed, SqlFormatting.FileStatus.Failed, SqlFormatting.FileStatus.Unchanged })
+        && all.Select(File.ReadAllBytes).Zip(before, (a, b) => a.SequenceEqual(b)).All(x => x), "bulk preview writes nothing");
+    var written = SqlFormatting.FormatFiles(all, null, write: true);
+    var changedText = File.ReadAllText(changed);
+    var bomBytes = File.ReadAllBytes(bom16);
+    Check(written.Select(r => r.Status).SequenceEqual(preview.Select(r => r.Status)) && changedText.Contains("SELECT a") && changedText.Contains("\r\n") && !Regex.IsMatch(changedText, "[^\r]\n")
+        && bomBytes[0] == 0xFF && bomBytes[1] == 0xFE && Encoding.Unicode.GetString(bomBytes, 2, bomBytes.Length - 2).Contains("N'é'")
+        && File.ReadAllBytes(broken).SequenceEqual(before[3]) && File.ReadAllBytes(ansi).SequenceEqual(before[4]) && File.ReadAllBytes(clean).SequenceEqual(before[2])
+        && !Directory.GetFiles(styleDir, "*.qwtmp").Any(), "bulk write keeps encoding, newlines, and skips failures");
+    Check(SqlFormatting.FormatFiles(all, null, write: false).Take(2).All(r => r.Status == SqlFormatting.FileStatus.Unchanged), "bulk format idempotent");
+}
+finally { if (Directory.Exists(styleDir)) Directory.Delete(styleDir, true); }
+Console.WriteLine($"PASS: {checks} total checks including style options and bulk formatting. SSMS integration not tested.");
 
 Check(Rules("-- querywright-disable SW005\nDELETE FROM dbo.T;\nGO\nDELETE FROM dbo.T;").Length == 0 && Rules("-- querywright-disable SW005, SW006\nDELETE FROM dbo.T;\nUPDATE dbo.T SET x = 1;\n-- querywright-enable SW005\nDELETE FROM dbo.T;\nUPDATE dbo.T SET x = 1;")
     .SequenceEqual(new[] { "SW005" }), "disable until enable");

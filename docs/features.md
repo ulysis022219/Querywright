@@ -53,19 +53,11 @@ Separate Redgate products are not automatically included by their bundle members
   scripts/Test-HostParser.ps1 now exercises formatting with the installed host parser.
   Remaining commands and connected editor behavior still need runtime verification.
 
-## Authorized integration target
+## Integration testing
 
-- User requested local SampleDb for testing. Verified via Windows authentication:
-  server localhost (reported dev-pc), database SampleDb, ONLINE.
-- This is the default SQL Server instance, not (localdb)\MSSQLLocalDB. The latter exposed
-  only system databases during discovery.
-- Read-only metadata checks passed: 8,320 visible user tables, 95,584 columns,
-  SQL_Latin1_General_CP1_CI_AS collation, dbo default schema.
-- Use bounded read-only queries/metadata for integration tests. No database writes,
-  DDL, procedure execution or deployment authorized. Do not log application row data.
-- User is installing SSMS 22. Leave installer and user sessions untouched during setup.
-- Later check: SSMS 22 running with an unsaved connected query; no setup process seen.
-  User session left untouched. Runtime tests need an isolated test session or restart window.
+- Manual checks ran against a large local SQL Server database with Windows authentication,
+  read-only: bounded metadata queries only; no writes, DDL, procedure execution or row data logged.
+- Automated end-to-end tests run SSMS 22 on the CI runner against a throwaway LocalDB database.
 
 ## Next implementation checkpoint
 

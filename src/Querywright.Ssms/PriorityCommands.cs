@@ -68,8 +68,9 @@ namespace Querywright.Ssms
             // F12 comes here too: SSMS's language service claims GotoDefn before editor filters see it once connected.
             if (pguidCmdGroup == VSConstants.GUID_VSStandardCommandSet97 && nCmdID == (uint)VSConstants.VSStd97CmdID.GotoDefn)
             {
+                SelfTest.Note = "f12 priority";
                 try { return package.TryGoToDefinition(package.GetSqlView()) ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
-                catch (InvalidOperationException) { return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
+                catch (InvalidOperationException) { SelfTest.Note = "f12 no view"; return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
             }
             if (pguidCmdGroup != group || nCmdID != id || package.Options?.WarnUnfilteredChanges != true) return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
             try

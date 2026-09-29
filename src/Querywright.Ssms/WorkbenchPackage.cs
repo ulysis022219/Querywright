@@ -311,11 +311,13 @@ namespace Querywright.Ssms
             DefinitionTarget target;
             try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), position); }
             catch (FormatException) { return false; }
+            SelfTest.Note = target == null ? "f12 no target" : "f12 target " + target.Offset;
             if (target == null) return false;
             if (target.Offset < 0)
             {
                 if (bypassDefinition || target.Name == null || options?.LiveMetadata == false) return false;
                 var connection = LiveMetadata.Capture();
+                SelfTest.Note += connection == null ? " no connection" : " scripting";
                 if (connection == null) return false;
                 // OtherDb.dbo.Proc: read the definition from that database on the same server.
                 if (target.Database != null) connection = connection.WithDatabase(target.Database);
@@ -349,6 +351,7 @@ namespace Querywright.Ssms
                 bool table = details?.Type == "U" && details.Columns.Count > 0;
                 if (details == null || (!table && details.Definition == null))
                 {
+                    SelfTest.Note += details == null ? " not found" : " no definition";
                     (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: " + name + " was not found in " + connection.Database
                         + ", or its definition is encrypted or not visible with your permissions.");
                     bypassDefinition = true;
@@ -1198,6 +1201,7 @@ namespace Querywright.Ssms
         private void ShowWarning(string message)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+            SelfTest.Note += " warning: " + message;
             VsShellUtilities.ShowMessageBox(this, message, "Querywright",
                 OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }

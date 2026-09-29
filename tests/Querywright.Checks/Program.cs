@@ -221,6 +221,16 @@ CompletionResult Complete(string text)
     return SqlCompletion.Complete(text.Remove(position, 1), position, catalog);
 }
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Count == 3, "alias columns");
+var otherCatalog = new[] { new SchemaTable("sales", "Orders", "OrderId", "Total"), new SchemaTable("hr", "Staff", "Id") };
+CompletionResult CompleteCross(string text, params string[] databases)
+{
+    int at = text.IndexOf('|');
+    return SqlCompletion.Complete(text.Remove(at, 1), at, catalog, databases: databases, otherDatabase: name => name == "Other" ? otherCatalog : null);
+}
+Check(CompleteCross("SELECT * FROM Other.|", "Other").Items.Select(i => i.Name).OrderBy(n => n).SequenceEqual(new[] { "hr", "sales" }), "cross-db schemas");
+Check(CompleteCross("SELECT * FROM Other.sales.|", "Other").Items.Select(i => i.Name).SequenceEqual(new[] { "Orders" }), "cross-db tables");
+Check(CompleteCross("SELECT * FROM Other.sales.Orders.|", "Other").Items.Count == 2, "cross-db columns");
+Check(CompleteCross("SELECT * FROM dbo.People Other JOIN x ON Other.|", "Other").Items.Select(i => i.Name).Contains("Name"), "alias wins over database");
 string blockSql = "WHILE @i < 10\nBEGIN\n  IF EXISTS(SELECT 1 FROM t) BEGIN SELECT CASE WHEN a=1 THEN 2 ELSE 3 END END\n  ELSE BEGIN PRINT 'end' END\nEND";
 var blocks = SqlNavigation.Blocks(blockSql);
 Check(blocks.Select(b => (blockSql.Substring(b.CloseStart, b.CloseLength), b.Depth, b.HeaderStart < 0 ? "" : blockSql.Substring(b.HeaderStart, b.HeaderLength)))

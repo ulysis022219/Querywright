@@ -78,4 +78,4 @@ parity claim. This initial package is not a completed SQL Prompt replacement.
 | SW047 | EXEC of a concatenated string. |
 | Warn before USE then change data | Execution prompt when a script switches database with USE and then modifies data (Options, on by default). |
 
-Not built: completion after `OtherDb.` (F12 already follows three-part names).
+Completion after `OtherDb.` offers that database's schemas, then tables, then columns. The other database's catalog loads in the background on first use, so the list appears on a later keystroke.

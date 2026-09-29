@@ -59,6 +59,11 @@ namespace Querywright.Ssms
                             }
                             break;
                         case "tab": Exec(target, VSConstants.VSStd2K, (uint)VSConstants.VSStd2KCmdID.TAB); break;
+                        case "focus": // a keypress lands in the focused editor; first-run dialogs can steal focus
+                            view.VisualElement.Focus();
+                            await Task.Delay(500);
+                            await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            break;
                         case "f12": // through the shell's command routing, as the key is, so priority targets see it
                             Exec((IOleCommandTarget)await package.GetServiceAsync(typeof(SUIHostCommandDispatcher)), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn);
                             break;

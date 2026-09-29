@@ -2,7 +2,7 @@ Querywright for SSMS 22 (x64). Free, open-source (MIT).
 
 Install
 1. Save your work and close SSMS 22.
-2. Right-click the zip > Properties > Unblock (if shown), then extract it.
+2. Right-click the zip > Properties > Unblock (if shown), then Extract All (do not run files from inside the zip).
 3. Double-click Install.cmd in the extracted folder.
    (Same as: powershell -ExecutionPolicy Bypass -File .\Install-Querywright.ps1
     Double-clicking Querywright.Ssms.vsix may open Visual Studio's installer instead of SSMS's.)

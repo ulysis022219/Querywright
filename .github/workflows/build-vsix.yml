@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # release runs look up the earlier green run of the same commit
 
 # A newer push to the same branch makes the older run pointless; releases are never cancelled.
 concurrency:
@@ -31,7 +32,18 @@ jobs:
     permissions:
       contents: write # dev prerelease
     steps:
+      - name: Skip SSMS 22 if this commit already passed it
+        # A release is dispatched on a commit whose push run already ran the end-to-end tests: don't repeat ~11 minutes.
+        id: prior
+        if: inputs.release != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build-vsix.yml --commit "$GITHUB_SHA" --event push --status success --json databaseId --jq length || echo 0)
+          [ "${n:-0}" -gt 0 ] && echo "e2e=skip" >> "$GITHUB_OUTPUT" || true
       - name: Start SSMS 22 install
+        if: steps.prior.outputs.e2e != 'skip'
         shell: powershell
         run: |
           $boot = Join-Path $env:RUNNER_TEMP 'vs_SSMS.exe'
@@ -57,6 +69,10 @@ jobs:
           Write-Output "Version $base.$env:GITHUB_RUN_NUMBER"
       - name: Build VSIX
         run: dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj
+      - name: Dialog layout and interaction checks
+        shell: powershell
+        run: |
+          foreach ($scale in 100, 125, 150, 200) { scripts/Test-Dialogs.ps1 -Scale $scale }
       - name: Verify package
         shell: powershell
         run: scripts/Test-Package.ps1
@@ -90,12 +106,13 @@ jobs:
             --title "Querywright dev build ($GITHUB_REF_NAME)" \
             --notes "Untested development build from ${GITHUB_SHA}. See INSTALL.txt inside the zip."
       - name: SSMS 22 end-to-end
+        if: steps.prior.outputs.e2e != 'skip'
         shell: powershell
         run: |
           Get-Process vs_SSMS -ErrorAction SilentlyContinue | Wait-Process
           scripts/Test-Ssms.ps1 -Package (Resolve-Path src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix)
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.prior.outputs.e2e != 'skip'
         with:
           name: e2e-evidence
           path: e2e

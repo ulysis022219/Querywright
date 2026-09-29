@@ -31,4 +31,6 @@ if (Test-Path -LiteralPath $log) { Write-Output "Log: $log" }
 else { Write-Output 'Bootstrap installer did not create the requested log. Check %TEMP%\dd_VSIXInstaller_*.log.' }
 # 1001: this exact version is already installed (installing a newer build upgrades in place).
 if ($result.ExitCode -eq 1001) { Write-Output 'This version is already installed; nothing to update.'; exit 0 }
+# 1002: nothing to uninstall (never installed, or already removed).
+if ($Uninstall -and $result.ExitCode -eq 1002) { Write-Output 'Querywright is not installed; nothing to remove.'; exit 0 }
 if ($result.ExitCode -ne 0) { throw "VSIX $(if ($Uninstall) { 'uninstall' } else { 'installation' }) failed with exit code $($result.ExitCode)." }

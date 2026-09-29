@@ -37,6 +37,11 @@ namespace Querywright.Ssms
         [Description("Shows \"server \u00B7 database\" at the bottom right of each connected query editor, colored by the tab color rules.")]
         public bool ShowConnection { get; set; } = true;
 
+        [Category("Updates")]
+        [DisplayName("Check for updates")]
+        [Description("Once a day, ask github.com for the latest Querywright release and show a notice when it is newer. Sends no query text, connection or user data.")]
+        public bool CheckForUpdates { get; set; } = true;
+
         [Category("Snippets")]
         [DisplayName("Snippet folder")]
         [Description("Folder of editable .sql templates. Use a shared folder for team snippets.")]

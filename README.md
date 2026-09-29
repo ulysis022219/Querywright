@@ -81,7 +81,7 @@ folder, including to a team share. CURSOR, selection markers, DATE, TIME, MACHIN
 and PASTE are implemented. SERVER, DBNAME, and USER require connection integration;
 insertion rejects templates requesting unavailable values before modifying SQL.
 
-Tools > Querywright: analyze SQL document runs 27 syntax-tree rules in the background
+Tools > Querywright: analyze SQL document runs 46 syntax-tree rules in the background
 and publishes results to Error List. Double-click navigation rejects stale snapshots.
 See [analysis coverage](docs/analysis-rules.md). No SQL is executed.
 

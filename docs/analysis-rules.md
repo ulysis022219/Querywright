@@ -1,6 +1,6 @@
 # Static analysis coverage
 
-27 syntax-only rules; this is not full SQL Prompt rule parity (see sql-prompt-parity.md). Source reference:
+46 syntax-only rules; this is not full SQL Prompt rule parity (see sql-prompt-parity.md). Source reference:
 https://documentation.red-gate.com/codeanalysis/code-analysis-for-sql-server/best-practice-rules
 
 | Our ID | Behavior | Related Redgate rule | Evidence |
@@ -32,6 +32,25 @@ https://documentation.red-gate.com/codeanalysis/code-analysis-for-sql-server/bes
 | SW025 | WAITFOR DELAY inside a stored procedure | Performance (ID unverified) | WAITFOR in ad hoc batches and WAITFOR TIME excluded |
 | SW026 | SELECT TOP without ORDER BY | Best practice (ID unverified) | ORDER BY excluded; TOP inside EXISTS excluded; UPDATE/DELETE TOP not checked |
 | SW027 | EXECUTE(string) dynamic SQL | BP013 | sp_executesql excluded |
+| SW028 | COUNT subquery compared with 0 | PE013 (unverified) | Any comparison with literal 0, either side; other constants excluded |
+| SW029 | GOTO | ST011 (unverified) | |
+| SW030 | SET ANSI_NULLS / ANSI_PADDING / CONCAT_NULL_YIELDS_NULL OFF | DEP015 family (unverified) | ON excluded |
+| SW031 | @@ERROR | BP (unverified) | Other @@ functions excluded |
+| SW032 | Function around a column in a WHERE/JOIN comparison | PE (non-sargable; unverified) | Info; only when the other side has no column; functions in the select list excluded |
+| SW033 | LIKE pattern starting with % on a column | PE (unverified) | Info; trailing % excluded |
+| SW034 | Index table hint | PE004 (unverified) | Info; other hints excluded |
+| SW035 | SET FMTONLY ON | DEP (unverified) | OFF excluded. (FASTFIRSTROW no longer parses in the 2025 grammar, so it surfaces as a syntax error.) |
+| SW036 | Named constraint on a #temp table | BP (unverified) | Unnamed constraints and permanent tables excluded |
+| SW037 | FLOAT / REAL | BP023 (unverified) | Info |
+| SW038 | MONEY / SMALLMONEY | BP022 (unverified) | Info |
+| SW039 | TIMESTAMP type synonym | DEP (unverified) | ROWVERSION excluded |
+| SW040 | String literal as column alias (`'x' = 1`, `AS 'x'`) | DEP (unverified) | Bare and bracketed aliases excluded |
+| SW041 | Numbered procedure (`name;n`) | DEP (unverified) | |
+| SW042 | `!<` and `!>` operators | ST (unverified) | |
+| SW043 | TOP 100 PERCENT | BP (unverified) | Other percentages excluded |
+| SW044 | EXISTS over an aggregate with no GROUP BY/HAVING | BP (unverified) | GROUP BY or HAVING excluded |
+| SW045 | DECIMAL / NUMERIC without precision | BP (unverified) | Any explicit precision excluded |
+| SW046 | xp_cmdshell | Security (unverified) | Any schema/database qualification matched |
 
 SW027 replaces the originally planned "comparison with NULL using =/<>" rule, which duplicates SW003 (BP011).
 Rule IDs marked unverified could not be confirmed against the Redgate catalog; treat them as related, not equivalent.

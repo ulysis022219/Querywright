@@ -13,9 +13,33 @@ namespace Querywright.Ssms
 {
     internal static class DialogParts
     {
-        internal static StackPanel Buttons(Window window, params (string Text, bool IsDefault, bool IsCancel, Action? Click)[] items)
+        internal static void Style(Window window)
         {
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
+            window.ShowInTaskbar = false;
+            window.UseLayoutRounding = true;
+            window.FontFamily = SystemFonts.MessageFontFamily;
+            window.FontSize = Math.Max(13, SystemFonts.MessageFontSize);
+            window.SetResourceReference(Control.BackgroundProperty, SystemColors.ControlBrushKey);
+            window.SetResourceReference(Control.ForegroundProperty, SystemColors.ControlTextBrushKey);
+            void ControlStyle(Type type, params Setter[] setters)
+            {
+                var style = new Style(type);
+                foreach (var setter in setters) style.Setters.Add(setter);
+                window.Resources[type] = style;
+            }
+            ControlStyle(typeof(Button), new Setter(Control.PaddingProperty, new Thickness(14, 6, 14, 6)),
+                new Setter(FrameworkElement.MinHeightProperty, 32.0));
+            ControlStyle(typeof(TextBox), new Setter(Control.PaddingProperty, new Thickness(8, 6, 8, 6)));
+            ControlStyle(typeof(ComboBox), new Setter(Control.PaddingProperty, new Thickness(8, 5, 8, 5)));
+            ControlStyle(typeof(ListBoxItem), new Setter(Control.PaddingProperty, new Thickness(6, 5, 6, 5)),
+                new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+            ControlStyle(typeof(CheckBox), new Setter(Control.PaddingProperty, new Thickness(4, 2, 4, 2)));
+            ControlStyle(typeof(TabItem), new Setter(Control.PaddingProperty, new Thickness(14, 7, 14, 7)));
+        }
+
+        internal static WrapPanel Buttons(Window window, params (string Text, bool IsDefault, bool IsCancel, Action? Click)[] items)
+        {
+            var panel = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
             foreach (var item in items)
             {
                 var button = new Button { Content = item.Text, MinWidth = 90, Margin = new Thickness(4), IsDefault = item.IsDefault, IsCancel = item.IsCancel };
@@ -35,6 +59,7 @@ namespace Querywright.Ssms
         internal ColumnPickerDialog(IReadOnlyList<string> columns, bool checkAll = true)
         {
             Title = "Querywright: pick columns";
+            DialogParts.Style(this);
             Width = 420; Height = 520; MinWidth = 300; MinHeight = 300;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             // TextBlock content so an underscore in a column name is not read as an access key.
@@ -72,6 +97,7 @@ namespace Querywright.Ssms
         internal PromptDialog(string title, string label, string initial, IReadOnlyList<string>? choices = null)
         {
             Title = title;
+            DialogParts.Style(this);
             Width = 480; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
@@ -195,6 +221,7 @@ namespace Querywright.Ssms
         internal TabHistoryDialog(string folder)
         {
             Title = "Querywright: tab history";
+            DialogParts.Style(this);
             Width = 1100; Height = 700; MinWidth = 700; MinHeight = 450;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var tabs = new List<Tab>();
@@ -263,7 +290,7 @@ namespace Querywright.Ssms
                     if (tab == keep) list.SelectedItem = item;
                 }
                 if (Selected() == null) list.SelectedItem = list.Items.OfType<ListBoxItem>().FirstOrDefault(i => i.Tag is Tab);
-                if (list.Items.Count == 0) list.Items.Add(new ListBoxItem { Content = favorites ? "No favorites yet. Select a tab in History and click Add to favorites." : "No saved tabs.", IsEnabled = false, Focusable = false });
+                if (list.Items.Count == 0) list.Items.Add(new ListBoxItem { Content = new TextBlock { Text = term.Length > 0 ? "No tabs match your search." : favorites ? "No favorites yet. Select a tab in History and click Add to favorites." : "No saved tabs.", TextWrapping = TextWrapping.Wrap }, IsEnabled = false, Focusable = false });
             }
             search.TextChanged += (s, e) => Filter();
             historyView.Checked += (s, e) => Filter();
@@ -322,19 +349,33 @@ namespace Querywright.Ssms
                 }),
                 ("_Cancel", false, true, null));
             favoriteButton = (Button)buttons.Children[1];
+            void UpdateButtons()
+            {
+                ((Button)buttons.Children[0]).IsEnabled = versionList.SelectedItem is Version;
+                for (int i = 1; i <= 3; i++) ((Button)buttons.Children[i]).IsEnabled = Selected() != null;
+            }
+            list.SelectionChanged += (s, e) => UpdateButtons();
+            versionList.SelectionChanged += (s, e) => UpdateButtons();
             layout.Children.Add(buttons);
-            var left = new DockPanel();
-            DockPanel.SetDock(versionList, Dock.Bottom); versionList.Height = 220;
-            DockPanel.SetDock(versionsLabel, Dock.Bottom);
-            left.Children.Add(versionList); left.Children.Add(versionsLabel); left.Children.Add(list);
+            var left = new Grid();
+            left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2, GridUnitType.Star), MinHeight = 60 });
+            left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 60 });
+            Grid.SetRow(versionsLabel, 1); Grid.SetRow(versionList, 2);
+            left.Children.Add(list); left.Children.Add(versionsLabel); left.Children.Add(versionList);
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
-            Grid.SetColumn(preview, 1);
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star), MinWidth = 220 });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star), MinWidth = 180 });
+            var splitter = new GridSplitter { Width = 6, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, ResizeDirection = GridResizeDirection.Columns, ResizeBehavior = GridResizeBehavior.PreviousAndNext };
+            System.Windows.Automation.AutomationProperties.SetName(splitter, "Resize history and preview panes");
+            Grid.SetColumn(splitter, 1); grid.Children.Add(splitter);
+            Grid.SetColumn(preview, 2);
             grid.Children.Add(left); grid.Children.Add(preview);
             layout.Children.Add(grid);
             Content = layout;
             Filter();
+            UpdateButtons();
             Loaded += (s, e) => Keyboard.Focus(search);
         }
     }
@@ -359,25 +400,32 @@ namespace Querywright.Ssms
             }
             Text = "Querywright: formatting style (" + settingsPath + ")";
             Width = 1000; Height = 600;
+            MinimumSize = new System.Drawing.Size(720, 420);
+            Font = System.Drawing.SystemFonts.MessageBoxFont;
+            AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
+            Padding = new System.Windows.Forms.Padding(12);
+            ShowInTaskbar = false;
             StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
-            var grid = new System.Windows.Forms.PropertyGrid { SelectedObject = Style, Dock = System.Windows.Forms.DockStyle.Left, Width = 380, ToolbarVisible = false };
+            var grid = new System.Windows.Forms.PropertyGrid { SelectedObject = Style, Dock = System.Windows.Forms.DockStyle.Fill, ToolbarVisible = false, AccessibleName = "Formatting options" };
             var preview = new System.Windows.Forms.TextBox
             {
                 Multiline = true, ReadOnly = true, WordWrap = false, ScrollBars = System.Windows.Forms.ScrollBars.Both,
-                Dock = System.Windows.Forms.DockStyle.Fill, Font = new System.Drawing.Font("Consolas", 10f)
+                Dock = System.Windows.Forms.DockStyle.Fill, Font = new System.Drawing.Font("Consolas", 10f), AccessibleName = "Formatted SQL preview"
             };
-            var buttons = new System.Windows.Forms.FlowLayoutPanel { Dock = System.Windows.Forms.DockStyle.Bottom, FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft, Height = 40 };
-            var cancel = new System.Windows.Forms.Button { Text = "Cancel", DialogResult = System.Windows.Forms.DialogResult.Cancel, Width = 90 };
-            var ok = new System.Windows.Forms.Button { Text = "Save", DialogResult = System.Windows.Forms.DialogResult.OK, Width = 90 };
+            var buttons = new System.Windows.Forms.FlowLayoutPanel { Dock = System.Windows.Forms.DockStyle.Bottom, FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft, AutoSize = true, Padding = new System.Windows.Forms.Padding(0, 12, 0, 0) };
+            var cancel = new System.Windows.Forms.Button { Text = "&Cancel", DialogResult = System.Windows.Forms.DialogResult.Cancel, AutoSize = true, MinimumSize = new System.Drawing.Size(90, 32) };
+            var ok = new System.Windows.Forms.Button { Text = "&Save", DialogResult = System.Windows.Forms.DialogResult.OK, AutoSize = true, MinimumSize = new System.Drawing.Size(90, 32) };
             buttons.Controls.Add(cancel); buttons.Controls.Add(ok);
             AcceptButton = ok; CancelButton = cancel;
-            Controls.Add(preview); Controls.Add(grid); Controls.Add(buttons);
+            var split = new System.Windows.Forms.SplitContainer { Dock = System.Windows.Forms.DockStyle.Fill, Width = 950, SplitterDistance = 340, Panel1MinSize = 240, Panel2MinSize = 240 };
+            split.Panel1.Controls.Add(grid); split.Panel2.Controls.Add(preview);
+            Controls.Add(split); Controls.Add(buttons);
             void Render()
             {
                 if (Style.IndentSize < 1 || Style.IndentSize > 16) { preview.Text = "Indent size must be between 1 and 16."; ok.Enabled = false; return; }
                 ok.Enabled = true;
                 try { preview.Text = Querywright.Core.SqlFormatting.Format(Sample, Style); }
-                catch (Exception error) when (!(error is OutOfMemoryException)) { preview.Text = error.Message; }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { preview.Text = error.Message; ok.Enabled = false; }
             }
             grid.PropertyValueChanged += (s, e) => Render();
             Render();
@@ -390,6 +438,7 @@ namespace Querywright.Ssms
         internal ObjectInfoWindow(string title, string script, IEnumerable<(string Name, string Type, string Nullability)> summary, bool parameters)
         {
             Title = title;
+            DialogParts.Style(this);
             Width = 760; Height = 560; MinWidth = 360; MinHeight = 240;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;
@@ -408,6 +457,8 @@ namespace Querywright.Ssms
             for (int i = 0; i < 3; i++)
                 view.Columns.Add(new GridViewColumn { Header = headers[i], DisplayMemberBinding = new System.Windows.Data.Binding(paths[i]), Width = i == 0 ? 260 : 180 });
             var list = new ListView { View = view, ItemsSource = summary.Select(r => Tuple.Create(r.Name, r.Type, r.Nullability)).ToList() };
+            System.Windows.Automation.AutomationProperties.SetName(text, "Object SQL script");
+            System.Windows.Automation.AutomationProperties.SetName(list, "Object columns or parameters");
             var tabs = new TabControl();
             tabs.Items.Add(new TabItem { Header = "Script", Content = text });
             tabs.Items.Add(new TabItem { Header = "Summary", Content = list });

@@ -63,16 +63,22 @@ ORDER BY 2, 3, 5;";
         internal static void Show(string title, DataTable table, List<string> errors)
         {
             string status = table.Rows.Count + " row(s)" + (errors.Count == 0 ? "" : "; " + errors.Count + " database(s) failed: " + string.Join(" | ", errors));
-            using (var form = new Form { Text = title, Width = 1000, Height = 600, StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false })
+            using (var form = new Form { Text = title, Width = 1000, Height = 600, MinimumSize = new System.Drawing.Size(640, 400), Font = System.Drawing.SystemFonts.MessageBoxFont, AutoScaleMode = AutoScaleMode.Dpi, Padding = new Padding(12), StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false })
             {
                 var grid = new DataGridView
                 {
                     Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, DataSource = table,
                     ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableAlwaysIncludeHeaderText, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
+                    AllowUserToDeleteRows = false, AllowUserToOrderColumns = true, RowHeadersVisible = false, BackgroundColor = System.Drawing.SystemColors.Window,
+                    BorderStyle = BorderStyle.FixedSingle, AccessibleName = "Database query results",
                 };
-                var label = new Label { Dock = DockStyle.Bottom, AutoSize = false, Height = 40, Text = status + ". Select cells and press Ctrl+C to copy." };
+                var label = new TextBox { Dock = DockStyle.Bottom, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Height = errors.Count == 0 ? 48 : 96, Text = status + ". Select cells and press Ctrl+C to copy.", AccessibleName = "Result status and database errors" };
+                var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 8, 0, 0) };
+                var close = new Button { Text = "&Close", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new System.Drawing.Size(90, 32) };
+                buttons.Controls.Add(close); form.CancelButton = close;
                 form.Controls.Add(grid);
                 form.Controls.Add(label);
+                form.Controls.Add(buttons);
                 form.ShowDialog();
             }
         }
@@ -80,12 +86,18 @@ ORDER BY 2, 3, 5;";
         /// <summary>Single-line prompt; null when cancelled or empty.</summary>
         internal static string Ask(string title, string prompt)
         {
-            using (var form = new Form { Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, ClientSize = new System.Drawing.Size(420, 100) })
+            using (var form = new Form { Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, Font = System.Drawing.SystemFonts.MessageBoxFont, AutoScaleMode = AutoScaleMode.Dpi, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(16) })
             {
-                var box = new TextBox { Left = 12, Top = 34, Width = 396, MaxLength = 128 };
-                var ok = new Button { Text = "OK", Left = 252, Top = 66, DialogResult = DialogResult.OK };
-                var cancel = new Button { Text = "Cancel", Left = 333, Top = 66, DialogResult = DialogResult.Cancel };
-                form.Controls.AddRange(new Control[] { new Label { Left = 12, Top = 10, Width = 396, Text = prompt }, box, ok, cancel });
+                var layout = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+                var box = new TextBox { Width = 420, MaxLength = 128, AccessibleName = prompt, Margin = new Padding(3, 8, 3, 12) };
+                var ok = new Button { Text = "&OK", AutoSize = true, MinimumSize = new System.Drawing.Size(90, 32), DialogResult = DialogResult.OK, Enabled = false };
+                var cancel = new Button { Text = "&Cancel", AutoSize = true, MinimumSize = new System.Drawing.Size(90, 32), DialogResult = DialogResult.Cancel };
+                var buttons = new FlowLayoutPanel { Width = 420, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
+                buttons.Controls.Add(cancel); buttons.Controls.Add(ok);
+                layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(420, 0), Text = prompt });
+                layout.Controls.Add(box); layout.Controls.Add(buttons); form.Controls.Add(layout);
+                box.TextChanged += (sender, args) => ok.Enabled = !string.IsNullOrWhiteSpace(box.Text);
+                form.Shown += (sender, args) => box.Focus();
                 form.AcceptButton = ok; form.CancelButton = cancel;
                 return form.ShowDialog() == DialogResult.OK && box.Text.Trim().Length > 0 ? box.Text.Trim() : null;
             }

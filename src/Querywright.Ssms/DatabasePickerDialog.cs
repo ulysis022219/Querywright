@@ -15,13 +15,14 @@ namespace Querywright.Ssms
         internal bool StopOnError => stopOnError.IsChecked == true;
         internal bool PrintName => printName.IsChecked == true;
 
-        private readonly CheckBox stopOnError = new CheckBox { Content = "_Stop on first error (needs SQLCMD mode; $(name) in the script becomes a SQLCMD variable)", Margin = new Thickness(0, 8, 0, 0) };
-        private readonly CheckBox printName = new CheckBox { Content = "_Print each database name (shows in Messages)", IsChecked = true, Margin = new Thickness(0, 4, 0, 0) };
+        private readonly CheckBox stopOnError = new CheckBox { Content = "_Stop on first error (SQLCMD mode)", Margin = new Thickness(0, 8, 0, 0) };
+        private readonly CheckBox printName = new CheckBox { Content = "_Print each database name", IsChecked = true, Margin = new Thickness(0, 4, 0, 0) };
 
         internal DatabasePickerDialog(string server, IReadOnlyList<string> databases, ISet<string> previous, bool scriptHasUse, string purpose = null)
         {
             Title = purpose == null ? "Querywright: script for multiple databases" : "Querywright: " + purpose;
-            Width = 520; Height = 600; MinWidth = 400; MinHeight = 400;
+            DialogParts.Style(this);
+            Width = 600; Height = 680; MinWidth = 460; MinHeight = 560;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
 
@@ -40,27 +41,38 @@ namespace Querywright.Ssms
             var bottom = new StackPanel();
             var count = new TextBlock { Margin = new Thickness(0, 6, 0, 0) };
             bottom.Children.Add(count);
-            if (purpose == null) { bottom.Children.Add(stopOnError); bottom.Children.Add(printName); }
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
-            var all = new Button { Content = "Select _all", MinWidth = 90, Margin = new Thickness(0, 4, 4, 4) };
-            var none = new Button { Content = "Select _none", MinWidth = 90, Margin = new Thickness(4) };
-            var ok = new Button { Content = purpose == null ? "_Open script" : "_Run", MinWidth = 90, Margin = new Thickness(40, 4, 4, 4), IsDefault = true };
+            if (purpose == null)
+            {
+                bottom.Children.Add(stopOnError);
+                bottom.Children.Add(new TextBlock { Text = "SQLCMD mode treats $(name) in your script as a variable.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(24, 2, 0, 4) });
+                bottom.Children.Add(printName);
+            }
+            var selection = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+            var all = new Button { Content = "Select _all shown", MinWidth = 90, Margin = new Thickness(0, 4, 4, 4) };
+            var none = new Button { Content = "Select _none shown", MinWidth = 90, Margin = new Thickness(4) };
+            selection.Children.Add(all); selection.Children.Add(none); top.Children.Add(selection);
+            var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+            var ok = new Button { Content = purpose == null ? "_Open script" : "_Run", MinWidth = 90, Margin = new Thickness(4), IsDefault = true };
             var cancel = new Button { Content = "_Cancel", MinWidth = 90, Margin = new Thickness(4), IsCancel = true };
-            buttons.Children.Add(all); buttons.Children.Add(none); buttons.Children.Add(ok); buttons.Children.Add(cancel);
+            buttons.Children.Add(ok); buttons.Children.Add(cancel);
             bottom.Children.Add(buttons);
             DockPanel.SetDock(bottom, Dock.Bottom); root.Children.Add(bottom);
 
-            var items = databases.Select(name => new CheckBox { Content = name, Tag = name, IsChecked = previous.Contains(name), Margin = new Thickness(2) }).ToList();
+            var items = databases.Select(name => new CheckBox { Content = new TextBlock { Text = name }, Tag = name, IsChecked = previous.Contains(name), Margin = new Thickness(2) }).ToList();
             var list = new ListBox { Margin = new Thickness(0, 6, 0, 0) };
-            foreach (var item in items) list.Items.Add(item);
-            root.Children.Add(list);
+            System.Windows.Automation.AutomationProperties.SetName(list, "Databases");
+            var empty = new TextBlock { Text = "No databases match your filter.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, IsHitTestVisible = false };
+            var listArea = new Grid(); listArea.Children.Add(list); listArea.Children.Add(empty);
+            root.Children.Add(listArea);
             Content = root;
 
             IEnumerable<CheckBox> Visible() => items.Where(i => i.Visibility == Visibility.Visible);
             void Count()
             {
                 int n = items.Count(i => i.IsChecked == true);
+                int hidden = items.Count(i => i.IsChecked == true && i.Visibility != Visibility.Visible);
                 count.Text = n == 1 ? "1 database selected" : n + " databases selected";
+                if (hidden > 0) count.Text += " (" + hidden + " hidden by filters)";
                 ok.IsEnabled = n > 0;
             }
             void Filter()
@@ -72,6 +84,10 @@ namespace Querywright.Ssms
                     bool show = (hideSystem.IsChecked != true || !SystemDatabases.Contains(name)) && name.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0;
                     item.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
                 }
+                list.ItemsSource = Visible().ToList();
+                empty.Visibility = list.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                all.IsEnabled = none.IsEnabled = list.Items.Count > 0;
+                Count();
             }
             foreach (var item in items) { item.Checked += (s, e) => Count(); item.Unchecked += (s, e) => Count(); }
             filter.TextChanged += (s, e) => Filter();

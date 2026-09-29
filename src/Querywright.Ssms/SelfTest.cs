@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.OLE.Interop;
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.TextManager.Interop;
@@ -15,7 +16,8 @@ namespace Querywright.Ssms
     /// <summary>
     /// CI end-to-end driver. Off unless QUERYWRIGHT_SELFTEST names a result file. Sends the same editor commands a
     /// keypress produces (TYPECHAR, TAB, F12) through the SQL view's command chain, so the test does not depend on
-    /// window focus, then writes the buffer text to the result file. Never touches a database.
+    /// window focus, then writes the buffer text to the result file. The results-grid steps (exec, grid, cmd) run a query
+    /// only when the test script asks for them, against the disposable runner's LocalDB.
     /// </summary>
     internal static class SelfTest
     {
@@ -33,8 +35,9 @@ namespace Querywright.Ssms
                 await package.JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (View == null || Adapter == null) throw new InvalidOperationException("no SQL editor opened");
                 var view = View;
+                var adapter = Adapter;
                 var trace = new System.Text.StringBuilder();
-                var target = (IOleCommandTarget)Adapter;
+                var target = (IOleCommandTarget)adapter;
                 foreach (string step in steps.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries))
                 {
                     int colon = step.IndexOf(':');
@@ -57,6 +60,18 @@ namespace Querywright.Ssms
                             break;
                         case "tab": Exec(target, VSConstants.VSStd2K, (uint)VSConstants.VSStd2KCmdID.TAB); break;
                         case "f12": Exec(target, VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn); break;
+                        case "exec": await RunDteCommandAsync(package, "Query.Execute"); break;
+                        case "grid": FocusGrid(); break;
+                        case "cmd":
+                            var commands = await package.GetServiceAsync(typeof(System.ComponentModel.Design.IMenuCommandService)) as OleMenuCommandService;
+                            var command = commands?.FindCommand(new System.ComponentModel.Design.CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), Convert.ToInt32(arg, 16)))
+                                ?? throw new InvalidOperationException("command " + arg + " not registered");
+                            command.Invoke();
+                            break;
+                        case "latest": // follow the newest SQL window, e.g. one a command opened
+                            if (View == null || Adapter == null) throw new InvalidOperationException("no SQL editor");
+                            view = View; adapter = Adapter; target = (IOleCommandTarget)adapter;
+                            break;
                         default: throw new ArgumentException("unknown step " + name);
                     }
                     trace.AppendLine(step + " => " + view.TextSnapshot.GetText().Replace("\r\n", "\\n"));
@@ -68,6 +83,33 @@ namespace Querywright.Ssms
             {
                 File.WriteAllText(result, "error: " + error.GetType().Name + ": " + error.Message);
             }
+        }
+
+        private static async Task RunDteCommandAsync(WorkbenchPackage package, string command)
+        {
+            await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+            var dte = await package.GetServiceAsync(typeof(SDTE)) ?? throw new InvalidOperationException("no DTE");
+            dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { command, "" });
+        }
+
+        private delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+        [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr lParam);
+
+        /// <summary>Gives keyboard focus to the first visible results grid, as a click would.</summary>
+        private static void FocusGrid()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            System.Windows.Forms.Control? grid = null;
+            EnumChildWindows(System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle, (hwnd, _) =>
+            {
+                var control = System.Windows.Forms.Control.FromHandle(hwnd);
+                for (var type = control?.GetType(); type != null && grid == null; type = type.BaseType)
+                    if (type.Name == "GridControl" && control!.Visible) grid = control;
+                return grid == null;
+            }, IntPtr.Zero);
+            if (grid == null) throw new InvalidOperationException("no results grid");
+            grid.Focus();
+            if (ResultsGridReader.FocusedGrid() != grid) throw new InvalidOperationException("results grid did not take focus");
         }
 
         private static void Move(IWpfTextView view, int position)

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Querywright.Core;
 
 var now = new DateTimeOffset(2026, 9, 28, 13, 45, 12, TimeSpan.FromHours(8));
@@ -724,4 +725,26 @@ foreach (var (text, s, l) in new[] { (doc, doc.IndexOf("SELECT * FROM", StringCo
 
 var picker = SqlCompletion.WildcardColumns("SELECT p.* FROM dbo.People p", 9, assistTables);
 Check(picker.Wildcard.Start == 7 && picker.Wildcard.Text == "p.*" && picker.Columns.SequenceEqual(new[] { "p.Id", "p.FullName", "p.Born", "p.Code", "p.Stamp", "p.Twice" }), "column picker columns");
+
+Check(ResultGrid.InClause(new[] { "3", "1", "3", null, "-2.5" }) == "(3, 1, -2.5)", "IN clause numbers, distinct, NULL dropped");
+Check(ResultGrid.InClause(new[] { "7", "007", "O'Brien" }) == "(N'7', N'007', N'O''Brien')", "IN clause mixed quotes all");
+Check(ResultGrid.InClause(new[] { "NULL" }) == "(N'NULL')", "IN clause literal NULL text is a string");
+try { ResultGrid.InClause(new string?[] { null }); throw new Exception("Expected empty IN rejection"); } catch (InvalidOperationException) { checks++; }
+Check(ResultGrid.ColumnNames(new[] { "Id", "(No column name)", "id", "", null, "a]b" }).SequenceEqual(new[] { "Id", "Column2", "id_2", "Column4", "Column5", "a]b" }), "column names unique");
+var gridRows = new List<string?[]> { new[] { "1", "Ann", "2024-01-02 03:04:05.123", "0x0A", "12.50" }, new[] { "2", null, null, null, "-1" } };
+string insert = ResultGrid.InsertScript(new[] { "Id", "Name", "When", "Bin", "Amt" }, new[] { "int", "nvarchar(50)", "datetime", "varbinary(max)", null }, gridRows, "\n");
+Check(insert.Contains("    [Id] int NULL,\n    [Name] nvarchar(50) NULL,\n    [When] datetime NULL,\n    [Bin] varbinary(max) NULL,\n    [Amt] decimal(38, 10) NULL\n);") &&
+    insert.Contains("VALUES\n    (1, N'Ann', '2024-01-02T03:04:05.123', 0x0A, 12.50),\n    (2, NULL, NULL, NULL, -1);") && insert.EndsWith("SELECT * FROM #Results;\n"), "insert script: " + insert);
+string inferred = ResultGrid.InsertScript(new[] { "a", "b", "c" }, null, new List<string?[]> { new[] { "1", "x", "007" }, new[] { "3000000000", "it's", "1" } }, "\n");
+Check(inferred.Contains("[a] bigint NULL") && inferred.Contains("[b] nvarchar(4) NULL") && inferred.Contains("[c] nvarchar(3) NULL") && inferred.Contains("(1, N'x', N'007')") && inferred.Contains("(3000000000, N'it''s', N'1')"), "insert inferred types: " + inferred);
+Check(ResultGrid.InsertScript(new[] { "v" }, new[] { "int; DROP TABLE x" }, new List<string?[]> { new[] { "1" } }, "\n").Contains("[v] int NULL"), "insert rejects odd type text");
+Check(ResultGrid.InsertScript(new[] { "r" }, new[] { "timestamp" }, new List<string?[]> { new[] { "0x00000000000007D1" } }, "\n").Contains("[r] binary(8) NULL") , "rowversion scripted as binary(8)");
+var many = Enumerable.Range(0, 2500).Select(i => new string?[] { i.ToString() }).ToList();
+string batched = ResultGrid.InsertScript(new[] { "n" }, new[] { "int" }, many, "\n");
+Check(Regex.Matches(batched, "INSERT INTO").Count == 3 && batched.Contains("    (999);\n\nINSERT") && batched.Contains("(2499);"), "insert batches of 1000");
+Check(ResultGrid.InsertScript(new[] { "n" }, null, new List<string?[]>(), "\n").Contains("[n] nvarchar(1) NULL") , "insert with no rows");
+try { ResultGrid.InsertScript(new[] { "a", "b" }, null, new List<string?[]> { new[] { "1" } }); throw new Exception("Expected ragged rejection"); } catch (ArgumentException) { checks++; }
+string csv = ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[] { "=1+1", "x,y" }, new[] { "-5", "say \"hi\"\nthere" }, new[] { null, "@SUM(A1)" }, new[] { "-x", "+1" } }, ',', "\n");
+Check(csv == "a,b\n'=1+1,\"x,y\"\n-5,\"say \"\"hi\"\"\nthere\"\n,'@SUM(A1)\n'-x,'+1\n", "csv quoting and injection guard: " + csv);
+Check(ResultGrid.Delimited(new[] { "a" }, new List<string?[]> { new[] { "x\ty" } }, '\t', "\n") == "a\n\"x\ty\"\n", "tab-delimited quoting");
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, fixes and object refactors. SSMS integration not tested.");

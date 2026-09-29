@@ -7,6 +7,10 @@
       <Group guid="CommandsGuid" id="ToolsGroup" priority="0x0600">
         <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS" />
       </Group>
+      <!-- SSMS results-grid right-click menu (GUID_SQLEditorGroup:IDM_SQLWB_SQLRESGRID_CONTEXT, from SQLEditors.dll). -->
+      <Group guid="CommandsGuid" id="GridGroup" priority="0x0600">
+        <Parent guid="guidSqlEditorGroup" id="IDM_SQLWB_SQLRESGRID_CONTEXT" />
+      </Group>
     </Groups>
     <Buttons>
       <Button guid="CommandsGuid" id="AddSemicolons" priority="0x0030" type="Button">
@@ -101,8 +105,38 @@
         <Parent guid="CommandsGuid" id="ToolsGroup" />
         <Strings><ButtonText>Querywright: fix all issues</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="CopyAsIn" priority="0x0010" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: copy as IN clause</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="ScriptAsInsert" priority="0x0020" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: script as INSERT</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="OpenInExcel" priority="0x0030" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: open in Excel</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="SaveAsCsv" priority="0x0040" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: save as CSV...</ButtonText></Strings>
+      </Button>
     </Buttons>
   </Commands>
+  <CommandPlacements>
+    <CommandPlacement guid="CommandsGuid" id="CopyAsIn" priority="0x0200">
+      <Parent guid="CommandsGuid" id="ToolsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="ScriptAsInsert" priority="0x0210">
+      <Parent guid="CommandsGuid" id="ToolsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="OpenInExcel" priority="0x0220">
+      <Parent guid="CommandsGuid" id="ToolsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="SaveAsCsv" priority="0x0230">
+      <Parent guid="CommandsGuid" id="ToolsGroup" />
+    </CommandPlacement>
+  </CommandPlacements>
   <KeyBindings>
     <KeyBinding guid="CommandsGuid" id="ExecuteStatement" editor="guidVSStd97" key1="VK_F5" mod1="Shift" />
     <KeyBinding guid="CommandsGuid" id="RefreshMetadata" editor="guidVSStd97" key1="D" mod1="Control Shift" />
@@ -134,6 +168,14 @@
       <IDSymbol name="Encapsulate" value="0x0114" />
       <IDSymbol name="FixAtCaret" value="0x0115" />
       <IDSymbol name="FixAll" value="0x0116" />
+      <IDSymbol name="GridGroup" value="0x1030" />
+      <IDSymbol name="CopyAsIn" value="0x0117" />
+      <IDSymbol name="ScriptAsInsert" value="0x0118" />
+      <IDSymbol name="OpenInExcel" value="0x0119" />
+      <IDSymbol name="SaveAsCsv" value="0x011A" />
+    </GuidSymbol>
+    <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">
+      <IDSymbol name="IDM_SQLWB_SQLRESGRID_CONTEXT" value="0x0070" />
     </GuidSymbol>
   </Symbols>
 </CommandTable>

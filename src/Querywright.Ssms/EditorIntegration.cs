@@ -88,6 +88,46 @@ namespace Querywright.Ssms
         internal IOleCommandTarget? Next;
         internal EditorCommandFilter(IWpfTextView view, IAsyncCompletionBroker completion) { this.view = view; this.completion = completion; }
 
+        /// <summary>The closing quote this filter inserted; typing ' right before it steps over it.</summary>
+        private ITrackingPoint? closer;
+
+        /// <summary>SQL Prompt-style closing quote: ' types '' with the caret between; Backspace in an empty pair removes both.</summary>
+        private bool TryQuote(Guid group, uint id, IntPtr input)
+        {
+            if (group != VSConstants.VSStd2K || !view.Selection.IsEmpty) return false;
+            var caret = view.Caret.Position.BufferPosition;
+            var snapshot = caret.Snapshot;
+            int at = caret.Position;
+            bool atCloser = closer != null && closer.GetPosition(snapshot) == at && at < snapshot.Length && snapshot[at] == '\'';
+            if (id == (uint)VSConstants.VSStd2KCmdID.BACKSPACE)
+            {
+                if (!atCloser || at == 0 || snapshot[at - 1] != '\'') return false;
+                view.TextBuffer.Delete(new Span(at - 1, 2));
+                closer = null;
+                return true;
+            }
+            if (id != (uint)VSConstants.VSStd2KCmdID.TYPECHAR || input == IntPtr.Zero ||
+                (char)(ushort)System.Runtime.InteropServices.Marshal.GetObjectForNativeVariant(input) != '\'') return false;
+            if (atCloser)
+            {
+                view.Caret.MoveTo(new SnapshotPoint(snapshot, at + 1));
+                closer = null;
+                return true;
+            }
+            var line = caret.GetContainingLine();
+            string before = snapshot.GetText(line.Start, at - line.Start);
+            char next = at < line.End ? snapshot[at] : ' ';
+            // ponytail: single-line check; a quote inside a multi-line string or block comment may still get a pair.
+            // Plain quote inside a string or -- comment, when doubling an escape, or touching a word (N'...' excepted).
+            if (before.Count(c => c == '\'') % 2 == 1 || before.Contains("--") || before.EndsWith("'") || char.IsLetterOrDigit(next) || next == '_' ||
+                (System.Text.RegularExpressions.Regex.IsMatch(before, @"[\w@#]$") && !System.Text.RegularExpressions.Regex.IsMatch(before, @"(^|[^\w@#])[Nn]$")))
+                return false;
+            var after = view.TextBuffer.Insert(at, "''");
+            view.Caret.MoveTo(new SnapshotPoint(after, at + 1));
+            closer = after.CreateTrackingPoint(at + 1, PointTrackingMode.Positive);
+            return true;
+        }
+
         private static bool IsTab(Guid group, uint id) => group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.TAB;
         private static bool IsReturn(Guid group, uint id) => group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.RETURN;
         private static bool IsGoToDefinition(Guid group, uint id) =>
@@ -117,6 +157,7 @@ namespace Querywright.Ssms
             }
             if (package != null)
             {
+                if (package.Options?.CloseQuotes != false && TryQuote(group, id, input)) return VSConstants.S_OK;
                 // SQL Prompt: Tab on a typed snippet shortcut expands it even while the suggestion list is open.
                 if (IsTab(group, id) && completion.IsCompletionActive(view) && (package.HasSnippetShortcut(view) || !SelectionMatches()))
                     completion.GetSession(view)?.Dismiss();

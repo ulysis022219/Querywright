@@ -152,6 +152,10 @@ Expect 'typed ssf + Tab with popup' $text { param($t) $t -eq 'SELECT * FROM ' }
 $text = Session 'keyword' '' @() 'wait:3000|type:SELECT 1 ORD|wait:2500|tab|wait:1000'
 Expect 'keyword completion' $text { param($t) $t -match '^SELECT 1 ORDER' }
 
+# Typing ' closes the string; typing ' at the closer steps over it; escapes and N'' prefixes still work.
+$text = Session 'quotes' '' @() "wait:3000|type:SELECT N'ab'x, 'it''s'|wait:1000"
+Expect 'closing quotes' $text { param($t) $t -eq "SELECT N'ab'x, 'it''s'" }
+
 # Live metadata against LocalDB on the disposable runner (the only database this test writes to).
 $server = '(localdb)\MSSQLLocalDB'
 try {

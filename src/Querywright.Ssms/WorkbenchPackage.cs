@@ -187,6 +187,11 @@ namespace Querywright.Ssms
             Add(0x011F, CompareObjectAsync);
             Add(0x0120, GoToDefinitionAsync);
             Add(0x0122, ScriptForDatabasesAsync);
+            Add(0x0123, () => CopyGridAsync(c => ResultGrid.Markdown(c.Headers, c.Rows), "Markdown"));
+            Add(0x0124, () => CopyGridAsync(c => ResultGrid.Json(c.Headers, c.Types, c.Rows), "JSON"));
+            Add(0x0125, () => ScriptGridAsync((c, t) => ResultGrid.UpdateScript(c.Headers, c.Types, c.Rows, t), "UPDATE"));
+            Add(0x0126, () => ScriptGridAsync((c, t) => ResultGrid.MergeScript(c.Headers, c.Types, c.Rows, t), "MERGE"));
+            Add(0x0127, () => ScriptGridAsync((c, t) => ResultGrid.CreateTableScript(c.Headers, c.Types, c.Rows), "CREATE TABLE"));
             Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             Instance = this;
             ServerColorMenu.Start();
@@ -1018,6 +1023,25 @@ namespace Querywright.Ssms
             string script = await Task.Run(() => ResultGrid.InsertScript(cells.Headers, cells.Types, cells.Rows));
             await OpenInNewQueryAsync(script, "Script results as INSERT");
             await GridStatusAsync($"scripted {cells.Rows.Count} rows as INSERT (not executed).", cells);
+        });
+
+        private Task CopyGridAsync(Func<GridCells, string> format, string what) => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var cells = ReadFocusedGrid(valuesOnly: false);
+            System.Windows.Clipboard.SetDataObject(format(cells), true);
+            await GridStatusAsync($"copied {cells.Rows.Count} rows as {what}.", cells);
+        });
+
+        /// <summary>Scripts the grid into a new window; <paramref name="script"/> gets the cells and the query's first table. Never executed.</summary>
+        private Task ScriptGridAsync(Func<GridCells, string, string> script, string what) => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var cells = ReadFocusedGrid(valuesOnly: false);
+            string table = ResultGrid.SourceTable(QueryTextOrNull()) ?? "[dbo].[TargetTable]";
+            string text = await Task.Run(() => script(cells, table));
+            await OpenInNewQueryAsync(text, "Script results as " + what);
+            await GridStatusAsync($"scripted {cells.Rows.Count} rows as {what} (not executed).", cells);
         });
 
         /// <summary>

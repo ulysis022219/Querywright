@@ -153,6 +153,126 @@ namespace Querywright.Core
             return builder.ToString();
         }
 
+        /// <summary>"[schema].[table]" of the first table the query reads, else null.</summary>
+        public static string? SourceTable(string? sql)
+        {
+            var fragment = new Microsoft.SqlServer.TransactSql.ScriptDom.TSql170Parser(true).Parse(new StringReader(sql ?? ""), out _);
+            var finder = new FirstTable();
+            fragment?.Accept(finder);
+            return finder.Name == null ? null : Bracket(finder.Name.SchemaIdentifier?.Value ?? "dbo") + "." + Bracket(finder.Name.BaseIdentifier.Value);
+        }
+
+        private static void CheckShape(IReadOnlyList<string?> headers, IReadOnlyList<string?[]> rows)
+        {
+            if (headers.Count == 0) throw new InvalidOperationException("The results have no columns.");
+            if (rows.Any(r => r.Length != headers.Count)) throw new ArgumentException("Every row needs one value per column.");
+        }
+
+        private static IReadOnlyList<string?> Reported(IReadOnlyList<string?>? types, int count) =>
+            Enumerable.Range(0, count).Select(c => types != null && c < types.Count && BaseType(types[c]) != null ? types[c] : null).ToList();
+
+        /// <summary>CREATE TABLE with the grid's column types; NOT NULL where the rows hold no NULL.</summary>
+        public static string CreateTableScript(IReadOnlyList<string?> headers, IReadOnlyList<string?>? types, IReadOnlyList<string?[]> rows, string table = "#Results", string newline = "\r\n")
+        {
+            CheckShape(headers, rows);
+            var names = ColumnNames(headers);
+            var reported = Reported(types, names.Count);
+            var builder = new StringBuilder("-- Querywright: table shaped like the results. NOT NULL where the rows had no NULL. Review, then execute. Nothing has been run.").Append(newline);
+            builder.Append("CREATE TABLE ").Append(table).Append(newline).Append("(").Append(newline);
+            for (int c = 0; c < names.Count; c++)
+                builder.Append("    ").Append(Bracket(names[c])).Append(' ').Append(ColumnType(reported[c], rows.Select(r => r[c])))
+                    .Append(rows.Count > 0 && rows.All(r => r[c] != null) ? " NOT NULL" : " NULL").Append(c < names.Count - 1 ? "," : "").Append(newline);
+            return builder.Append(");").Append(newline).ToString();
+        }
+
+        /// <summary>One UPDATE per row, keyed on the first column; rowversion columns are skipped.</summary>
+        public static string UpdateScript(IReadOnlyList<string?> headers, IReadOnlyList<string?>? types, IReadOnlyList<string?[]> rows, string table, string newline = "\r\n")
+        {
+            CheckShape(headers, rows);
+            var names = ColumnNames(headers);
+            var reported = Reported(types, names.Count);
+            var kinds = Enumerable.Range(0, names.Count).Select(c => ColumnKind(BaseType(reported[c]), rows, c)).ToList();
+            var set = Enumerable.Range(1, names.Count - 1).Where(c => !IsRowVersion(kinds[c])).ToList();
+            if (set.Count == 0) throw new InvalidOperationException("Select a key column followed by at least one column to update.");
+            var builder = new StringBuilder("-- Querywright: results scripted as UPDATE, keyed on the first column ").Append(Bracket(names[0]))
+                .Append(". Review, then execute. Nothing has been run.").Append(newline);
+            foreach (var row in rows)
+            {
+                builder.Append("UPDATE ").Append(table).Append(" SET ")
+                    .Append(string.Join(", ", set.Select(c => Bracket(names[c]) + " = " + Literal(row[c], kinds[c]))))
+                    .Append(" WHERE ").Append(Bracket(names[0])).Append(row[0] == null ? " IS NULL" : " = " + Literal(row[0], kinds[0])).Append(';').Append(newline);
+            }
+            return builder.ToString();
+        }
+
+        /// <summary>MERGE from a VALUES list, keyed on the first column: update matches, insert the rest. Never deletes.</summary>
+        public static string MergeScript(IReadOnlyList<string?> headers, IReadOnlyList<string?>? types, IReadOnlyList<string?[]> rows, string table, string newline = "\r\n")
+        {
+            CheckShape(headers, rows);
+            if (rows.Count == 0) throw new InvalidOperationException("The results grid has no rows.");
+            var names = ColumnNames(headers);
+            var reported = Reported(types, names.Count);
+            var kinds = Enumerable.Range(0, names.Count).Select(c => ColumnKind(BaseType(reported[c]), rows, c)).ToList();
+            var used = Enumerable.Range(0, names.Count).Where(c => c == 0 || !IsRowVersion(kinds[c])).ToList();
+            string key = Bracket(names[0]);
+            var builder = new StringBuilder("-- Querywright: results scripted as MERGE, keyed on the first column ").Append(key)
+                .Append(". Matching rows are updated, others inserted, nothing deleted. Review, then execute. Nothing has been run.").Append(newline);
+            builder.Append("MERGE INTO ").Append(table).Append(" AS target").Append(newline).Append("USING (VALUES");
+            for (int r = 0; r < rows.Count; r++)
+                builder.Append(newline).Append("    (").Append(string.Join(", ", used.Select(c => Literal(rows[r][c], kinds[c])))).Append(r < rows.Count - 1 ? ")," : ")");
+            builder.Append(newline).Append(") AS source (").Append(string.Join(", ", used.Select(c => Bracket(names[c])))).Append(")").Append(newline);
+            builder.Append("ON target.").Append(key).Append(" = source.").Append(key).Append(newline);
+            if (used.Count > 1)
+                builder.Append("WHEN MATCHED THEN UPDATE SET ").Append(string.Join(", ", used.Skip(1).Select(c => "target." + Bracket(names[c]) + " = source." + Bracket(names[c])))).Append(newline);
+            builder.Append("WHEN NOT MATCHED BY TARGET THEN INSERT (").Append(string.Join(", ", used.Select(c => Bracket(names[c]))))
+                .Append(") VALUES (").Append(string.Join(", ", used.Select(c => "source." + Bracket(names[c])))).Append(");").Append(newline);
+            return builder.ToString();
+        }
+
+        private static bool IsRowVersion(string? kind) => kind == "timestamp" || kind == "rowversion";
+
+        /// <summary>GitHub-flavored Markdown table. '|' is escaped, line breaks become &lt;br&gt;, NULL is shown as NULL.</summary>
+        public static string Markdown(IReadOnlyList<string?> headers, IReadOnlyList<string?[]> rows, string newline = "\r\n")
+        {
+            CheckShape(headers, rows);
+            string Cell(string? value) => value == null ? "NULL" : value.Replace("\\", "\\\\").Replace("|", "\\|").Replace("\r\n", "<br>").Replace("\n", "<br>").Replace("\r", "<br>");
+            var builder = new StringBuilder();
+            builder.Append("| ").Append(string.Join(" | ", ColumnNames(headers).Select(Cell))).Append(" |").Append(newline);
+            builder.Append('|').Append(string.Join("|", headers.Select(_ => " --- "))).Append('|').Append(newline);
+            foreach (var row in rows) builder.Append("| ").Append(string.Join(" | ", row.Select(Cell))).Append(" |").Append(newline);
+            return builder.ToString();
+        }
+
+        /// <summary>JSON array of objects. Numeric columns are JSON numbers, NULL is null, everything else a string.</summary>
+        public static string Json(IReadOnlyList<string?> headers, IReadOnlyList<string?>? types, IReadOnlyList<string?[]> rows, string newline = "\r\n")
+        {
+            CheckShape(headers, rows);
+            var names = ColumnNames(headers);
+            var reported = Reported(types, names.Count);
+            var numeric = Enumerable.Range(0, names.Count).Select(c => ColumnKind(BaseType(reported[c]), rows, c) is var k && (k == null || NumericTypes.Contains(k))).ToList();
+            string Value(string? value, int c) => value == null ? "null" : numeric[c] && IsNumber(value) ? value : JsonString(value);
+            var builder = new StringBuilder("[");
+            for (int r = 0; r < rows.Count; r++)
+                builder.Append(newline).Append("  {").Append(string.Join(", ", names.Select((n, c) => JsonString(n) + ": " + Value(rows[r][c], c)))).Append(r < rows.Count - 1 ? "}," : "}");
+            return builder.Append(rows.Count > 0 ? newline : "").Append(']').Append(newline).ToString();
+        }
+
+        private static string JsonString(string value)
+        {
+            var builder = new StringBuilder("\"");
+            foreach (char ch in value)
+            {
+                if (ch == '"') builder.Append("\\\"");
+                else if (ch == '\\') builder.Append("\\\\");
+                else if (ch == '\n') builder.Append("\\n");
+                else if (ch == '\r') builder.Append("\\r");
+                else if (ch == '\t') builder.Append("\\t");
+                else if (ch < ' ') builder.Append("\\u").Append(((int)ch).ToString("x4", CultureInfo.InvariantCulture));
+                else builder.Append(ch);
+            }
+            return builder.Append('"').ToString();
+        }
+
         // Without a reported type, a column is numeric only when every value is; a mixed column is all strings.
         private static string? ColumnKind(string? baseType, IReadOnlyList<string?[]> rows, int column) =>
             baseType ?? (rows.All(r => r[column] == null || IsNumber(r[column])) ? null : "nvarchar");

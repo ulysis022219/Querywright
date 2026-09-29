@@ -189,6 +189,26 @@
         <Parent guid="CommandsGuid" id="GridGroup" />
         <Strings><ButtonText>Querywright: save as CSV...</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="CopyAsMarkdown" priority="0x0050" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: copy as Markdown table</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="CopyAsJson" priority="0x0060" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: copy as JSON</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="ScriptAsUpdate" priority="0x0070" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: script as UPDATE</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="ScriptAsMerge" priority="0x0080" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: script as MERGE</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="ScriptAsCreateTable" priority="0x0090" type="Button">
+        <Parent guid="CommandsGuid" id="GridGroup" />
+        <Strings><ButtonText>Querywright: script as CREATE TABLE</ButtonText></Strings>
+      </Button>
       <Button guid="CommandsGuid" id="Options" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="SettingsGroup" />
         <Strings><ButtonText>Options...</ButtonText></Strings>
@@ -206,6 +226,21 @@
       <Parent guid="CommandsGuid" id="ResultsGroup" />
     </CommandPlacement>
     <CommandPlacement guid="CommandsGuid" id="SaveAsCsv" priority="0x0230">
+      <Parent guid="CommandsGuid" id="ResultsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="CopyAsMarkdown" priority="0x0240">
+      <Parent guid="CommandsGuid" id="ResultsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="CopyAsJson" priority="0x0250">
+      <Parent guid="CommandsGuid" id="ResultsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="ScriptAsUpdate" priority="0x0260">
+      <Parent guid="CommandsGuid" id="ResultsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="ScriptAsMerge" priority="0x0270">
+      <Parent guid="CommandsGuid" id="ResultsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="ScriptAsCreateTable" priority="0x0280">
       <Parent guid="CommandsGuid" id="ResultsGroup" />
     </CommandPlacement>
     <CommandPlacement guid="CommandsGuid" id="CompareObject" priority="0x0100">
@@ -273,6 +308,11 @@
       <IDSymbol name="GoToDefinition" value="0x0120" />
       <IDSymbol name="Options" value="0x0121" />
       <IDSymbol name="ScriptForDatabases" value="0x0122" />
+      <IDSymbol name="CopyAsMarkdown" value="0x0123" />
+      <IDSymbol name="CopyAsJson" value="0x0124" />
+      <IDSymbol name="ScriptAsUpdate" value="0x0125" />
+      <IDSymbol name="ScriptAsMerge" value="0x0126" />
+      <IDSymbol name="ScriptAsCreateTable" value="0x0127" />
       <IDSymbol name="EditorGroup" value="0x1050" />
     </GuidSymbol>
     <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">

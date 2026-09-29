@@ -894,6 +894,20 @@ string csv = ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[
 Check(csv == "a,b\n'=1+1,\"x,y\"\n-5,\"say \"\"hi\"\"\nthere\"\n,'@SUM(A1)\n'-x,'+1\n", "csv quoting and injection guard: " + csv);
 Check(ResultGrid.Delimited(new[] { "a" }, new List<string?[]> { new[] { "x\ty" } }, '\t', "\n") == "a\n\"x\ty\"\n", "tab-delimited quoting");
 Check(ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[] { "1", "x;y" } }, ';', "\n", includeHeaders: false) == "1;\"x;y\"\n", "csv without headers, semicolon");
+string markdown = ResultGrid.Markdown(new[] { "a", "b" }, new List<string?[]> { new[] { "1", "x|y\nz" }, new[] { null, "" } }, "\n");
+Check(markdown == "| a | b |\n| --- | --- |\n| 1 | x\\|y<br>z |\n| NULL |  |\n", "markdown table: " + markdown);
+string json = ResultGrid.Json(new[] { "Id", "Name", "Code" }, new[] { "int", "nvarchar(10)", null }, new List<string?[]> { new[] { "1", "a\"b\\\n", "007" }, new[] { "2", null, "8" } }, "\n");
+Check(json == "[\n  {\"Id\": 1, \"Name\": \"a\\\"b\\\\\\n\", \"Code\": \"007\"},\n  {\"Id\": 2, \"Name\": null, \"Code\": \"8\"}\n]\n", "json: " + json);
+Check(ResultGrid.Json(new[] { "a" }, null, new List<string?[]>(), "\n") == "[]\n", "json empty");
+var keyed = new List<string?[]> { new[] { "1", "Ann", "0x01" }, new[] { "2", "O'Neil", "0x02" } };
+string update = ResultGrid.UpdateScript(new[] { "Id", "Name", "Ver" }, new[] { "int", "nvarchar(50)", "timestamp" }, keyed, "[dbo].[People]", "\n");
+Check(update.EndsWith("UPDATE [dbo].[People] SET [Name] = N'Ann' WHERE [Id] = 1;\nUPDATE [dbo].[People] SET [Name] = N'O''Neil' WHERE [Id] = 2;\n") && update.StartsWith("-- Querywright"), "update script: " + update);
+try { ResultGrid.UpdateScript(new[] { "Id" }, null, keyed.Select(r => new[] { r[0] }).ToList(), "t"); Check(false, "update needs a column to set"); } catch (InvalidOperationException) { checks++; }
+string merge = ResultGrid.MergeScript(new[] { "Id", "Name", "Ver" }, new[] { "int", "nvarchar(50)", "rowversion" }, keyed, "[dbo].[People]", "\n");
+Check(merge.Contains("MERGE INTO [dbo].[People] AS target\nUSING (VALUES\n    (1, N'Ann'),\n    (2, N'O''Neil')\n) AS source ([Id], [Name])\nON target.[Id] = source.[Id]\nWHEN MATCHED THEN UPDATE SET target.[Name] = source.[Name]\nWHEN NOT MATCHED BY TARGET THEN INSERT ([Id], [Name]) VALUES (source.[Id], source.[Name]);\n") && !merge.Contains("DELETE"), "merge script: " + merge);
+string createTable = ResultGrid.CreateTableScript(new[] { "Id", "Name" }, new[] { "int", null }, new List<string?[]> { new[] { "1", "x" }, new[] { "2", null } }, "#Results", "\n");
+Check(createTable.EndsWith("CREATE TABLE #Results\n(\n    [Id] int NOT NULL,\n    [Name] nvarchar(1) NULL\n);\n"), "create table script: " + createTable);
+Check(ResultGrid.SourceTable("SELECT * FROM Sales.Orders o JOIN dbo.X x ON 1=1") == "[Sales].[Orders]" && ResultGrid.SourceTable("SELECT 1") == null, "source table");
 Check(SqlAnalysis.UnfilteredChanges("TRUNCATE TABLE dbo.T; DROP TABLE dbo.A, #b; DELETE FROM dbo.T", unfiltered: false, dropTruncate: true).SequenceEqual(new[] { "TRUNCATE TABLE dbo.T", "DROP TABLE dbo.A", "DROP TABLE #b" }), "drop/truncate warning targets");
 string multi = SqlRefactoring.ForDatabases("CREATE OR ALTER PROC dbo.p AS SELECT 1;\n", new[] { "Sales", "O'Brien]x" }, newline: "\n");
 Check(multi == "-- Querywright: script for 2 databases. Review, then execute. Nothing has been run.\n\nUSE [Sales];\nPRINT N'Sales';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n\nUSE [O'Brien]]x];\nPRINT N'O''Brien]x';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n", "script for databases: " + multi);

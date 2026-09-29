@@ -84,24 +84,30 @@ namespace Querywright.Ssms
             THEN '(' + CAST(" + c + @".precision AS varchar(3)) + ',' + CAST(" + c + @".scale AS varchar(3)) + ')'
         ELSE '' END";
 
-        private static readonly string CatalogQuery = @"SET LOCK_TIMEOUT 3000;
+        // Independent sections: only the columns are essential. A failing optional section degrades (no foreign keys, keep the
+        // old procedure or database list) instead of failing the whole load. Each starts with its own lock timeout.
+        private static readonly string ColumnsQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
     CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit),
-    CAST(CASE o.type WHEN 'U' THEN 0 ELSE 1 END AS bit), c.column_id
+    CAST(CASE o.type WHEN 'U' THEN 0 ELSE 1 END AS bit)
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = o.object_id
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
 WHERE o.type IN ('U', 'V', 'IF', 'TF') AND o.is_ms_shipped = 0
-UNION ALL
+ORDER BY o.object_id, c.column_id;";
+
+        private static readonly string SynonymsQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
-    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit), CAST(1 AS bit), c.column_id
+    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit), CAST(1 AS bit)
 FROM sys.synonyms AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = OBJECT_ID(o.base_object_name)
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
 WHERE PARSENAME(o.base_object_name, 4) IS NULL AND ISNULL(PARSENAME(o.base_object_name, 3), DB_NAME()) = DB_NAME()
-ORDER BY 1, 2, 7;
+ORDER BY o.object_id, c.column_id;";
+
+        private const string ForeignKeysQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT fk.object_id, ps.name, p.name, pc.name, rs.name, r.name, rc.name
 FROM sys.foreign_keys AS fk
 JOIN sys.foreign_key_columns AS k ON k.constraint_object_id = fk.object_id
@@ -112,15 +118,21 @@ JOIN sys.objects AS r ON r.object_id = k.referenced_object_id
 JOIN sys.schemas AS rs ON rs.schema_id = r.schema_id
 JOIN sys.columns AS rc ON rc.object_id = k.referenced_object_id AND rc.column_id = k.referenced_column_id
 WHERE p.is_ms_shipped = 0
-ORDER BY fk.object_id, k.constraint_column_id;
+ORDER BY fk.object_id, k.constraint_column_id;";
+
+        private static readonly string ProceduresQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT s.name, o.name, p.name, " + TypeSql("p", "t") + @", p.is_output, p.has_default_value
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 LEFT JOIN sys.parameters AS p ON p.object_id = o.object_id AND p.parameter_id > 0
 LEFT JOIN sys.types AS t ON t.user_type_id = p.user_type_id
 WHERE o.type IN ('P', 'PC') AND o.is_ms_shipped = 0
-ORDER BY o.object_id, p.parameter_id;
-SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;";
+ORDER BY o.object_id, p.parameter_id;";
+
+        private const string DatabasesQuery = "SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;";
+
+        /// <summary>Why the last load failed or degraded, as safe text (exception type, SQL number, section); empty when it was clean.</summary>
+        internal static string LastProblem = "";
 
         private static readonly ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>> cache =
             new ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>>();
@@ -183,7 +195,7 @@ SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER 
             var names = new List<string>();
             using (var sql = connection.Open())
             {
-                using (var command = new SqlCommand("SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;", sql) { CommandTimeout = 10 })
+                using (var command = new SqlCommand(DatabasesQuery, sql) { CommandTimeout = 10 })
                 using (var reader = command.ExecuteReader())
                     while (reader.Read()) names.Add(reader.GetString(0));
             }
@@ -401,81 +413,104 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             return result;
         }
 
+        private const int MaxAttempts = 3;
+
+        // Transient: cold LocalDB or pipe, network blips, timeouts, lock timeout, deadlock victim, Azure throttling and failover.
+        private static bool Transient(SqlException error)
+        {
+            switch (error.Number)
+            {
+                case 233: case 53: case 2: case 64: case 121: case 258: case 1205: case 1222: case 4060: case 10053: case 10054: case 10060:
+                case 10928: case 10929: case 40197: case 40501: case 40613: case 49918: case 49919: case 49920:
+                    return true;
+                default: return false;
+            }
+        }
+
+        private static string Describe(Exception error) => error.GetType().Name + (error is SqlException sql ? " " + sql.Number : "");
+
+        private static string Text(SqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+
+        // Reads one result set into a list, capped; the rest is drained so the reader can close cleanly.
+        private static List<T> ReadAll<T>(SqlConnection sql, string query, int timeout, Func<SqlDataReader, T> row, out bool capped)
+        {
+            var list = new List<T>();
+            capped = false;
+            using (var command = new SqlCommand(query, sql) { CommandTimeout = timeout })
+            using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
+            {
+                while (reader.Read())
+                {
+                    if (list.Count >= MaxRows) { capped = true; break; }
+                    list.Add(row(reader));
+                }
+            }
+            return list;
+        }
+
         private static IReadOnlyList<SchemaTable> Load(ActiveConnection connection, int attempt = 0)
         {
             try
             {
-                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View)>();
-                var parameters = new List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default)>();
-                var databases = new List<string>();
-                var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
                 Progress = (0, "connecting");
+                var problems = new List<string>();
+                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View)>();
+                var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
+                List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default)> parameters = null;
+                List<string> databases = null;
+                bool capped;
                 using (var sql = connection.Open())
                 {
                     Progress = (10, "reading columns");
-                    using (var command = new SqlCommand(CatalogQuery, sql) { CommandTimeout = 60 })
-                    using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
+                    // Essential: an error here propagates to the retry logic below.
+                    columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5)), out capped);
+                    Progress = (45, "reading synonyms");
+                    try
                     {
-                        // ponytail: row totals are unknown up front, so the percent is per result set, not per row.
-                        while (reader.Read() && columns.Count < MaxRows)
-                            columns.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetBoolean(4), reader.GetBoolean(5)));
-                        while (reader.Read()) { } // drain capped rows
-                        Progress = (55, "reading foreign keys");
-                        if (reader.NextResult())
-                            while (reader.Read() && keys.Count < MaxRows)
-                                keys.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                                    reader.GetString(4), reader.GetString(5), reader.GetString(6)));
-                        while (reader.Read()) { }
-                        Progress = (70, "reading procedures");
-                        if (reader.NextResult())
-                            while (reader.Read() && parameters.Count < MaxRows)
-                                parameters.Add((reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
-                                    reader.IsDBNull(3) ? null : reader.GetString(3), !reader.IsDBNull(4) && reader.GetBoolean(4), !reader.IsDBNull(5) && reader.GetBoolean(5)));
-                        while (reader.Read()) { }
-                        Progress = (85, "reading databases");
-                        if (reader.NextResult())
-                            while (reader.Read()) databases.Add(reader.GetString(0));
+                        if (!capped)
+                            columns.AddRange(ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true), out _));
                     }
+                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("synonyms " + Describe(error)); }
+                    Progress = (55, "reading foreign keys");
+                    try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
+                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("foreign keys " + Describe(error)); }
+                    Progress = (70, "reading procedures");
+                    try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5)), out _); }
+                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("procedures " + Describe(error)); }
+                    Progress = (85, "reading databases");
+                    try { databases = ReadAll(sql, DatabasesQuery, 15, r => r.GetString(0), out _); }
+                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("databases " + Describe(error)); }
                 }
                 Progress = (95, "indexing " + columns.Count + " columns");
-                var foreignKeys = keys.GroupBy(k => k.Id).ToLookup(g => (g.First().Schema, g.First().Table),
-                    g => new SchemaForeignKey(g.Select(k => k.Column).ToArray(), g.First().RefSchema, g.First().RefTable, g.Select(k => k.RefColumn).ToArray()));
-                var byName = StringComparer.OrdinalIgnoreCase;
-                // One odd object (blank names, or a key on columns past the row cap) is skipped, not the whole catalog.
-                int skipped = 0;
-                var tables = columns.GroupBy(c => (c.Schema, c.Table)).OrderBy(g => g.Key.Schema, byName).ThenBy(g => g.Key.Table, byName)
-                    .Select(g =>
-                    {
-                        var names = g.Select(c => c.Column).ToArray();
-                        try
-                        {
-                            return new SchemaTable(g.Key.Schema, g.Key.Table, names, g.Select(c => c.Type).ToArray(),
-                                foreignKeys[g.Key].Where(k => k.Columns.All(c => names.Contains(c, byName))).ToArray(), g.Select(c => c.Generated).ToArray(), g.First().View);
-                        }
-                        catch (ArgumentException) { skipped++; return null; }
-                    }).Where(t => t != null).ToArray();
-                if (skipped > 0) ActivityLog.TryLogWarning("Querywright", "Live metadata skipped " + skipped + " objects with unusable names");
+                if (capped && columns.Count > 0)
+                {
+                    // The last table may be cut mid-way; drop it rather than offer a partial column list.
+                    var last = columns[columns.Count - 1];
+                    columns.RemoveAll(c => c.Schema == last.Schema && c.Table == last.Table);
+                }
+                var built = CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View)),
+                    keys.Select(k => (k.Id, (string)k.Schema, (string)k.Table, (string)k.Column, (string)k.RefSchema, (string)k.RefTable, (string)k.RefColumn)));
+                if (built.Skipped > 0) ActivityLog.TryLogWarning("Querywright", "Live metadata skipped " + built.Skipped + " objects with unusable names");
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
-                databaseCache[connection.Key] = databases;
-                procedureCache[connection.Key] = parameters.GroupBy(p => (p.Schema, p.Procedure)).OrderBy(g => g.Key.Schema, byName).ThenBy(g => g.Key.Procedure, byName)
-                    .Select(g => new SchemaProcedure(g.Key.Schema, g.Key.Procedure, g.Where(p => p.Name != null)
-                        .Select(p => new SchemaParameter(p.Name, p.Type, p.Output, p.Default)).ToArray())).ToArray();
-                ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + tables.Length + " tables"
-                    + (columns.Count >= MaxRows ? " (column cap reached)" : ""));
+                if (databases != null) databaseCache[connection.Key] = databases;
+                if (parameters != null)
+                    procedureCache[connection.Key] = CatalogAssembler.Procedures(parameters.Select(p => ((string)p.Schema, (string)p.Procedure, (string)p.Name, (string)p.Type, p.Output, p.Default)));
+                LastProblem = problems.Count == 0 ? "" : "partial: " + string.Join(", ", problems);
+                ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + built.Tables.Length + " tables"
+                    + (capped ? " (column cap reached)" : "") + (problems.Count == 0 ? "" : " (" + LastProblem + ")"));
                 stale.TryRemove(connection.Key, out _);
-                return tables;
+                return built.Tables;
             }
-            // Pipe/network not ready yet (cold LocalDB, server starting): retry shortly instead of backing off 30 s.
-            catch (SqlException error) when (attempt < 3 && (error.Number == 233 || error.Number == 53 || error.Number == 2 || error.Number == -2 || error.Number == 10054))
+            catch (SqlException error) when (attempt < MaxAttempts - 1 && Transient(error) && (error.Number != -2 || attempt == 0))
             {
                 System.Threading.Thread.Sleep(TimeSpan.FromSeconds(2 * (attempt + 1)));
                 return Load(connection, attempt + 1);
             }
-            catch (Exception error) when (!(error is OutOfMemoryException))
+            catch (Exception error) when (IsRecoverable(error))
             {
                 // Type and SQL error number only: messages can echo server or login names.
-                ActivityLog.TryLogWarning("Querywright", "Live metadata unavailable: " + error.GetType().Name
-                    + (error is SqlException sqlError ? " " + sqlError.Number : ""));
+                LastProblem = Describe(error);
+                ActivityLog.TryLogWarning("Querywright", "Live metadata unavailable: " + LastProblem);
                 // Back off 30 s before the next attempt; Refresh clears the cache for an immediate retry.
                 if (cache.TryGetValue(connection.Key, out var failed))
                     _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ =>
@@ -484,6 +519,8 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 return null;
             }
         }
+
+        private static bool IsRecoverable(Exception error) => !(error is OutOfMemoryException);
 
         private static Type serviceCacheType;
 

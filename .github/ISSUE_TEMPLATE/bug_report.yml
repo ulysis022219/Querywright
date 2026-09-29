@@ -1,0 +1,29 @@
+name: Bug report
+description: Something in Querywright failed or behaved wrongly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste passwords, connection strings, server names, real query text or result data. Use a small made-up example instead.
+  - type: input
+    id: error
+    attributes:
+      label: Error line
+      description: The "Querywright <version> · <command> · <error type>" line from the error box, if there was one.
+      placeholder: Querywright 0.3.0.42 · SplitTable · NullReferenceException
+  - type: input
+    id: ssms
+    attributes:
+      label: SSMS version
+      description: Help > About in SSMS.
+      placeholder: "22.0"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did and what happened
+      description: Steps to reproduce, what you expected, what happened instead.
+    validations:
+      required: true

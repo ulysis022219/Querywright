@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.Design;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -382,10 +383,8 @@ namespace Querywright.Ssms
                     return;
                 }
                 string owner = details.Schema ?? schema ?? "dbo";
-                string text = table ? ScriptOf(details, owner, name) : SqlRefactoring.CreateToAlter(details.Definition);
-                // The new window connects to the source window's database; switch it so the script targets the object's own database.
-                if (connection.Database != null && !string.Equals(connection.Database, LiveMetadata.Capture()?.Database, StringComparison.OrdinalIgnoreCase))
-                    text = "USE [" + connection.Database.Replace("]", "]]") + "];\r\nGO\r\n" + text;
+                // Like SSMS Modify / Script as: USE (so the new window targets the object's database), the Object comment and SET options.
+                string text = Header(details, owner, name) + (table ? ScriptOf(details, owner, name) : SqlRefactoring.CreateToAlter(details.Definition));
                 var view = await OpenInNewQueryAsync(text, "Script " + name);
                 if (await GetServiceAsync(typeof(SVsShellMonitorSelection)) is IVsMonitorSelection selection
                     && ErrorHandler.Succeeded(selection.GetCurrentElementValue((uint)VSConstants.VSSELELEMID.SEID_WindowFrame, out object frame)) && frame is IVsWindowFrame opened)
@@ -675,7 +674,7 @@ namespace Querywright.Ssms
                 if (connection == null) throw new InvalidOperationException("Connect the query window to a database first.");
                 var details = await Task.Run(() => LiveMetadata.Details(connection, schema, name));
                 if (details == null) throw new InvalidOperationException(schema + "." + name + " was not found in the connected database, or you lack VIEW DEFINITION permission.");
-                string script = ScriptOf(details, schema, name);
+                string script = Header(details, details.Schema ?? schema, name) + ScriptOf(details, details.Schema ?? schema, name);
                 bool parameters = details.Columns.Count == 0 && details.Parameters.Count > 0;
                 var summary = parameters
                     ? details.Parameters.Select(p => (p.Name, p.Type, p.Output ? "OUTPUT" : "IN"))
@@ -688,6 +687,9 @@ namespace Querywright.Ssms
                 ShowWarning(error.Message);
             }
         }
+
+        private static string Header(LiveMetadata.ObjectDetails details, string schema, string name) =>
+            ObjectScript.Header(details.Database, details.Type, schema, name, details.AnsiNulls, details.QuotedIdentifier, DateTime.Now.ToString(CultureInfo.CurrentCulture));
 
         private static string ScriptOf(LiveMetadata.ObjectDetails details, string schema, string name) =>
             details.Type == "U" && details.Columns.Count > 0

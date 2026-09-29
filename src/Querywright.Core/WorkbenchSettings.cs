@@ -37,6 +37,25 @@ namespace Querywright.Core
         public RuleSeverity SW025 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW026 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW027 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW028 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW029 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW030 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW031 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW032 { get; set; } = RuleSeverity.Info;
+        public RuleSeverity SW033 { get; set; } = RuleSeverity.Info;
+        public RuleSeverity SW034 { get; set; } = RuleSeverity.Info;
+        public RuleSeverity SW035 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW036 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW037 { get; set; } = RuleSeverity.Info;
+        public RuleSeverity SW038 { get; set; } = RuleSeverity.Info;
+        public RuleSeverity SW039 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW040 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW041 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW042 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW043 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW044 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW045 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW046 { get; set; } = RuleSeverity.Warning;
 
         public RuleSeverity Severity(string rule)
         {

@@ -933,8 +933,11 @@ namespace Querywright.Ssms
             if (!await ShowDialogAsync(picker)) return;
             options.MultiDatabaseSelection = string.Join("\n", picker.Selected);
             options.SaveSettingsToStorage();
-            string script = await Task.Run(() => SqlRefactoring.ForDatabases(sql, picker.Selected, picker.StopOnError, picker.PrintName));
-            await OpenInNewQueryAsync(script, "Script for " + picker.Selected.Count + " databases");
+            // WPF controls belong to the UI thread: read the checkboxes before Task.Run.
+            var selected = picker.Selected;
+            bool stopOnError = picker.StopOnError, printName = picker.PrintName;
+            string script = await Task.Run(() => SqlRefactoring.ForDatabases(sql, selected, stopOnError, printName));
+            await OpenInNewQueryAsync(script, "Script for " + selected.Count + " databases");
         });
 
         /// <summary>Rewrites the selection (the whole window when nothing is selected) as one undo step.</summary>

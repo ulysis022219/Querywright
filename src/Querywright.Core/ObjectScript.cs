@@ -56,6 +56,24 @@ namespace Querywright.Core
 
         public static string Check(string name, string definition) => "CONSTRAINT " + Bracket(name) + " CHECK " + definition;
 
+        /// <summary>
+        /// The lines SSMS puts above a scripted object: USE, the Object comment, and the object's own SET ANSI_NULLS / QUOTED_IDENTIFIER,
+        /// each batch ended by GO. <paramref name="type"/> is sys.objects.type, e.g. P, V, FN, U.
+        /// </summary>
+        public static string Header(string? database, string type, string schema, string name, bool ansiNulls, bool quotedIdentifier, string scriptDate,
+            string newline = "\r\n")
+        {
+            string kind = type switch
+            {
+                "P" or "PC" => "StoredProcedure", "V" => "View", "U" => "Table", "TR" => "Trigger",
+                "FN" or "IF" or "TF" or "FS" or "FT" => "UserDefinedFunction", _ => "Object",
+            };
+            return (database == null ? "" : "USE " + Bracket(database) + newline + "GO" + newline) +
+                "/****** Object:  " + kind + " " + Bracket(schema) + "." + Bracket(name) + "    Script Date: " + scriptDate + " ******/" + newline +
+                "SET ANSI_NULLS " + (ansiNulls ? "ON" : "OFF") + newline + "GO" + newline +
+                "SET QUOTED_IDENTIFIER " + (quotedIdentifier ? "ON" : "OFF") + newline + "GO" + newline;
+        }
+
         /// <summary>Scripts match apart from line endings and trailing whitespace.</summary>
         public static bool SameScript(string? a, string? b)
         {

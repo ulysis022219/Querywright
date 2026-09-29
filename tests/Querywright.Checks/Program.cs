@@ -932,4 +932,9 @@ Check(create == "CREATE TABLE [FC].[Acct]]Hdr]\n(\n[Id] [int] NOT NULL IDENTITY(
     "ALTER TABLE [FC].[Acct]]Hdr] ADD CONSTRAINT [CK_T] CHECK ([Amt]>=(0))\nGO\n", "object script: " + create);
 Check(scriptColumns[1].DataType == "varchar(50)" && scriptColumns[0].DataType == "int" && scriptColumns[3].DataType == "computed", "summary data types");
 try { ObjectScript.CreateTable("dbo", "t", Array.Empty<ScriptColumn>(), null); throw new Exception("Expected empty table rejection"); } catch (ArgumentException) { checks++; }
+Check(ObjectScript.Header("NOAH_BALCOR", "P", "FC", "nsp_BalanceSheet", true, true, "9/29/2026 7:10:36 PM", "\n") ==
+    "USE [NOAH_BALCOR]\nGO\n/****** Object:  StoredProcedure [FC].[nsp_BalanceSheet]    Script Date: 9/29/2026 7:10:36 PM ******/\n" +
+    "SET ANSI_NULLS ON\nGO\nSET QUOTED_IDENTIFIER ON\nGO\n", "SSMS script header");
+Check(ObjectScript.Header(null, "IF", "dbo", "f", false, false, "d", "\n").StartsWith("/****** Object:  UserDefinedFunction [dbo].[f]") &&
+    ObjectScript.Header(null, "IF", "dbo", "f", false, false, "d", "\n").Contains("SET ANSI_NULLS OFF\nGO\nSET QUOTED_IDENTIFIER OFF"), "script header options");
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes and object refactors. SSMS integration not tested.");

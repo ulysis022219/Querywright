@@ -11,7 +11,7 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 | Suggestions as you type | Popup on every identifier, keyword, after `.`/space | host (live connection metadata or offline schema; keywords, functions, variables, CTEs, aliases, snippets) | — |
 | Ctrl+Space / refresh suggestions | Show list; Ctrl+Shift+D refreshes metadata | host (Ctrl+Space is the editor's own; Ctrl+Shift+D bound) | — |
 | JOIN ON suggestions | Proposes join conditions from foreign keys | host (FKs from live metadata or offline DDL) | — |
-| Column picker | Tick columns in a list for SELECT/INSERT | host (Tools > pick columns for *: checkbox list replaces `*` or `alias.*`) | — |
+| Column picker | Tick columns in a list for SELECT/INSERT | host (Querywright > Pick columns for *: checkbox list replaces `*` or `alias.*`) | — |
 | INSERT/EXEC parameter fill | Expands column list / parameters for INSERT and EXEC | host (Tab after `INSERT INTO t` / `EXEC p`; generated columns skipped; procedures from the connection or the script) | — |
 | Snippet shortcut + Tab | `ssf` Tab → `SELECT * FROM` | host (also listed in the popup; Tab expands with the list open) | — |
 | Wildcard expansion with Tab | `*` Tab → column list | host | — |
@@ -64,7 +64,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Open in Excel | host (.xlsx in %TEMP%, removed after a day; cells are Text so dates and codes match the grid exactly, numeric columns stay numbers with the grid's decimals; no formulas) |
 | Save as CSV | host (RFC 4180, UTF-8, formula-injection guard) |
 
-In the results grid's right-click menu and the Tools menu. SSMS has no public grid API, so the
+In the results grid's right-click menu and the Querywright menu. SSMS has no public grid API, so the
 host reflects over the focused `GridControl` and its `IGridStorage` (the approach used by
 SSMSDataAnalyzer and SQLExtended). Values are the grid's display text: floats are rounded and very
 long text may be truncated, exactly as SSMS shows them. One selected cell (or none) means the whole

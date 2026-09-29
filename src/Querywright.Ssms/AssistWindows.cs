@@ -67,13 +67,17 @@ namespace Querywright.Ssms
     {
         internal string Value { get; private set; } = "";
 
-        internal PromptDialog(string title, string label, string initial)
+        /// <summary>With <paramref name="choices"/>, an editable drop-down instead of a text box.</summary>
+        internal PromptDialog(string title, string label, string initial, IReadOnlyList<string>? choices = null)
         {
             Title = title;
             Width = 480; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
-            var box = new TextBox { Text = initial, Margin = new Thickness(0, 4, 0, 4) };
+            Control box = choices == null
+                ? new TextBox { Text = initial, Margin = new Thickness(0, 4, 0, 4) }
+                : new ComboBox { ItemsSource = choices, IsEditable = true, Text = initial, Margin = new Thickness(0, 4, 0, 4) };
+            string Text() => (box as TextBox)?.Text ?? ((ComboBox)box).Text;
             var error = new TextBlock { Foreground = System.Windows.Media.Brushes.Firebrick, TextWrapping = TextWrapping.Wrap };
             var body = new StackPanel();
             body.Children.Add(new Label { Content = label, Target = box });
@@ -83,12 +87,12 @@ namespace Querywright.Ssms
             root.Children.Add(DialogParts.Buttons(this,
                 ("_OK", true, false, () =>
                 {
-                    if (string.IsNullOrWhiteSpace(box.Text)) { error.Text = "Enter a name."; return; }
-                    Value = box.Text.Trim(); DialogResult = true;
+                    if (string.IsNullOrWhiteSpace(Text())) { error.Text = "Enter a name."; return; }
+                    Value = Text().Trim(); DialogResult = true;
                 }),
                 ("_Cancel", false, true, null)));
             Content = root;
-            Loaded += (s, e) => { Keyboard.Focus(box); box.SelectAll(); };
+            Loaded += (s, e) => { Keyboard.Focus(box); (box as TextBox)?.SelectAll(); };
         }
     }
 

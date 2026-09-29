@@ -33,6 +33,13 @@ namespace Querywright.Ssms
             }
         }
 
+        internal ActiveConnection WithDatabase(string database)
+        {
+            var copy = (ActiveConnection)MemberwiseClone();
+            copy.Database = database;
+            return copy;
+        }
+
         internal SqlConnection Open()
         {
             var builder = new SqlConnectionStringBuilder
@@ -116,6 +123,20 @@ ORDER BY 1, 2, p.parameter_id;";
             if (connection == null) return null;
             var task = LoadAsync(connection);
             return await Task.WhenAny(task, Task.Delay(timeout)) == task ? await task : null;
+        }
+
+        /// <summary>Online databases on the connection's server that the login can open. Read-only.</summary>
+        internal static IReadOnlyList<string> Databases(ActiveConnection connection)
+        {
+            var names = new List<string>();
+            using (var sql = connection.Open())
+            {
+                sql.Open();
+                using (var command = new SqlCommand("SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;", sql) { CommandTimeout = 10 })
+                using (var reader = command.ExecuteReader())
+                    while (reader.Read()) names.Add(reader.GetString(0));
+            }
+            return names;
         }
 
         /// <summary>Module text for F12 (OBJECT_DEFINITION; null for tables or no permission). Read-only, parameterized.</summary>

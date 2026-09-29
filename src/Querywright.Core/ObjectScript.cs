@@ -56,6 +56,13 @@ namespace Querywright.Core
 
         public static string Check(string name, string definition) => "CONSTRAINT " + Bracket(name) + " CHECK " + definition;
 
+        /// <summary>Scripts match apart from line endings and trailing whitespace.</summary>
+        public static bool SameScript(string? a, string? b)
+        {
+            string Normal(string? s) => string.Join("\n", (s ?? "").Replace("\r\n", "\n").Split('\n').Select(l => l.TrimEnd())).TrimEnd();
+            return Normal(a) == Normal(b);
+        }
+
         public static string CreateTable(string schema, string name, IReadOnlyList<ScriptColumn> columns, string? filegroup,
             IEnumerable<string>? constraints = null, string newline = "\r\n")
         {

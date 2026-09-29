@@ -59,11 +59,17 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 
 | Action | Querywright |
 |---|---|
-| Copy as IN clause | missing |
-| Script as INSERT (temp table + values) | missing |
-| Open in Excel | missing (CSV/xlsx with formula-injection guard) |
+| Copy as IN clause | host (distinct values, numbers bare, NULL dropped) |
+| Script as INSERT (temp table + values) | host (`#Results` with reported column types, 1000-row batches, new window, never executed) |
+| Open in Excel | host (UTF-16 tab-delimited .csv in %TEMP%, removed after a day; formula-injection guard) |
+| Save as CSV | host (RFC 4180, UTF-8, formula-injection guard) |
 
-Not feasible: SSMS exposes no public or stable API for the results grid. Out of scope.
+In the results grid's right-click menu and the Tools menu. SSMS has no public grid API, so the
+host reflects over the focused `GridControl` and its `IGridStorage` (the approach used by
+SSMSDataAnalyzer and SQLExtended). Values are the grid's display text: floats are rounded and very
+long text may be truncated, exactly as SSMS shows them. One selected cell (or none) means the whole
+grid; up to 500,000 cells are read. Cell data is never logged. If a future SSMS changes the grid
+internals, the commands report that and do nothing.
 
 ## 6. Code analysis (as-you-type squiggles + Error List)
 
@@ -80,7 +86,6 @@ Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: host (fix
 ## Remaining
 
 Split table, find invalid objects. Everything else above is at least host-wired; SSMS e2e covers the scenarios listed in features.md.
-Results-grid actions are out of scope (no API).
 
 ## Sources
 

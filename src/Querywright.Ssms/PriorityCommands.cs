@@ -64,14 +64,19 @@ namespace Querywright.Ssms
             ThreadHelper.ThrowIfNotOnUIThread();
             try
             {
-                var standard = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Edit.GoToDefinition", -1 });
-                // ponytail: the full scan touches every command, so it runs only when the usual binding is missing.
-                if (OnF12(standard)) return;
+                // Some SSMS builds have no Edit.GoToDefinition, so a failed lookup falls through to the scan.
+                try
+                {
+                    var standard = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Edit.GoToDefinition", -1 });
+                    // ponytail: the full scan touches every command, so it runs only when the usual binding is missing.
+                    if (OnF12(standard)) { ActivityLog.TryLogInformation("Querywright", "F12 bound to: Edit.GoToDefinition"); return; }
+                }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 foreach (object command in (System.Collections.IEnumerable)commandList)
                 {
-                    string name = Get(command, "Name") as string ?? "";
-                    if (name.IndexOf("Definition", StringComparison.OrdinalIgnoreCase) < 0 || !OnF12(command)) continue;
-                    F12Commands.Add((new Guid((string)Get(command, "Guid")), (uint)(int)Get(command, "ID"), name));
+                    // Whatever owns plain F12 is handled; TryGoToDefinition passes it on when there is nothing to go to.
+                    try { if (OnF12(command)) F12Commands.Add((new Guid((string)Get(command, "Guid")), (uint)(int)Get(command, "ID"), Get(command, "Name") as string ?? "")); }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 }
                 ActivityLog.TryLogInformation("Querywright", "F12 bound to: " + string.Join(", ", F12Commands.Select(c => c.Name)));
             }

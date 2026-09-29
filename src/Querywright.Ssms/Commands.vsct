@@ -109,6 +109,10 @@
         <Parent guid="CommandsGuid" id="ToolsGroup" />
         <Strings><ButtonText>Querywright: find invalid objects</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="SplitTable" priority="0x0250" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: split table (script)...</ButtonText></Strings>
+      </Button>
       <Button guid="CommandsGuid" id="CopyAsIn" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <Strings><ButtonText>Querywright: copy as IN clause</ButtonText></Strings>
@@ -178,6 +182,7 @@
       <IDSymbol name="OpenInExcel" value="0x0119" />
       <IDSymbol name="SaveAsCsv" value="0x011A" />
       <IDSymbol name="FindInvalidObjects" value="0x011B" />
+      <IDSymbol name="SplitTable" value="0x011C" />
     </GuidSymbol>
     <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">
       <IDSymbol name="IDM_SQLWB_SQLRESGRID_CONTEXT" value="0x0070" />

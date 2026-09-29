@@ -165,6 +165,7 @@ namespace Querywright.Ssms
             Add(0x0119, OpenInExcelAsync);
             Add(0x011A, SaveAsCsvAsync);
             Add(0x011B, FindInvalidObjectsAsync);
+            Add(0x011C, SplitTableAsync);
             Instance = this;
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
@@ -648,6 +649,39 @@ namespace Querywright.Ssms
             var dependents = await Task.Run(() => LiveMetadata.Dependents(connection, schema, target.Name));
             string script = SqlRefactoring.RenameObjectScript(schema, target.Name, newName, dependents);
             await OpenInNewQueryAsync(script, "Rename " + target.Name);
+        });
+
+        /// <summary>Split table: choose columns to move; a reviewable script opens in a new window and is never executed.</summary>
+        private Task SplitTableAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            DefinitionTarget target;
+            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), view.Caret.Position.BufferPosition.Position); }
+            catch (FormatException) { target = null; }
+            if (target == null || target.Offset >= 0 || target.Name == null)
+                throw new InvalidOperationException("Place the caret on a table name in a script without syntax errors.");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the table.");
+            string schema = target.Schema ?? "dbo";
+            var tables = await RequireTablesAsync();
+            var names = StringComparer.OrdinalIgnoreCase;
+            var table = tables.FirstOrDefault(t => names.Equals(t.Schema, schema) && names.Equals(t.Name, target.Name))
+                ?? throw new InvalidOperationException(schema + "." + target.Name + " is not a table in the connected database.");
+            var key = await Task.Run(() => LiveMetadata.PrimaryKey(connection, schema, target.Name));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (key.Count == 0) throw new InvalidOperationException(schema + "." + target.Name + " has no primary key; add one before splitting it.");
+            var candidates = table.Columns.Where(c => !key.Contains(c, names)).ToList();
+            if (candidates.Count == 0) throw new InvalidOperationException("Every column is part of the primary key; nothing to move.");
+            var picker = new ColumnPickerDialog(candidates, false) { Title = "Querywright: columns to move out of " + target.Name };
+            if (!await ShowDialogAsync(picker) || picker.Selected.Count == 0) return;
+            var prompt = new PromptDialog("Querywright: split " + schema + "." + target.Name, "_New table (schema.name; the script opens in a new window, nothing runs):", schema + "." + target.Name + "Details");
+            if (!await ShowDialogAsync(prompt)) return;
+            string full = prompt.Value.Trim();
+            int dot = full.IndexOf('.');
+            string newSchema = dot > 0 ? full.Substring(0, dot).Trim('[', ']') : schema, newName = (dot > 0 ? full.Substring(dot + 1) : full).Trim('[', ']');
+            string script = SqlRefactoring.SplitTableScript(table, key, picker.Selected, newSchema, newName);
+            await OpenInNewQueryAsync(script, "Split " + target.Name);
         });
 
         /// <summary>Find invalid objects: a read-only binding check of every module, reported in a new window.</summary>

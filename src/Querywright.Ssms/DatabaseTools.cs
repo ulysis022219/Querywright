@@ -79,6 +79,8 @@ ORDER BY 2, 3, 5;";
                 form.Controls.Add(grid);
                 form.Controls.Add(label);
                 form.Controls.Add(buttons);
+                form.Controls.Add(DialogParts.FormHeader("Database results", "Read-only results. Select cells and press Ctrl+C to copy with headers."));
+                DialogParts.Style(form);
                 form.ShowDialog();
             }
         }
@@ -99,6 +101,7 @@ ORDER BY 2, 3, 5;";
                 box.TextChanged += (sender, args) => ok.Enabled = !string.IsNullOrWhiteSpace(box.Text);
                 form.Shown += (sender, args) => box.Focus();
                 form.AcceptButton = ok; form.CancelButton = cancel;
+                DialogParts.Style(form);
                 return form.ShowDialog() == DialogResult.OK && box.Text.Trim().Length > 0 ? box.Text.Trim() : null;
             }
         }

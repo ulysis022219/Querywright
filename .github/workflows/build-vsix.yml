@@ -71,7 +71,8 @@ jobs:
         run: dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj
       - name: Dialog layout and interaction checks
         shell: powershell
-        run: scripts/Test-Dialogs.ps1
+        run: |
+          foreach ($scale in 100, 125, 150, 200) { scripts/Test-Dialogs.ps1 -Scale $scale }
       - name: Verify package
         shell: powershell
         run: scripts/Test-Package.ps1

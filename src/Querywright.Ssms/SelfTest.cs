@@ -48,6 +48,26 @@ namespace Querywright.Ssms
                     switch (name)
                     {
                         case "wait": await Task.Delay(int.Parse(arg)); await package.JoinableTaskFactory.SwitchToMainThreadAsync(); break;
+                        case "dialogs":
+                            var dialog = new PromptDialog("Querywright: theme check", "_Name:", "Example_Query");
+                            try
+                            {
+                                if (!(dialog.TryFindResource(VsResourceKeys.ThemedDialogDefaultStylesKey) is System.Windows.ResourceDictionary))
+                                    throw new InvalidOperationException("SSMS themed dialog styles unavailable");
+                                var expected = dialog.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey);
+                                if (expected == null || !Equals(dialog.Background, expected))
+                                    throw new InvalidOperationException("Dialog background does not match SSMS theme");
+                                var content = (System.Windows.FrameworkElement)dialog.Content;
+                                var size = new System.Windows.Size(456, 240);
+                                content.Measure(size); content.Arrange(new System.Windows.Rect(size)); content.UpdateLayout();
+                                var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(456, 240, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                                bitmap.Render(content);
+                                var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                                encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+                                using (var file = File.Create(Path.Combine(Path.GetDirectoryName(result)!, "themed-dialog.png"))) encoder.Save(file);
+                            }
+                            finally { dialog.Close(); }
+                            break;
                         case "home": Move(view, 0); break;
                         case "end": Move(view, view.TextSnapshot.Length); break;
                         case "right": Move(view, view.Caret.Position.BufferPosition.Position + int.Parse(arg)); break;

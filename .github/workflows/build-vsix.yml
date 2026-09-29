@@ -3,6 +3,7 @@ name: Build VSIX
 on:
   push:
     branches: [main, master, 'claude/**']
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -39,6 +40,7 @@ jobs:
           name: Querywright-ssms22
           path: dist/Querywright-ssms22.zip
       - name: Publish prerelease
+        if: github.ref_type == 'branch'
         # Needs Settings > Actions > Workflow permissions = read and write; the run artifact works either way.
         continue-on-error: true
         shell: bash
@@ -70,3 +72,20 @@ jobs:
         with:
           name: e2e-evidence
           path: e2e
+
+  release:
+    # Pushing a v* tag publishes a release, only after the SSMS end-to-end tests pass.
+    needs: [build, e2e]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Querywright-ssms22
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" Querywright-ssms22.zip --repo "$GITHUB_REPOSITORY" \
+            --title "Querywright $GITHUB_REF_NAME" --generate-notes \
+            --notes "Unzip, then double-click Install.cmd (see INSTALL.txt). Development release; no affiliation with Redgate."

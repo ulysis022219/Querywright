@@ -293,18 +293,41 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
 
         private static Type serviceCacheType;
 
+        private static object ActiveConnectionInfo()
+        {
+            var serviceCache = serviceCacheType ?? (serviceCacheType = AppDomain.CurrentDomain.GetAssemblies()
+                .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache", false))
+                .FirstOrDefault(t => t != null));
+            var factory = Property(null, serviceCache, "ScriptFactory");
+            var active = Property(factory, factory?.GetType(), "CurrentlyActiveWndConnectionInfo");
+            return Property(active, active?.GetType(), "UIConnectionInfo");
+        }
+
+        /// <summary>Server and database of the active query window, any authentication type; no credentials read.</summary>
+        internal static (string Server, string Database)? CaptureNames()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try
+            {
+                var info = ActiveConnectionInfo();
+                var server = Property(info, info?.GetType(), "ServerName") as string;
+                if (string.IsNullOrEmpty(server)) return null;
+                return (server, (Property(info, info.GetType(), "AdvancedOptions") as NameValueCollection)?["DATABASE"]);
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                LogOnce("Connection name unavailable: " + error.GetType().Name);
+                return null;
+            }
+        }
+
         /// <summary>Connection of the active query window via SSMS's ServiceCache (no public API). Null when not connected.</summary>
         internal static ActiveConnection Capture()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             try
             {
-                var serviceCache = serviceCacheType ?? (serviceCacheType = AppDomain.CurrentDomain.GetAssemblies()
-                    .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache", false))
-                    .FirstOrDefault(t => t != null));
-                var factory = Property(null, serviceCache, "ScriptFactory");
-                var active = Property(factory, factory?.GetType(), "CurrentlyActiveWndConnectionInfo");
-                var info = Property(active, active?.GetType(), "UIConnectionInfo");
+                var info = ActiveConnectionInfo();
                 if (info == null) return null;
                 var type = info.GetType();
                 var options = Property(info, type, "AdvancedOptions") as NameValueCollection;

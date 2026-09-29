@@ -49,6 +49,7 @@ namespace Querywright.Ssms
         }
 
         internal string TabColorRules => options?.TabColorRules ?? "";
+        internal bool ShowConnection => options?.ShowConnection ?? true;
 
         internal string SettingsFile => options?.SettingsFile ?? "";
 

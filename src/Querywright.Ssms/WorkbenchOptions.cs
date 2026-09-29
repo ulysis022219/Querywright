@@ -92,6 +92,51 @@ namespace Querywright.Ssms
         [Description("Write the column names as the first line of Save as CSV.")]
         public bool CsvHeaders { get; set; } = true;
 
+        [Category("Results grid menu")]
+        [DisplayName("Show copy as IN clause")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowCopyAsIn { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show script as INSERT")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowScriptAsInsert { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show open in Excel")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowOpenInExcel { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show save as CSV")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowSaveAsCsv { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show copy as Markdown table")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowCopyAsMarkdown { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show copy as JSON")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowCopyAsJson { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show script as UPDATE")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowScriptAsUpdate { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show script as MERGE")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowScriptAsMerge { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show script as CREATE TABLE")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowScriptAsCreateTable { get; set; } = true;
+
         [Category("Updates")]
         [DisplayName("Check for updates")]
         [Description("Once a day, ask github.com for the latest Querywright release and show a notice when it is newer. Sends no query text, connection or user data.")]

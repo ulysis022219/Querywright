@@ -175,38 +175,47 @@
       </Button>
       <Button guid="CommandsGuid" id="CopyAsIn" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: copy as IN clause</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsInsert" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: script as INSERT</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="OpenInExcel" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: open in Excel</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SaveAsCsv" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: save as CSV...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsMarkdown" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: copy as Markdown table</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsJson" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: copy as JSON</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsUpdate" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: script as UPDATE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsMerge" priority="0x0080" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: script as MERGE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsCreateTable" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: script as CREATE TABLE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="Options" priority="0x0020" type="Button">

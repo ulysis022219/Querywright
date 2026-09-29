@@ -161,6 +161,13 @@ namespace Querywright.Ssms
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0107)));
             void Add(int id, Func<Task> handler) => commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id)));
+            void AddGrid(int id, Func<bool> shown, Func<Task> handler)
+            {
+                var command = new OleMenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
+                    new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id));
+                command.BeforeQueryStatus += (sender, args) => ((OleMenuCommand)sender).Visible = shown();
+                commands.AddCommand(command);
+            }
             Add(0x0108, () => TransformAsync(sql => SqlRefactoring.ApplyCasing(sql), "Apply casing"));
             Add(0x0109, () => TransformAsync(SqlRefactoring.AddBrackets, "Add square brackets"));
             Add(0x010A, () => TransformAsync(SqlRefactoring.RemoveBrackets, "Remove square brackets"));
@@ -176,10 +183,10 @@ namespace Querywright.Ssms
             Add(0x0114, EncapsulateAsync);
             Add(0x0115, FixAtCaretAsync);
             Add(0x0116, FixAllAsync);
-            Add(0x0117, CopyAsInAsync);
-            Add(0x0118, ScriptAsInsertAsync);
-            Add(0x0119, OpenInExcelAsync);
-            Add(0x011A, SaveAsCsvAsync);
+            AddGrid(0x0117, () => options?.ShowCopyAsIn != false, CopyAsInAsync);
+            AddGrid(0x0118, () => options?.ShowScriptAsInsert != false, ScriptAsInsertAsync);
+            AddGrid(0x0119, () => options?.ShowOpenInExcel != false, OpenInExcelAsync);
+            AddGrid(0x011A, () => options?.ShowSaveAsCsv != false, SaveAsCsvAsync);
             Add(0x011B, FindInvalidObjectsAsync);
             Add(0x011C, SplitTableAsync);
             Add(0x011D, EditFormattingStyleAsync);
@@ -187,11 +194,11 @@ namespace Querywright.Ssms
             Add(0x011F, CompareObjectAsync);
             Add(0x0120, GoToDefinitionAsync);
             Add(0x0122, ScriptForDatabasesAsync);
-            Add(0x0123, () => CopyGridAsync(c => ResultGrid.Markdown(c.Headers, c.Rows), "Markdown"));
-            Add(0x0124, () => CopyGridAsync(c => ResultGrid.Json(c.Headers, c.Types, c.Rows), "JSON"));
-            Add(0x0125, () => ScriptGridAsync((c, t) => ResultGrid.UpdateScript(c.Headers, c.Types, c.Rows, t), "UPDATE"));
-            Add(0x0126, () => ScriptGridAsync((c, t) => ResultGrid.MergeScript(c.Headers, c.Types, c.Rows, t), "MERGE"));
-            Add(0x0127, () => ScriptGridAsync((c, t) => ResultGrid.CreateTableScript(c.Headers, c.Types, c.Rows), "CREATE TABLE"));
+            AddGrid(0x0123, () => options?.ShowCopyAsMarkdown != false, () => CopyGridAsync(c => ResultGrid.Markdown(c.Headers, c.Rows), "Markdown"));
+            AddGrid(0x0124, () => options?.ShowCopyAsJson != false, () => CopyGridAsync(c => ResultGrid.Json(c.Headers, c.Types, c.Rows), "JSON"));
+            AddGrid(0x0125, () => options?.ShowScriptAsUpdate != false, () => ScriptGridAsync((c, t) => ResultGrid.UpdateScript(c.Headers, c.Types, c.Rows, t), "UPDATE"));
+            AddGrid(0x0126, () => options?.ShowScriptAsMerge != false, () => ScriptGridAsync((c, t) => ResultGrid.MergeScript(c.Headers, c.Types, c.Rows, t), "MERGE"));
+            AddGrid(0x0127, () => options?.ShowScriptAsCreateTable != false, () => ScriptGridAsync((c, t) => ResultGrid.CreateTableScript(c.Headers, c.Types, c.Rows), "CREATE TABLE"));
             Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             Instance = this;
             ServerColorMenu.Start();

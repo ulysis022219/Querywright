@@ -184,6 +184,7 @@ namespace Querywright.Ssms
             Add(0x011D, EditFormattingStyleAsync);
             Add(0x011E, FormatFolderAsync);
             Add(0x011F, CompareObjectAsync);
+            Add(0x0120, GoToDefinitionAsync);
             Instance = this;
             ServerColorMenu.Start();
             PriorityCommands.Start(this);
@@ -337,6 +338,16 @@ namespace Querywright.Ssms
             view.Caret.EnsureVisible();
             return true;
         }
+
+        /// <summary>F12 when SSMS binds nothing to it. Quiet outside SQL editors and where there is nothing to go to.</summary>
+        private Task GoToDefinitionAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            IWpfTextView view;
+            try { view = GetSqlView(); } catch (InvalidOperationException) { return; }
+            TryGoToDefinition(view);
+            ActivityLog.TryLogInformation("Querywright", "F12 (Querywright command): " + SelfTest.Note);
+        });
 
         /// <summary>SQL Prompt's F12: a table opens as CREATE TABLE, a procedure/view/function/trigger as ALTER, in a new query. Never executed.</summary>
         private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name)

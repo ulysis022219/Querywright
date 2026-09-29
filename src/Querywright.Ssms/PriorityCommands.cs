@@ -24,31 +24,71 @@ namespace Querywright.Ssms
         internal static void Start(WorkbenchPackage package)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+            var guard = new PriorityCommands(package);
+            object commandList = null;
             try
             {
                 // Query.Execute's GUID/ID are SSMS internals; read them from the command table instead of hard-coding.
                 var dte = Package.GetGlobalService(typeof(SDTE));
-                var commandList = dte.GetType().InvokeMember("Commands", System.Reflection.BindingFlags.GetProperty, null, dte, null);
+                commandList = Get(dte, "Commands");
                 var command = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Query.Execute", -1 });
-                var guard = new PriorityCommands(package)
-                {
-                    group = new Guid((string)command.GetType().InvokeMember("Guid", System.Reflection.BindingFlags.GetProperty, null, command, null)),
-                    id = (uint)(int)command.GetType().InvokeMember("ID", System.Reflection.BindingFlags.GetProperty, null, command, null),
-                };
-                var register = (IVsRegisterPriorityCommandTarget)Package.GetGlobalService(typeof(SVsRegisterPriorityCommandTarget));
-                ErrorHandler.ThrowOnFailure(register.RegisterPriorityCommandTarget(0, guard, out _));
+                guard.group = new Guid((string)Get(command, "Guid"));
+                guard.id = (uint)(int)Get(command, "ID");
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
                 ActivityLog.TryLogWarning("Querywright", "Execute warning unavailable: " + error.GetType().Name);
             }
+            try
+            {
+                // Registered even without Query.Execute, so F12 still reaches us.
+                var register = (IVsRegisterPriorityCommandTarget)Package.GetGlobalService(typeof(SVsRegisterPriorityCommandTarget));
+                ErrorHandler.ThrowOnFailure(register.RegisterPriorityCommandTarget(0, guard, out _));
+                if (commandList != null) _ = package.JoinableTaskFactory.StartOnIdle(() => FindF12(commandList));
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                ActivityLog.TryLogWarning("Querywright", "Priority commands unavailable: " + error.GetType().Name);
+            }
         }
+
+        /// <summary>Definition commands the keyboard scheme binds to plain F12, when that is not Edit.GoToDefinition.</summary>
+        internal static readonly System.Collections.Generic.List<(Guid Group, uint Id, string Name)> F12Commands = new System.Collections.Generic.List<(Guid, uint, string)>();
+
+        private static object Get(object target, string name) => target.GetType().InvokeMember(name, System.Reflection.BindingFlags.GetProperty, null, target, null);
+        private static bool OnF12(object command) => Get(command, "Bindings") is object[] bindings && bindings.OfType<string>().Any(b => b.EndsWith("::F12", StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Keyboard schemes can move F12 to another command; handle whichever definition command owns the key.</summary>
+        internal static void FindF12(object commandList)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try
+            {
+                var standard = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Edit.GoToDefinition", -1 });
+                // ponytail: the full scan touches every command, so it runs only when the usual binding is missing.
+                if (OnF12(standard)) return;
+                foreach (object command in (System.Collections.IEnumerable)commandList)
+                {
+                    string name = Get(command, "Name") as string ?? "";
+                    if (name.IndexOf("Definition", StringComparison.OrdinalIgnoreCase) < 0 || !OnF12(command)) continue;
+                    F12Commands.Add((new Guid((string)Get(command, "Guid")), (uint)(int)Get(command, "ID"), name));
+                }
+                ActivityLog.TryLogInformation("Querywright", "F12 bound to: " + string.Join(", ", F12Commands.Select(c => c.Name)));
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                ActivityLog.TryLogWarning("Querywright", "F12 binding lookup failed: " + error.GetType().Name);
+            }
+        }
+
+        private static bool IsDefinition(Guid group, uint id) =>
+            (group == VSConstants.GUID_VSStandardCommandSet97 && id == (uint)VSConstants.VSStd97CmdID.GotoDefn) || F12Commands.Any(c => c.Group == group && c.Id == id);
 
         public int QueryStatus(ref Guid pguidCmdGroup, uint cCmds, OLECMD[] prgCmds, IntPtr pCmdText)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             // Keep F12 enabled in SQL editors even when SSMS's language service disables Go To Definition.
-            if (pguidCmdGroup == VSConstants.GUID_VSStandardCommandSet97 && cCmds == 1 && prgCmds[0].cmdID == (uint)VSConstants.VSStd97CmdID.GotoDefn)
+            if (cCmds == 1 && IsDefinition(pguidCmdGroup, prgCmds[0].cmdID))
             {
                 try
                 {
@@ -56,7 +96,7 @@ namespace Querywright.Ssms
                     prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
                     return VSConstants.S_OK;
                 }
-                catch (InvalidOperationException) { }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { }
             }
             return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
         }
@@ -66,28 +106,31 @@ namespace Querywright.Ssms
             ThreadHelper.ThrowIfNotOnUIThread();
             // NOTSUPPORTED passes the command on to SSMS; S_OK swallows it.
             // F12 comes here too: SSMS's language service claims GotoDefn before editor filters see it once connected.
-            if (pguidCmdGroup == VSConstants.GUID_VSStandardCommandSet97 && nCmdID == (uint)VSConstants.VSStd97CmdID.GotoDefn)
+            if (IsDefinition(pguidCmdGroup, nCmdID))
             {
                 SelfTest.Note = "f12 priority";
                 try { return package.TryGoToDefinition(package.GetSqlView()) ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
                 catch (InvalidOperationException) { SelfTest.Note = "f12 no view"; return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return VSConstants.S_OK; }
             }
-            if (pguidCmdGroup != group || nCmdID != id || package.Options?.WarnUnfilteredChanges != true) return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            const int pass = (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            if (pguidCmdGroup != group || nCmdID != id) return pass;
             try
             {
                 var view = package.GetSqlView();
-                // SSMS runs the selection when there is one, otherwise the whole window.
-                string sql = view.Selection.IsEmpty ? view.TextSnapshot.GetText()
-                    : string.Join("\n", view.Selection.SelectedSpans.Select(s => s.GetText()));
-                if (sql.Length > 1_000_000) return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
-                var targets = SqlAnalysis.UnfilteredChanges(sql);
-                if (targets.Count == 0) return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
-                return Ask(targets) ? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED : VSConstants.S_OK;
+                if (package.Options?.WarnUnfilteredChanges == true)
+                {
+                    // SSMS runs the selection when there is one, otherwise the whole window.
+                    string sql = view.Selection.IsEmpty ? view.TextSnapshot.GetText()
+                        : string.Join("\n", view.Selection.SelectedSpans.Select(s => s.GetText()));
+                    var targets = sql.Length > 1_000_000 ? System.Array.Empty<string>() : SqlAnalysis.UnfilteredChanges(sql);
+                    if (targets.Count > 0 && !Ask(targets)) return VSConstants.S_OK;
+                }
+                // Tab history keeps an executed version, like SQL Prompt's ▶ entries.
+                if (view.Properties.TryGetProperty("QuerywrightHistory", out Action<bool> save)) save(true);
             }
-            catch (InvalidOperationException)
-            {
-                return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
-            }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { if (!(error is InvalidOperationException)) EditorCommandFilter.Swallowed(error); }
+            return pass;
         }
 
         private bool Ask(System.Collections.Generic.IReadOnlyList<string> targets)

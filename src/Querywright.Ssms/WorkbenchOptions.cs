@@ -17,9 +17,14 @@ namespace Querywright.Ssms
         [Description("Read table and column names from the query window's connection with one fixed catalog query (sys.objects, sys.columns). Never runs your SQL.")]
         public bool LiveMetadata { get; set; } = true;
 
+        [Category("Completion")]
+        [DisplayName("Close quotes")]
+        [Description("Typing ' inserts '' with the caret between them; typing ' before the closing quote steps over it, and Backspace in an empty pair removes both.")]
+        public bool CloseQuotes { get; set; } = true;
+
         [Category("Tab history")]
         [DisplayName("Keep tab history")]
-        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only, newest 200 kept) so closed tabs can be reopened. Turn off to save nothing.")]
+        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab and 200 tabs kept, so any version can be reopened. Turn off to save nothing.")]
         public bool TabHistory { get; set; } = true;
 
         [Category("Shared settings")]

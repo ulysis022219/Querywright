@@ -315,10 +315,17 @@ namespace Querywright.Ssms
             if (target == null) return false;
             if (target.Offset < 0)
             {
-                if (bypassDefinition || target.Name == null || options?.LiveMetadata == false) return false;
+                if (target.Name == null || options?.LiveMetadata == false) return false;
                 var connection = LiveMetadata.Capture();
                 SelfTest.Note += connection == null ? " no connection" : " scripting";
-                if (connection == null) return false;
+                if (connection == null)
+                {
+                    // Say why instead of silently falling back to SSMS's own F12, which has nothing for objects.
+                    ShowWarning(LiveMetadata.CaptureNames() == null
+                        ? "F12 on " + target.Name + " needs a connected query window. Connect this window and try again."
+                        : "F12 on " + target.Name + " could not use this window's connection. Querywright reads definitions over Windows or SQL Server authentication only.");
+                    return true;
+                }
                 // OtherDb.dbo.Proc: read the definition from that database on the same server.
                 if (target.Database != null) connection = connection.WithDatabase(target.Database);
                 _ = JoinableTaskFactory.RunAsync(() => ScriptObjectAsync(connection, target.Schema, target.Name));
@@ -331,33 +338,25 @@ namespace Querywright.Ssms
             return true;
         }
 
-        private bool bypassDefinition;
-
         /// <summary>SQL Prompt's F12: a table opens as CREATE TABLE, a procedure/view/function/trigger as ALTER, in a new query. Never executed.</summary>
         private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name)
         {
+            Exception failure = null;
             try
             {
                 var details = await Task.Run(() =>
                 {
                     try { return LiveMetadata.Details(connection, schema, name); }
-                    // Unreachable server or no VIEW DEFINITION permission: SSMS's own F12 may still work.
-                    catch (Exception error) when (error is System.Data.SqlClient.SqlException || error is InvalidOperationException) { return null; }
+                    catch (Exception error) when (error is System.Data.SqlClient.SqlException || error is InvalidOperationException) { failure = error; return null; }
                 });
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
-                var dte = await GetServiceAsync(typeof(SDTE));
-                if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
-                void Run(string command) => dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { command, "" });
                 bool table = details?.Type == "U" && details.Columns.Count > 0;
                 if (details == null || (!table && details.Definition == null))
                 {
-                    SelfTest.Note += details == null ? " not found" : " no definition";
-                    (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: " + name + " was not found in " + connection.Database
-                        + ", or its definition is encrypted or not visible with your permissions.");
-                    bypassDefinition = true;
-                    try { Run("Edit.GoToDefinition"); }
-                    catch (Exception error) when (!(error is OutOfMemoryException)) { } // Native F12 unavailable here; the status bar says why.
-                    finally { bypassDefinition = false; }
+                    SelfTest.Note += failure != null ? " failed" : details == null ? " not found" : " no definition";
+                    ShowWarning(failure != null ? "Could not read " + name + " from the server: " + Reason(failure)
+                        : details == null ? name + " was not found in " + (connection.Database ?? "the current database") + "."
+                        : name + "'s definition is encrypted or not visible with your permissions (VIEW DEFINITION).");
                     return;
                 }
                 string owner = details.Schema ?? schema ?? "dbo";
@@ -1196,6 +1195,18 @@ namespace Querywright.Ssms
                 if (analysisCancellation == cancellation) analysisCancellation = null;
                 cancellation.Dispose();
             }
+        }
+
+        /// <summary>Why a metadata connection failed, without the server's own text (it can name the server or login).</summary>
+        internal static string Reason(Exception error)
+        {
+            var sql = error as System.Data.SqlClient.SqlException;
+            if (error.InnerException is System.Security.Authentication.AuthenticationException || error.Message.IndexOf("certificate", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "the server's certificate is not trusted. Tick \"Trust server certificate\" in the Connect dialog, or install the certificate.";
+            if (sql?.Number == 18456) return "login failed (SQL error 18456).";
+            if (sql?.Number == 4060) return "cannot open the database (SQL error 4060).";
+            if (sql?.Number == -2) return "the server did not answer in time.";
+            return sql != null ? "SQL error " + sql.Number + "." : error.GetType().Name + ".";
         }
 
         private void ShowWarning(string message)

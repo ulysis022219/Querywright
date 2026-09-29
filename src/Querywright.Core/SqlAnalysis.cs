@@ -72,8 +72,8 @@ namespace Querywright.Core
             internal readonly List<string> Targets = new List<string>();
             internal Unfiltered(string sql) => this.sql = sql;
             private void Add(string verb, TableReference target) => Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength));
-            public override void Visit(DeleteSpecification node) { if (node.WhereClause == null) Add("DELETE", node.Target); }
-            public override void Visit(UpdateSpecification node) { if (node.WhereClause == null) Add("UPDATE", node.Target); }
+            public override void Visit(DeleteSpecification node) { if (node.WhereClause == null && node.Target != null) Add("DELETE", node.Target); }
+            public override void Visit(UpdateSpecification node) { if (node.WhereClause == null && node.Target != null) Add("UPDATE", node.Target); }
         }
 
         public static readonly IReadOnlyCollection<string> FixableRules =new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };

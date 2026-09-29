@@ -147,6 +147,9 @@ namespace Querywright.Ssms
         {
             Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
             var package = WorkbenchPackage.Instance;
+            // A bug in an extra must never surface as a dialog while typing: log the type and let the key through.
+            try
+            {
             // ponytail: no commit manager is registered for SQL, so the session would otherwise span spaces and dots and
             // Tab would replace the whole run. Punctuation closes the list without inserting; Tab/Enter still commit.
             if (group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.TYPECHAR && input != IntPtr.Zero &&
@@ -169,6 +172,8 @@ namespace Querywright.Ssms
                 }
                 if (IsGoToDefinition(group, id) && package.TryGoToDefinition(view)) return VSConstants.S_OK;
             }
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { Swallowed(error); }
             // Tab/Enter that commits a table or procedure after INSERT INTO / EXEC fills the statement in the same keystroke.
             // SSMS's own IntelliSense list commits inside Next.Exec too; a changed buffer after Tab/Enter gets the same fill.
             bool key = package != null && (IsTab(group, id) || IsReturn(group, id));
@@ -176,9 +181,15 @@ namespace Querywright.Ssms
             var before = view.TextSnapshot;
             int result = Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
             if (key && ErrorHandler.Succeeded(result) && !completion.IsCompletionActive(view) && (committing || view.TextSnapshot != before))
-                package!.TryFillAfterCommit(view);
+            {
+                try { package!.TryFillAfterCommit(view); }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { Swallowed(error); }
+            }
             return result;
         }
+
+        internal static void Swallowed(Exception error) =>
+            Microsoft.VisualStudio.Shell.ActivityLog.TryLogWarning("Querywright", "Editor command failed: " + error.GetType().Name + " at " + error.TargetSite?.Name);
 
         public int QueryStatus(ref Guid group, uint count, OLECMD[] commands, IntPtr text)
         {

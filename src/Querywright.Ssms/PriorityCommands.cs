@@ -96,7 +96,7 @@ namespace Querywright.Ssms
                     prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
                     return VSConstants.S_OK;
                 }
-                catch (InvalidOperationException) { }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { }
             }
             return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
         }
@@ -111,6 +111,7 @@ namespace Querywright.Ssms
                 SelfTest.Note = "f12 priority";
                 try { return package.TryGoToDefinition(package.GetSqlView()) ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
                 catch (InvalidOperationException) { SelfTest.Note = "f12 no view"; return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return VSConstants.S_OK; }
             }
             const int pass = (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
             if (pguidCmdGroup != group || nCmdID != id) return pass;
@@ -128,7 +129,7 @@ namespace Querywright.Ssms
                 // Tab history keeps an executed version, like SQL Prompt's ▶ entries.
                 if (view.Properties.TryGetProperty("QuerywrightHistory", out Action<bool> save)) save(true);
             }
-            catch (InvalidOperationException) { }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { if (!(error is InvalidOperationException)) EditorCommandFilter.Swallowed(error); }
             return pass;
         }
 

@@ -760,7 +760,17 @@ namespace Querywright.Ssms
             if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
             IWpfTextView source = null;
             try { source = GetSqlView(); } catch (InvalidOperationException) { }
-            dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { "File.NewQuery", "" });
+            // SSMS names new queries SQLQueryN.sql from its own counter; when that name is taken (a reopened or recovered
+            // SQLQueryN.sql) it fails with STG_E_FILEALREADYEXISTS. The counter has moved on, so the next try gets a free name.
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { "File.NewQuery", "" });
+                    break;
+                }
+                catch (System.Reflection.TargetInvocationException error) when (attempt < 5 && error.InnerException?.HResult == unchecked((int)0x80030050)) { }
+            }
             var view = GetSqlView();
             if (view == source) throw new InvalidOperationException("Could not open a new query window.");
             ReplaceText(view, new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length), text, 0, 0, 0, name);

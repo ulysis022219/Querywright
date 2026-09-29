@@ -15,5 +15,10 @@ Try
   then type "SELECT * FROM " to see the suggestion popup, or put the caret after * and press Tab.
 - Tools menu: Querywright commands (format, analyze, semicolons, rename, ...)
 
+Update
+  Querywright shows a notice in SSMS when a newer release is published (once a day; turn off under
+  Tools > Options > Querywright > Updates). Download the new zip and repeat the Install steps:
+  the newer version replaces the installed one and keeps your settings, snippets and tab history.
+
 Uninstall
   Close SSMS 22, then from a command prompt in this folder:  Install.cmd -Uninstall

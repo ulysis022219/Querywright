@@ -33,6 +33,11 @@ powershell -NoProfile -File scripts/Test-Package.ps1
 ```
 
 Output: `src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix`.
+
+Releases: Actions > Build VSIX > Run workflow with a tag such as `v0.4.0` publishes a release after
+the SSMS end-to-end tests pass. CI stamps each build `major.minor.patch.run`, so a newer zip
+installs over the old one. Installed copies check for a newer release once a day and show a notice
+(Tools > Options > Querywright > Updates); nothing is downloaded or installed automatically.
 Build does not install the package or start SSMS. The manifest targets SSMS 22 x64;
 installer recognition and runtime loading are not yet verified. SSMS updates may
 require compatibility changes. Microsoft does not officially support third-party extensions.

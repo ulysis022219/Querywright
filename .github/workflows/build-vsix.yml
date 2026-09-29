@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: 'Release tag to publish after the tests pass, e.g. v0.3.0 (empty: build only)'
+        description: 'Release tag to publish after the tests pass, e.g. v0.4.0 (empty: build only)'
         required: false
         default: ''
 
@@ -24,6 +24,18 @@ jobs:
           dotnet-version: 10.0.x
       - name: Core checks
         run: dotnet run --project tests/Querywright.Checks
+      - name: Stamp version
+        # major.minor.patch from the release tag (else the manifest) plus the run number, so every build installs over the last.
+        shell: powershell
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: |
+          $m = 'src/Querywright.Ssms/source.extension.vsixmanifest'
+          $x = [IO.File]::ReadAllText($m)
+          $base = if ($env:RELEASE) { $env:RELEASE.TrimStart('v') } elseif ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { [regex]::Match($x, '<Identity [^>]*Version="(\d+\.\d+\.\d+)').Groups[1].Value }
+          if ($base -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3, got '$base'." }
+          [IO.File]::WriteAllText($m, [regex]::Replace($x, '(<Identity [^>]*Version=")[^"]+', "`${1}$base.$env:GITHUB_RUN_NUMBER"))
+          Write-Output "Version $base.$env:GITHUB_RUN_NUMBER"
       - name: Build VSIX
         run: dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj
       - name: Verify package
@@ -92,7 +104,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.release || github.ref_name }}
         run: |
-          [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]] || { echo "release tag must look like v1.2.3"; exit 1; }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release tag must look like v1.2.3"; exit 1; }
           gh release create "$TAG" Querywright-ssms22.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Querywright $TAG" --generate-notes \
-            --notes "Unzip, then double-click Install.cmd (see INSTALL.txt). Development release; no affiliation with Redgate."
+            --notes "Install or update: close SSMS 22, unzip, double-click Install.cmd (see INSTALL.txt). Development release; no affiliation with Redgate."

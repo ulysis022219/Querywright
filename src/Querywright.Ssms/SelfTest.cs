@@ -23,6 +23,8 @@ namespace Querywright.Ssms
     {
         internal static IVsTextView? Adapter;
         internal static IWpfTextView? View;
+        /// <summary>Last point a traced feature reached; the "note" step prints it. Never logged.</summary>
+        internal static string? Note;
 
         internal static async Task RunAsync(WorkbenchPackage package)
         {
@@ -59,7 +61,17 @@ namespace Querywright.Ssms
                             }
                             break;
                         case "tab": Exec(target, VSConstants.VSStd2K, (uint)VSConstants.VSStd2KCmdID.TAB); break;
-                        case "f12": Exec(target, VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn); break;
+                        case "focus": // a keypress lands in the focused editor; first-run dialogs can steal focus
+                            view.VisualElement.Focus();
+                            await Task.Delay(500);
+                            await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            break;
+                        case "f12": // through the shell's command routing, as the key is, so priority targets see it
+                            Exec((IOleCommandTarget)await package.GetServiceAsync(typeof(SUIHostCommandDispatcher)), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn);
+                            break;
+                        case "ready": // wait until the window is connected and live metadata has loaded
+                            for (int i = 0; i < 150 && !(package.CurrentTables()?.Count > 0); i++) { await Task.Delay(1000); await package.JoinableTaskFactory.SwitchToMainThreadAsync(); }
+                            break;
                         case "exec": await RunDteCommandAsync(package, "Query.Execute"); break;
                         case "grid": FocusGrid(); break;
                         case "cmd":
@@ -72,6 +84,11 @@ namespace Querywright.Ssms
                             view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- " +
                                 (view.Properties.TryGetProperty("QuerywrightConnection", out string caption) ? caption : "(none)"));
                             break;
+                        case "oe": // right-click the first server in Object Explorer and report the menu
+                            await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- oe " + await ServerColorMenu.ProbeAsync(package));
+                            break;
+                        case "note": view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- note " + (Note ?? "(none)")); break;
                         case "latest": // follow the newest SQL window, e.g. one a command opened
                             if (View == null || Adapter == null) throw new InvalidOperationException("no SQL editor");
                             view = View; adapter = Adapter; target = (IOleCommandTarget)adapter;
@@ -85,7 +102,8 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                File.WriteAllText(result, "error: " + error.GetType().Name + ": " + error.Message);
+                var inner = error is System.Reflection.TargetInvocationException { InnerException: { } cause } ? cause : error;
+                File.WriteAllText(result, "error: " + inner.GetType().Name + ": " + inner.Message);
             }
         }
 

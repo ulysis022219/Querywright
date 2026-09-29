@@ -49,6 +49,13 @@ namespace Querywright.Ssms
         }
 
         internal string TabColorRules => options?.TabColorRules ?? "";
+
+        internal void SetTabColorRules(string rules)
+        {
+            if (options == null) return;
+            options.TabColorRules = rules;
+            options.SaveSettingsToStorage();
+        }
         internal bool ShowConnection => options?.ShowConnection ?? true;
 
         internal string SettingsFile => options?.SettingsFile ?? "";
@@ -65,6 +72,13 @@ namespace Querywright.Ssms
             try { offline = LoadSchema(); } catch (Exception error) when (!(error is OutOfMemoryException)) { }
             var live = options?.LiveMetadata != false ? LiveMetadata.TryGet(LiveMetadata.Capture()) : null;
             return Merge(live, offline);
+        }
+
+        /// <summary>Databases on the connected server for USE. Never blocks (typing path).</summary>
+        internal IReadOnlyList<string> CurrentDatabases()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            return options?.LiveMetadata != false ? LiveMetadata.DatabaseNames(LiveMetadata.Capture()) : null;
         }
 
         /// <summary>Live procedures plus those created in the script itself. Never blocks (typing path).</summary>
@@ -169,7 +183,10 @@ namespace Querywright.Ssms
             Add(0x011C, SplitTableAsync);
             Add(0x011D, EditFormattingStyleAsync);
             Add(0x011E, FormatFolderAsync);
+            Add(0x011F, CompareObjectAsync);
             Instance = this;
+            ServerColorMenu.Start();
+            PriorityCommands.Start(this);
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
             if (options.CheckForUpdates && Environment.GetEnvironmentVariable("QUERYWRIGHT_SELFTEST") == null)
@@ -284,20 +301,26 @@ namespace Querywright.Ssms
             }
         }
 
-        /// <summary>F12 on variables, aliases and CTEs jumps in the script; database objects fall through to SSMS's own definition.</summary>
+        /// <summary>F12 on variables, aliases and CTEs jumps in the script; database objects open as a script in a new query.</summary>
         internal bool TryGoToDefinition(IWpfTextView view)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             if (view.IsClosed) return false;
+            // A highlighted name counts as the caret at its start.
+            int position = view.Selection.IsEmpty ? view.Caret.Position.BufferPosition.Position : view.Selection.Start.Position.Position;
             DefinitionTarget target;
-            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), view.Caret.Position.BufferPosition.Position); }
+            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), position); }
             catch (FormatException) { return false; }
+            SelfTest.Note = target == null ? "f12 no target" : "f12 target " + target.Offset;
             if (target == null) return false;
             if (target.Offset < 0)
             {
                 if (bypassDefinition || target.Name == null || options?.LiveMetadata == false) return false;
                 var connection = LiveMetadata.Capture();
+                SelfTest.Note += connection == null ? " no connection" : " scripting";
                 if (connection == null) return false;
+                // OtherDb.dbo.Proc: read the definition from that database on the same server.
+                if (target.Database != null) connection = connection.WithDatabase(target.Database);
                 _ = JoinableTaskFactory.RunAsync(() => ScriptObjectAsync(connection, target.Schema, target.Name));
                 return true;
             }
@@ -310,34 +333,39 @@ namespace Querywright.Ssms
 
         private bool bypassDefinition;
 
-        /// <summary>SQL Prompt's F12: procedure/view/function/trigger opens as an ALTER script in a new query; tables go to SSMS's own F12.</summary>
+        /// <summary>SQL Prompt's F12: a table opens as CREATE TABLE, a procedure/view/function/trigger as ALTER, in a new query. Never executed.</summary>
         private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name)
         {
             try
             {
-                string definition = await Task.Run(() =>
+                var details = await Task.Run(() =>
                 {
-                    try { return LiveMetadata.Definition(connection, schema, name); }
-                    // Unreachable server or no VIEW DEFINITION permission: SSMS's own F12 still works.
+                    try { return LiveMetadata.Details(connection, schema, name); }
+                    // Unreachable server or no VIEW DEFINITION permission: SSMS's own F12 may still work.
                     catch (Exception error) when (error is System.Data.SqlClient.SqlException || error is InvalidOperationException) { return null; }
                 });
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 var dte = await GetServiceAsync(typeof(SDTE));
                 if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
                 void Run(string command) => dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { command, "" });
-                if (definition == null)
+                bool table = details?.Type == "U" && details.Columns.Count > 0;
+                if (details == null || (!table && details.Definition == null))
                 {
+                    SelfTest.Note += details == null ? " not found" : " no definition";
+                    (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: " + name + " was not found in " + connection.Database
+                        + ", or its definition is encrypted or not visible with your permissions.");
                     bypassDefinition = true;
                     try { Run("Edit.GoToDefinition"); }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { } // Native F12 unavailable here; the status bar says why.
                     finally { bypassDefinition = false; }
                     return;
                 }
-                var source = GetSqlView();
-                Run("File.NewQuery");
-                var view = GetSqlView();
-                if (view == source) throw new InvalidOperationException("Could not open a new query window.");
-                string text = SqlRefactoring.CreateToAlter(definition);
-                ReplaceText(view, new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length), text, 0, 0, 0, "Script " + name);
+                string owner = details.Schema ?? schema ?? "dbo";
+                string text = table ? ScriptOf(details, owner, name) : SqlRefactoring.CreateToAlter(details.Definition);
+                // The new window connects to the source window's database; switch it so the script targets the object's own database.
+                if (connection.Database != null && !string.Equals(connection.Database, LiveMetadata.Capture()?.Database, StringComparison.OrdinalIgnoreCase))
+                    text = "USE [" + connection.Database.Replace("]", "]]") + "];\r\nGO\r\n" + text;
+                await OpenInNewQueryAsync(text, "Script " + name);
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
@@ -564,8 +592,19 @@ namespace Querywright.Ssms
                 status?.SetText("Querywright: no live connection; the offline schema file is re-read whenever it changes.");
                 return;
             }
-            status?.SetText("Querywright: refreshing database metadata...");
-            var tables = await LiveMetadata.LoadAsync(connection);
+            var load = LiveMetadata.LoadAsync(connection);
+            uint cookie = 0;
+            while (!load.IsCompleted && status != null)
+            {
+                var (percent, step) = LiveMetadata.Progress;
+                string text = $"Querywright: refreshing metadata {percent}% ({step})...";
+                status.Progress(ref cookie, 1, text, (uint)percent, 100);
+                status.SetText(text);
+                await Task.WhenAny(load, Task.Delay(250));
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+            }
+            status?.Progress(ref cookie, 0, "", 0, 0);
+            var tables = await load;
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             status?.SetText(tables == null ? "Querywright: metadata refresh failed; see the SSMS activity log."
                 : "Querywright: metadata refreshed (" + tables.Count + " tables and views, "
@@ -607,10 +646,7 @@ namespace Querywright.Ssms
                 if (connection == null) throw new InvalidOperationException("Connect the query window to a database first.");
                 var details = await Task.Run(() => LiveMetadata.Details(connection, schema, name));
                 if (details == null) throw new InvalidOperationException(schema + "." + name + " was not found in the connected database, or you lack VIEW DEFINITION permission.");
-                bool table = details.Type == "U";
-                string script = table && details.Columns.Count > 0
-                    ? ObjectScript.CreateTable(schema, name, details.Columns, details.Filegroup, details.Constraints)
-                    : details.Definition ?? "-- The definition is encrypted or not visible with your permissions.";
+                string script = ScriptOf(details, schema, name);
                 bool parameters = details.Columns.Count == 0 && details.Parameters.Count > 0;
                 var summary = parameters
                     ? details.Parameters.Select(p => (p.Name, p.Type, p.Output ? "OUTPUT" : "IN"))
@@ -623,6 +659,57 @@ namespace Querywright.Ssms
                 ShowWarning(error.Message);
             }
         }
+
+        private static string ScriptOf(LiveMetadata.ObjectDetails details, string schema, string name) =>
+            details.Type == "U" && details.Columns.Count > 0
+                ? ObjectScript.CreateTable(schema, name, details.Columns, details.Filegroup, details.Constraints)
+                : details.Definition ?? "-- The definition is encrypted or not visible with your permissions.";
+
+        /// <summary>Compare the object at the caret with the same object in another database on the server: equal, or a diff window. Read-only.</summary>
+        private Task CompareObjectAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            // A selection counts as the caret at its start, so a highlighted name works.
+            int position = view.Selection.IsEmpty ? view.Caret.Position.BufferPosition.Position : view.Selection.Start.Position.Position;
+            DefinitionTarget target;
+            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), position); }
+            catch (FormatException) { target = null; }
+            if (target == null || target.Offset >= 0 || target.Name == null)
+                throw new InvalidOperationException("Highlight a table, view, procedure or function name in a script without syntax errors.");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the object.");
+            if (target.Database != null) connection = connection.WithDatabase(target.Database);
+            string schema = target.Schema ?? "dbo", name = target.Name, full = schema + "." + name;
+            var databases = (await Task.Run(() => LiveMetadata.Databases(connection))).Where(d => !string.Equals(d, connection.Database, StringComparison.OrdinalIgnoreCase)).ToList();
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (databases.Count == 0) throw new InvalidOperationException("No other database on this server to compare with.");
+            // ponytail: same server only; another server would need its own credentials.
+            var prompt = new PromptDialog("Querywright: compare " + full, "_Compare with database:", databases[0], databases);
+            if (!await ShowDialogAsync(prompt)) return;
+            string other = prompt.Value;
+            var (left, right) = await Task.Run(() => (LiveMetadata.Details(connection, schema, name), LiveMetadata.Details(connection.WithDatabase(other), schema, name)));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (left == null) throw new InvalidOperationException(full + " was not found in " + connection.Database + ", or you lack VIEW DEFINITION permission.");
+            if (right == null) throw new InvalidOperationException(full + " does not exist in " + other + ".");
+            string a = ScriptOf(left, schema, name), b = ScriptOf(right, schema, name);
+            if (ObjectScript.SameScript(a, b))
+            {
+                VsShellUtilities.ShowMessageBox(this, full + " is identical in " + connection.Database + " and " + other + ".", "Querywright",
+                    OLEMSGICON.OLEMSGICON_INFO, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+                return;
+            }
+            var diff = await GetServiceAsync(typeof(SVsDifferenceService)) as IVsDifferenceService;
+            if (diff == null) throw new InvalidOperationException(full + " differs between " + connection.Database + " and " + other + " (diff window unavailable).");
+            // The diff window deletes both files when it closes (the Temporary flags).
+            string folder = Path.Combine(Path.GetTempPath(), "Querywright");
+            Directory.CreateDirectory(folder);
+            string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            string leftFile = Path.Combine(folder, "Compare-" + stamp + "-a.sql"), rightFile = Path.Combine(folder, "Compare-" + stamp + "-b.sql");
+            File.WriteAllText(leftFile, a); File.WriteAllText(rightFile, b);
+            diff.OpenComparisonWindow2(leftFile, rightFile, full + ": " + connection.Database + " vs " + other, null,
+                connection.Database + ": " + full, other + ": " + full, null, null, (uint)(__VSDIFFSERVICEOPTIONS.VSDIFFOPT_LeftFileIsTemporary | __VSDIFFSERVICEOPTIONS.VSDIFFOPT_RightFileIsTemporary));
+        });
 
         private async Task<bool> ShowDialogAsync(System.Windows.Window dialog)
         {
@@ -679,7 +766,7 @@ namespace Querywright.Ssms
             var found = await Task.Run(() => SqlCompletion.WildcardColumns(sql, position, tables));
             var dialog = new ColumnPickerDialog(found.Columns);
             if (!await ShowDialogAsync(dialog) || dialog.Selected.Count == 0) return;
-            string text = string.Join(", ", dialog.Selected);
+            string text = SqlCompletion.ColumnList(sql, found.Wildcard.Start, dialog.Selected);
             ReplaceText(view, new SnapshotSpan(snapshot, found.Wildcard.Start, found.Wildcard.Length), text, text.Length, 0, 0, "Pick columns");
         });
 
@@ -703,6 +790,7 @@ namespace Querywright.Ssms
             catch (FormatException) { target = null; }
             if (target == null || target.Offset >= 0 || target.Name == null)
                 throw new InvalidOperationException("Place the caret on a table, view, procedure or function name in a script without syntax errors.");
+            if (target.Database != null) throw new InvalidOperationException("Rename works on objects in the connected database; open a query on " + target.Database + " first.");
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
             if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the object.");
             string schema = target.Schema ?? "dbo";
@@ -724,6 +812,7 @@ namespace Querywright.Ssms
             catch (FormatException) { target = null; }
             if (target == null || target.Offset >= 0 || target.Name == null)
                 throw new InvalidOperationException("Place the caret on a table name in a script without syntax errors.");
+            if (target.Database != null) throw new InvalidOperationException("Split works on tables in the connected database; open a query on " + target.Database + " first.");
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
             if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the table.");
             string schema = target.Schema ?? "dbo";
@@ -869,15 +958,15 @@ namespace Querywright.Ssms
             {
                 string folder = Path.Combine(Path.GetTempPath(), "Querywright", "Results");
                 Directory.CreateDirectory(folder);
-                foreach (var old in new DirectoryInfo(folder).GetFiles("*.csv").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)))
+                foreach (var old in new DirectoryInfo(folder).GetFiles("Results-*.*").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)))
                     try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-                string file = Path.Combine(folder, "Results-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".csv");
-                File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, '\t'), Encoding.Unicode);
+                string file = Path.Combine(folder, "Results-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".xlsx");
+                using (var stream = File.Create(file)) ResultGrid.Xlsx(stream, cells.Headers, cells.Types, cells.Rows);
                 return file;
             });
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }
-            catch (System.ComponentModel.Win32Exception) { throw new InvalidOperationException("No program is registered for .csv files. The results were saved to " + path); }
+            catch (System.ComponentModel.Win32Exception) { throw new InvalidOperationException("No program is registered for .xlsx files. The results were saved to " + path); }
             await GridStatusAsync($"opened {cells.Rows.Count} rows.", cells);
         });
 
@@ -1034,7 +1123,9 @@ namespace Querywright.Ssms
             view.Caret.EnsureVisible();
         }
 
-        private IWpfTextView GetSqlView()
+        internal WorkbenchOptions Options => options;
+
+        internal IWpfTextView GetSqlView()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             if (textManager == null || components == null)
@@ -1110,6 +1201,7 @@ namespace Querywright.Ssms
         private void ShowWarning(string message)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+            SelfTest.Note += " warning: " + message;
             VsShellUtilities.ShowMessageBox(this, message, "Querywright",
                 OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }

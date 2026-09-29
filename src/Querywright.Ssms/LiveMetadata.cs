@@ -33,7 +33,29 @@ namespace Querywright.Ssms
             }
         }
 
+        internal ActiveConnection WithDatabase(string database)
+        {
+            var copy = (ActiveConnection)MemberwiseClone();
+            copy.Database = database;
+            return copy;
+        }
+
+        /// <summary>An open connection to the server.</summary>
         internal SqlConnection Open()
+        {
+            var sql = Create();
+            try { sql.Open(); return sql; }
+            catch (SqlException error) when (error.Number == 20 && Encrypt && IsLocal)
+            {
+                // ponytail: SqlClient can't encrypt to LocalDB/shared memory (error 20); local-only traffic, so retry plain.
+                sql.Dispose();
+                Encrypt = false;
+                return Open();
+            }
+            catch { sql.Dispose(); throw; }
+        }
+
+        private SqlConnection Create()
         {
             var builder = new SqlConnectionStringBuilder
             {
@@ -82,7 +104,8 @@ SELECT SCHEMA_NAME(o.schema_id), o.name, p.name, " + TypeSql("p") + @", p.is_out
 FROM sys.objects AS o
 LEFT JOIN sys.parameters AS p ON p.object_id = o.object_id AND p.parameter_id > 0
 WHERE o.type IN ('P', 'PC') AND o.is_ms_shipped = 0
-ORDER BY 1, 2, p.parameter_id;";
+ORDER BY 1, 2, p.parameter_id;
+SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;";
 
         private static readonly ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>> cache =
             new ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>>();
@@ -90,7 +113,17 @@ ORDER BY 1, 2, p.parameter_id;";
         private static readonly ConcurrentDictionary<string, IReadOnlyList<SchemaProcedure>> procedureCache =
             new ConcurrentDictionary<string, IReadOnlyList<SchemaProcedure>>();
 
-        internal static void Refresh() { cache.Clear(); procedureCache.Clear(); }
+        private static readonly ConcurrentDictionary<string, IReadOnlyList<string>> databaseCache =
+            new ConcurrentDictionary<string, IReadOnlyList<string>>();
+
+        /// <summary>Progress of the running catalog load, for the refresh command's status bar: percent and a step label.</summary>
+        internal static (int Percent, string Step) Progress = (0, "connecting");
+
+        internal static void Refresh() { cache.Clear(); procedureCache.Clear(); databaseCache.Clear(); }
+
+        /// <summary>Databases on the server, read with the catalog; null until that load completes.</summary>
+        internal static IReadOnlyList<string> DatabaseNames(ActiveConnection connection) =>
+            connection != null && databaseCache.TryGetValue(connection.Key, out var databases) ? databases : null;
 
         /// <summary>Stored procedures read with the catalog; null until that load completes.</summary>
         internal static IReadOnlyList<SchemaProcedure> Procedures(ActiveConnection connection) =>
@@ -118,13 +151,25 @@ ORDER BY 1, 2, p.parameter_id;";
             return await Task.WhenAny(task, Task.Delay(timeout)) == task ? await task : null;
         }
 
+        /// <summary>Online databases on the connection's server that the login can open. Read-only.</summary>
+        internal static IReadOnlyList<string> Databases(ActiveConnection connection)
+        {
+            var names = new List<string>();
+            using (var sql = connection.Open())
+            {
+                using (var command = new SqlCommand("SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;", sql) { CommandTimeout = 10 })
+                using (var reader = command.ExecuteReader())
+                    while (reader.Read()) names.Add(reader.GetString(0));
+            }
+            return names;
+        }
+
         /// <summary>Module text for F12 (OBJECT_DEFINITION; null for tables or no permission). Read-only, parameterized.</summary>
         internal static string Definition(ActiveConnection connection, string schema, string name)
         {
             string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand("SELECT OBJECT_DEFINITION(OBJECT_ID(@name));", sql) { CommandTimeout = 10 })
                 {
                     command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : Quote(schema) + ".") + Quote(name);
@@ -144,7 +189,7 @@ ORDER BY 1, 2, p.parameter_id;";
 
         private static readonly string DetailsQuery = @"SET LOCK_TIMEOUT 3000;
 DECLARE @id int = OBJECT_ID(@name);
-SELECT RTRIM(o.type), OBJECT_DEFINITION(o.object_id), ds.name
+SELECT RTRIM(o.type), OBJECT_DEFINITION(o.object_id), ds.name, SCHEMA_NAME(o.schema_id)
 FROM sys.objects AS o
 LEFT JOIN sys.indexes AS i ON i.object_id = o.object_id AND i.index_id < 2
 LEFT JOIN sys.data_spaces AS ds ON ds.data_space_id = i.data_space_id
@@ -181,6 +226,7 @@ FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY
             internal string Type = "";
             internal string Definition;
             internal string Filegroup;
+            internal string Schema;
             internal readonly List<ScriptColumn> Columns = new List<ScriptColumn>();
             internal readonly List<string> Constraints = new List<string>();
             internal readonly List<(string Name, string Type, bool Output)> Parameters = new List<(string, string, bool)>();
@@ -194,14 +240,13 @@ FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY
             var details = new ObjectDetails();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand(DetailsQuery, sql) { CommandTimeout = 15 })
                 {
-                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = Quote(schema) + "." + Quote(name);
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : Quote(schema) + ".") + Quote(name);
                     using (var reader = command.ExecuteReader())
                     {
                         if (!reader.Read()) return null;
-                        details.Type = reader.GetString(0); details.Definition = Text(reader, 1); details.Filegroup = Text(reader, 2);
+                        details.Type = reader.GetString(0); details.Definition = Text(reader, 1); details.Filegroup = Text(reader, 2); details.Schema = Text(reader, 3);
                         reader.NextResult();
                         while (reader.Read())
                             details.Columns.Add(new ScriptColumn(reader.GetString(0), reader.GetString(1), Text(reader, 2), reader.GetBoolean(3))
@@ -243,7 +288,6 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
             var result = new List<(string, string, string)>();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand(DependentsQuery, sql) { CommandTimeout = 15 })
                 {
                     command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = Quote(schema) + "." + Quote(name);
@@ -262,7 +306,6 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
             var result = new List<string>();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand(@"SET LOCK_TIMEOUT 3000;
 SELECT c.name FROM sys.indexes AS i
 JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
@@ -318,7 +361,6 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             var result = new List<(string, string, string)>();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand(InvalidObjectsQuery, sql) { CommandTimeout = 120 })
                 using (var reader = command.ExecuteReader())
                     while (reader.Read())
@@ -333,44 +375,49 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             {
                 var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View)>();
                 var parameters = new List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default)>();
+                var databases = new List<string>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
+                Progress = (0, "connecting");
                 using (var sql = connection.Open())
                 {
-                    sql.Open();
+                    Progress = (10, "reading columns");
                     using (var command = new SqlCommand(CatalogQuery, sql) { CommandTimeout = 15 })
                     using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
                     {
+                        // ponytail: row totals are unknown up front, so the percent is per result set, not per row.
                         while (reader.Read() && columns.Count < MaxRows)
                             columns.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetBoolean(4), reader.GetBoolean(5)));
                         while (reader.Read()) { } // drain capped rows
+                        Progress = (55, "reading foreign keys");
                         if (reader.NextResult())
                             while (reader.Read() && keys.Count < MaxRows)
                                 keys.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                                     reader.GetString(4), reader.GetString(5), reader.GetString(6)));
                         while (reader.Read()) { }
+                        Progress = (70, "reading procedures");
                         if (reader.NextResult())
                             while (reader.Read() && parameters.Count < MaxRows)
                                 parameters.Add((reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
                                     reader.IsDBNull(3) ? null : reader.GetString(3), !reader.IsDBNull(4) && reader.GetBoolean(4), !reader.IsDBNull(5) && reader.GetBoolean(5)));
+                        while (reader.Read()) { }
+                        Progress = (85, "reading databases");
+                        if (reader.NextResult())
+                            while (reader.Read()) databases.Add(reader.GetString(0));
                     }
                 }
+                Progress = (95, "indexing " + columns.Count + " columns");
                 var foreignKeys = keys.GroupBy(k => k.Id).ToLookup(g => (g.First().Schema, g.First().Table),
                     g => new SchemaForeignKey(g.Select(k => k.Column).ToArray(), g.First().RefSchema, g.First().RefTable, g.Select(k => k.RefColumn).ToArray()));
                 var tables = columns.GroupBy(c => (c.Schema, c.Table))
                     .Select(g => new SchemaTable(g.Key.Schema, g.Key.Table, g.Select(c => c.Column).ToArray(),
                         g.Select(c => c.Type).ToArray(), foreignKeys[g.Key].ToArray(), g.Select(c => c.Generated).ToArray(), g.First().View)).ToArray();
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
+                databaseCache[connection.Key] = databases;
                 procedureCache[connection.Key] = parameters.GroupBy(p => (p.Schema, p.Procedure))
                     .Select(g => new SchemaProcedure(g.Key.Schema, g.Key.Procedure, g.Where(p => p.Name != null)
                         .Select(p => new SchemaParameter(p.Name, p.Type, p.Output, p.Default)).ToArray())).ToArray();
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + tables.Length + " tables");
                 return tables;
-            }
-            catch (SqlException error) when (error.Number == 20 && connection.Encrypt && connection.IsLocal)
-            {
-                // ponytail: SqlClient can't encrypt to LocalDB/shared memory (error 20); local-only traffic, so retry plain.
-                connection.Encrypt = false;
-                return Load(connection, attempt);
             }
             // Pipe/network not ready yet (cold LocalDB, server starting): retry shortly instead of backing off 30 s.
             catch (SqlException error) when (attempt < 3 && (error.Number == 233 || error.Number == 53 || error.Number == 2 || error.Number == -2 || error.Number == 10054))
@@ -394,7 +441,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
 
         private static Type serviceCacheType;
 
-        private static object ActiveConnectionInfo()
+        internal static object ActiveConnectionInfo()
         {
             var serviceCache = serviceCacheType ?? (serviceCacheType = AppDomain.CurrentDomain.GetAssemblies()
                 .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache", false))

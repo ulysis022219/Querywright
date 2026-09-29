@@ -1,4 +1,4 @@
-Querywright for SSMS 22 (x64). Free, open-source (MIT), early release.
+Querywright for SSMS 22 (x64). Free, open-source (MIT).
 
 Install
 1. Save your work and close SSMS 22.

@@ -49,6 +49,13 @@ namespace Querywright.Ssms
         }
 
         internal string TabColorRules => options?.TabColorRules ?? "";
+
+        internal void SetTabColorRules(string rules)
+        {
+            if (options == null) return;
+            options.TabColorRules = rules;
+            options.SaveSettingsToStorage();
+        }
         internal bool ShowConnection => options?.ShowConnection ?? true;
 
         internal string SettingsFile => options?.SettingsFile ?? "";
@@ -170,6 +177,7 @@ namespace Querywright.Ssms
             Add(0x011D, EditFormattingStyleAsync);
             Add(0x011E, FormatFolderAsync);
             Instance = this;
+            ServerColorMenu.Start();
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
             if (options.CheckForUpdates && Environment.GetEnvironmentVariable("QUERYWRIGHT_SELFTEST") == null)

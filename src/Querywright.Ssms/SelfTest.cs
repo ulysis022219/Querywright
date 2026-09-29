@@ -72,6 +72,10 @@ namespace Querywright.Ssms
                             view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- " +
                                 (view.Properties.TryGetProperty("QuerywrightConnection", out string caption) ? caption : "(none)"));
                             break;
+                        case "oe": // right-click the first server in Object Explorer and report the menu
+                            await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- oe " + await ServerColorMenu.ProbeAsync(package));
+                            break;
                         case "latest": // follow the newest SQL window, e.g. one a command opened
                             if (View == null || Adapter == null) throw new InvalidOperationException("no SQL editor");
                             view = View; adapter = Adapter; target = (IOleCommandTarget)adapter;

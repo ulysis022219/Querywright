@@ -13,7 +13,7 @@ Try
 - F12 on a @variable / alias / CTE   -> jumps to its declaration
 - Tools > Options > Querywright > Offline schema SQL file = offline-schema.sql from this folder,
   then type "SELECT * FROM " to see the suggestion popup, or put the caret after * and press Tab.
-- Tools menu: Querywright commands (format, analyze, semicolons, rename, ...)
+- Querywright menu (menu bar): commands (format, analyze, semicolons, rename, ...)
 
 Update
   Querywright shows a notice in SSMS when a newer release is published (once a day; turn off under

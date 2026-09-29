@@ -22,6 +22,16 @@ namespace Querywright.Ssms
         [Description("Typing ' inserts '' with the caret between them; typing ' before the closing quote steps over it, and Backspace in an empty pair removes both.")]
         public bool CloseQuotes { get; set; } = true;
 
+        [Category("Completion")]
+        [DisplayName("Qualify columns of a single table")]
+        [Description("Insert Table.Column even when the statement reads one table. Off inserts just Column; joins always use the alias.")]
+        public bool QualifySingleTable { get; set; }
+
+        [Category("Editor")]
+        [DisplayName("Color BEGIN/END pairs")]
+        [Description("Give each BEGIN/END, CASE/END and TRY/CATCH pair a color by nesting level. Colors are under Fonts and Colors, \"Querywright BEGIN/END level\". The pair at the caret is always highlighted; Ctrl+] jumps to its partner.")]
+        public bool ColorBlocks { get; set; } = true;
+
         [Category("Tab history")]
         [DisplayName("Keep tab history")]
         [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab and 200 tabs kept, so any version can be reopened. Turn off to save nothing.")]

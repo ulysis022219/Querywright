@@ -111,11 +111,11 @@ function Session([string]$name, [string]$text, [string[]]$extra, [string]$steps)
     $env:QUERYWRIGHT_SELFTEST_STEPS = $steps
     Start-Process $ssms -ArgumentList (@("`"$file`"") + $extra + '-nosplash', '/log') | Out-Null
     try {
-        for ($i = 0; $i -lt 48 -and -not (Test-Path $result); $i++) {
-            Start-Sleep 5
+        for ($i = 0; $i -lt 240 -and -not (Test-Path $result); $i++) {
+            Start-Sleep 1
             # First run relaunches SSMS, so follow the newest process; answer first-run prompts that could block the editor.
             $id = (Get-Process SSMS -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1).Id
-            if ($id -and $i % 2 -eq 1) { Dismiss $id }
+            if ($id -and $i % 10 -eq 9) { Dismiss $id }
         }
         Start-Sleep 2
         Snap "$name-done"

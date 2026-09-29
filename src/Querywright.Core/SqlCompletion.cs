@@ -129,6 +129,32 @@ namespace Querywright.Core
         private static readonly HashSet<string> DeclareEnds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { "SELECT", "SET", "INSERT", "UPDATE", "DELETE", "IF", "WHILE", "EXEC", "EXECUTE", "RETURN", "BEGIN", "PRINT", "MERGE", "FOR" };
 
+        private static readonly HashSet<string> StatementStarts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "WITH", "DECLARE", "SET", "EXEC", "EXECUTE", "IF", "WHILE", "PRINT", "RETURN", "TRUNCATE" };
+        private static readonly HashSet<string> Continuations = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "UNION", "ALL", "EXCEPT", "INTERSECT", "THEN" };
+
+        /// <summary>Start offset of the statement holding token index <paramref name="at"/>, for scripts that skip semicolons.</summary>
+        // ponytail: keyword heuristic, used only to rank columns; a wrong split just orders them as before.
+        private static (int Start, int End) StatementAround(List<Tok> seg, int at)
+        {
+            int start = 0, end = int.MaxValue, depth = 0;
+            string kind = "";
+            bool fed = false;
+            for (int i = 0; i < seg.Count; i++)
+            {
+                if (seg[i].Type == TSqlTokenType.LeftParenthesis) depth++;
+                else if (seg[i].Type == TSqlTokenType.RightParenthesis) depth = Math.Max(0, depth - 1);
+                if (depth != 0 || !seg[i].IsAny(StatementStarts) || (seg[i].Is("WITH") && i + 1 < seg.Count && seg[i + 1].Type == TSqlTokenType.LeftParenthesis)) continue;
+                bool continues = i > 0 && (seg[i - 1].IsAny(Continuations) || seg[i - 1].Type == TSqlTokenType.RightParenthesis && kind != "IF" && kind != "WHILE") ||
+                    !fed && (kind == "INSERT" || kind == "WITH") && (seg[i].Is("SELECT") || seg[i].Is("EXEC") || seg[i].Is("EXECUTE") || kind == "WITH") ||
+                    seg[i].Is("SET") && (kind == "UPDATE" || kind == "MERGE");
+                if (continues) { fed = true; continue; }
+                if (i >= at) { end = seg[i].Offset; break; }
+                start = seg[i].Offset; kind = seg[i].Text.ToUpperInvariant(); fed = false;
+            }
+            return (start, end);
+        }
+
         private enum Kind { Join, Column, Alias, Table, Variable, Function, Keyword }
         private enum Context { General, Column, Table }
 
@@ -184,7 +210,7 @@ namespace Querywright.Core
 
         public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable>? tables,
             string defaultSchema = "dbo", bool caseSensitive = false, IReadOnlyList<string>? databases = null,
-            IReadOnlyList<SchemaProcedure>? procedures = null)
+            IReadOnlyList<SchemaProcedure>? procedures = null, bool qualifySingleTable = true)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
@@ -217,6 +243,7 @@ namespace Querywright.Core
             }
             var scan = new Scanner(sql, segment, catalog, defaultSchema, names);
             var items = new List<(CompletionItem Item, Kind Kind)>();
+            var far = new HashSet<CompletionItem>(); // columns of other statements in the batch
             void Add(Kind kind, string name, string insert, string description) => items.Add((new CompletionItem(name, insert, description), kind));
 
             var context = Context.General;
@@ -278,18 +305,26 @@ namespace Querywright.Core
                     foreach (var k in Keywords) Add(Kind.Keyword, k, k, "keyword");
                     foreach (var f in Functions) Add(Kind.Function, f, f + "(", "function");
                     foreach (var s in scan.Sources.Where(s => s.Explicit)) Add(Kind.Alias, s.Alias, QuoteIfNeeded(s.Alias), "alias " + s.Description);
-                    if (scan.Sources.Count == 0 && context == Context.Column)
+                    // Tables of the caret's own statement first; others in the same batch (no semicolons between) rank after them.
+                    var (statementStart, statementEnd) = StatementAround(segment, at);
+                    var near = scan.Sources.Where(s => s.Offset >= statementStart && s.Offset < statementEnd).ToList();
+                    if (near.Count == 0 && context == Context.Column)
                         foreach (var table in catalog)
                             foreach (var column in table.Columns)
                                 Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(table.TypeOf(column), table.Schema + "." + table.Name));
                     else if (resolver != null && resolver.Handled && !resolver.TableMarker)
-                        items.AddRange(resolver.Items.Select(i => (i, Kind.Column)));
+                        items.AddRange(resolver.Items.Select(i => (resolver.Sources == 1 && !qualifySingleTable ? Bare(i) : i, Kind.Column)));
                     else
                     {
                         var seen = new HashSet<string>(names);
-                        foreach (var s in scan.Sources.Where(s => seen.Add(s.Alias)))
+                        foreach (var s in near.Concat(scan.Sources.Except(near)).Where(s => seen.Add(s.Alias)))
                             foreach (var column in s.Columns)
-                                Add(Kind.Column, column, QuoteIfNeeded(s.Alias) + "." + QuoteIfNeeded(column), ColumnDescription(s.Table?.TypeOf(column), s.Alias + "." + column));
+                            {
+                                var item = new CompletionItem(column, QuoteIfNeeded(s.Alias) + "." + QuoteIfNeeded(column), ColumnDescription(s.Table?.TypeOf(column), s.Alias + "." + column));
+                                if (!near.Contains(s)) far.Add(item);
+                                else if (near.Count == 1 && !qualifySingleTable) item = Bare(item);
+                                items.Add((item, Kind.Column));
+                            }
                     }
                 }
             }
@@ -320,10 +355,12 @@ namespace Querywright.Core
                 .GroupBy(i => i.Item.InsertText, StringComparer.Ordinal).Select(g => g.OrderBy(i => Rank(i.Kind)).First())
                 .OrderBy(i => i.Kind == Kind.Join ? 0 : 1)
                 .ThenBy(i => prefix.Length > 0 && string.Equals(i.Item.Name, prefix, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                .ThenBy(i => Rank(i.Kind)).ThenBy(i => i.Item.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(i => Rank(i.Kind)).ThenBy(i => far.Contains(i.Item) ? 1 : 0).ThenBy(i => i.Item.Name, StringComparer.OrdinalIgnoreCase)
                 .Take(MaxItems).Select(i => i.Item);
             return new CompletionResult(start, end - start, ordered);
         }
+
+        private static CompletionItem Bare(CompletionItem item) => new CompletionItem(item.Name, QuoteIfNeeded(item.Name), item.Description);
 
         // An operand is expected unless the previous token already completes one (name, literal, closing parenthesis, SELECT *).
         private static bool ExpectsOperand(Tok prev, Tok? before)
@@ -573,6 +610,7 @@ namespace Querywright.Core
             internal TextEdit? Expansion;
             internal readonly List<string> Parts = new List<string>();
             internal bool Handled, TableMarker;
+            internal int Sources; // tables visible at an unqualified column marker
             private readonly int wildcardPosition = -1;
             private readonly IReadOnlyList<SchemaTable> tables;
             private readonly string defaultSchema;
@@ -664,6 +702,7 @@ namespace Querywright.Core
                         foreach (string column in Columns(reference!))
                             Items.Add(new CompletionItem(column, qualifier == null ? QuoteIfNeeded(alias) + "." + QuoteIfNeeded(column) : QuoteIfNeeded(column),
                                 ColumnDescription(table?.TypeOf(column), alias + "." + column)));
+                        Sources++;
                         if (qualifier != null) return; // Inner aliases shadow outer aliases, even when metadata is missing.
                     }
                 }

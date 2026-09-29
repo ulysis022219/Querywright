@@ -15,6 +15,7 @@ namespace Querywright.Ssms
         internal RenameVariableDialog(string sql, string what, string initialName, Func<string, RenameResult> rename)
         {
             Title = "Querywright: rename " + what;
+            DialogParts.Style(this);
             Width = 1000; Height = 650; MinWidth = 600; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
@@ -25,14 +26,19 @@ namespace Querywright.Ssms
             var status = new TextBlock { Text = "Preview changes before applying. SQL will not be executed.", TextWrapping = TextWrapping.Wrap };
             controls.Children.Add(status);
             DockPanel.SetDock(controls, Dock.Top); root.Children.Add(controls);
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
             var preview = new Button { Content = "_Preview", MinWidth = 90, Margin = new Thickness(4), IsDefault = true };
             var apply = new Button { Content = "_Apply", MinWidth = 90, Margin = new Thickness(4), IsEnabled = false };
             var cancel = new Button { Content = "_Cancel", MinWidth = 90, Margin = new Thickness(4), IsCancel = true };
             buttons.Children.Add(preview); buttons.Children.Add(apply); buttons.Children.Add(cancel);
             DockPanel.SetDock(buttons, Dock.Bottom); root.Children.Add(buttons);
             var grid = new Grid { Margin = new Thickness(0, 10, 0, 0) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { MinWidth = 180 });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { MinWidth = 180 });
+            var splitter = new GridSplitter { Width = 6, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, ResizeDirection = GridResizeDirection.Columns, ResizeBehavior = GridResizeBehavior.PreviousAndNext };
+            System.Windows.Automation.AutomationProperties.SetName(splitter, "Resize original and proposed SQL panes");
+            Grid.SetColumn(splitter, 1); grid.Children.Add(splitter);
             TextBox Pane(string title, string text, int column)
             {
                 var panel = new DockPanel { Margin = new Thickness(4) };
@@ -46,12 +52,13 @@ namespace Querywright.Ssms
                 return box;
             }
             Pane("Original SQL", sql, 0);
-            var proposed = Pane("Proposed SQL", "", 1);
-            name.TextChanged += (sender, args) => { Result = null; apply.IsEnabled = false; proposed.Clear(); };
+            var proposed = Pane("Proposed SQL", "", 2);
+            name.TextChanged += (sender, args) => { Result = null; apply.IsEnabled = false; proposed.Clear(); status.Text = "Name changed. Preview again before applying."; };
             async Task PreviewAsync()
             {
                 string requested = name.Text;
                 preview.IsEnabled = false; apply.IsEnabled = false; Result = null;
+                status.Text = "Preparing preview...";
                 try
                 {
                     var result = await Task.Run(() => rename(requested));

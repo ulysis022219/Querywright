@@ -103,6 +103,10 @@ namespace Querywright.Ssms
         public string SnippetFolder { get; set; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "Snippets");
 
+        /// <summary>Databases ticked last time in Script for multiple databases, one per line.</summary>
+        [Browsable(false)]
+        public string MultiDatabaseSelection { get; set; } = "";
+
         [Category("Snippets")]
         [DisplayName("Tab expands snippets")]
         [Description("Tab after a snippet shortcut (e.g. ssf) or after * expands it. Off leaves Tab to insert a tab.")]

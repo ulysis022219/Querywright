@@ -59,7 +59,7 @@ namespace Querywright.Ssms
                             }
                             break;
                         case "tab": Exec(target, VSConstants.VSStd2K, (uint)VSConstants.VSStd2KCmdID.TAB); break;
-                        case "f12": Exec(target, VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn); break;
+                        case "f12": await RunDteCommandAsync(package, "Edit.GoToDefinition"); break;
                         case "exec": await RunDteCommandAsync(package, "Query.Execute"); break;
                         case "grid": FocusGrid(); break;
                         case "cmd":

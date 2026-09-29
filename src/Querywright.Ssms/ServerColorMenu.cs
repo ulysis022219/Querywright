@@ -35,9 +35,14 @@ namespace Querywright.Ssms
             {
                 var cache = AppDomain.CurrentDomain.GetAssemblies()
                     .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache", false)).FirstOrDefault(t => t != null);
-                var explorer = cache?.GetMethod("GetObjectExplorer", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.Invoke(null, null);
-                tree = explorer?.GetType().GetProperty("Tree", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(explorer) as TreeView;
-                if (tree == null) { Status = "tree not found"; return false; }
+                if (cache == null) { Status = "no ServiceCache type"; return false; }
+                var explorer = cache.GetMethod("GetObjectExplorer", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.Invoke(null, null);
+                if (explorer == null) { Status = "no object explorer"; return false; }
+                var property = explorer.GetType().GetProperty("Tree", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (property == null) { Status = "no Tree property on " + explorer.GetType().FullName; return false; }
+                var value = property.GetValue(explorer);
+                tree = value as TreeView;
+                if (tree == null) { Status = "Tree is " + (value?.GetType().FullName ?? "null"); return false; }
                 new ContextMenuWatcher(tree);
                 Status = "attached";
                 return true;

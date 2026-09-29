@@ -5,6 +5,11 @@ on:
     branches: [main, master, 'claude/**']
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release:
+        description: 'Release tag to publish after the tests pass, e.g. v0.3.0 (empty: build only)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -74,9 +79,9 @@ jobs:
           path: e2e
 
   release:
-    # Pushing a v* tag publishes a release, only after the SSMS end-to-end tests pass.
+    # A v* tag push, or Run workflow with a release tag, publishes a release after the SSMS end-to-end tests pass.
     needs: [build, e2e]
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || inputs.release != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -85,7 +90,9 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release || github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" Querywright-ssms22.zip --repo "$GITHUB_REPOSITORY" \
-            --title "Querywright $GITHUB_REF_NAME" --generate-notes \
+          [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]] || { echo "release tag must look like v1.2.3"; exit 1; }
+          gh release create "$TAG" Querywright-ssms22.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Querywright $TAG" --generate-notes \
             --notes "Unzip, then double-click Install.cmd (see INSTALL.txt). Development release; no affiliation with Redgate."

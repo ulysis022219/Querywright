@@ -57,11 +57,11 @@ namespace Querywright.Core
 
         /// <summary>Rules with a mechanical fix.</summary>
         /// <summary>Targets of DELETE/UPDATE statements without WHERE, e.g. "DELETE LC.StatusHdr". Empty when none or the SQL does not parse.</summary>
-        public static IReadOnlyList<string> UnfilteredChanges(string sql)
+        public static IReadOnlyList<string> UnfilteredChanges(string sql, bool unfiltered = true, bool dropTruncate = false)
         {
             var fragment = new TSql170Parser(true).Parse(new StringReader(sql ?? ""), out var errors);
             if (errors.Count > 0) return Array.Empty<string>();
-            var found = new Unfiltered(sql!);
+            var found = new Unfiltered(sql!, unfiltered, dropTruncate);
             fragment.Accept(found);
             return found.Targets;
         }
@@ -70,10 +70,13 @@ namespace Querywright.Core
         {
             private readonly string sql;
             internal readonly List<string> Targets = new List<string>();
-            internal Unfiltered(string sql) => this.sql = sql;
-            private void Add(string verb, TableReference target) => Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength));
-            public override void Visit(DeleteSpecification node) { if (node.WhereClause == null && node.Target != null) Add("DELETE", node.Target); }
-            public override void Visit(UpdateSpecification node) { if (node.WhereClause == null && node.Target != null) Add("UPDATE", node.Target); }
+            private readonly bool unfiltered, dropTruncate;
+            internal Unfiltered(string sql, bool unfiltered, bool dropTruncate) { this.sql = sql; this.unfiltered = unfiltered; this.dropTruncate = dropTruncate; }
+            private void Add(string verb, TSqlFragment target) => Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength));
+            public override void Visit(DeleteSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null) Add("DELETE", node.Target); }
+            public override void Visit(UpdateSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null) Add("UPDATE", node.Target); }
+            public override void Visit(TruncateTableStatement node) { if (dropTruncate && node.TableName != null) Add("TRUNCATE TABLE", node.TableName); }
+            public override void Visit(DropTableStatement node) { if (dropTruncate) foreach (var name in node.Objects) Add("DROP TABLE", name); }
         }
 
         public static readonly IReadOnlyCollection<string> FixableRules =new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };

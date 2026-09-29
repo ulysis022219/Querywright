@@ -173,13 +173,13 @@ namespace Querywright.Ssms
                 // SQL Prompt: Tab on a typed snippet shortcut expands it even while the suggestion list is open.
                 if (IsTab(group, id) && completion.IsCompletionActive(view) && (package.HasSnippetShortcut(view) || !SelectionMatches()))
                     completion.GetSession(view)?.Dismiss();
-                if (IsTab(group, id) && !completion.IsCompletionActive(view))
+                if (IsTab(group, id) && package.Options?.TabExpandSnippets != false && !completion.IsCompletionActive(view))
                 {
                     bool expanded = package.TryTabExpand(view);
                     Microsoft.VisualStudio.Shell.ActivityLog.TryLogInformation("Querywright", "Tab received; expanded=" + expanded);
                     if (expanded) return VSConstants.S_OK;
                 }
-                if (IsGoToDefinition(group, id) && package.TryGoToDefinition(view)) return VSConstants.S_OK;
+                if (IsGoToDefinition(group, id) && package.Options?.GoToDefinition != false && package.TryGoToDefinition(view)) return VSConstants.S_OK;
             }
             }
             catch (Exception error) when (!(error is OutOfMemoryException)) { Swallowed(error); }
@@ -251,6 +251,8 @@ namespace Querywright.Ssms
                 databases = WorkbenchPackage.Instance.CurrentDatabases();
                 procedures = WorkbenchPackage.Instance.CurrentProcedures(""); // live only; the script is parsed off the UI thread
             }
+            if (trigger.Reason == CompletionTriggerReason.Insertion && WorkbenchPackage.Instance.Options?.SuggestWhileTyping == false)
+                return CompletionStartData.DoesNotParticipateInCompletion;
             if (trigger.Reason == CompletionTriggerReason.Insertion &&
                 !(char.IsLetter(trigger.Character) || trigger.Character == '_' || trigger.Character == '.' || trigger.Character == ' '))
                 return CompletionStartData.DoesNotParticipateInCompletion;

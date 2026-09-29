@@ -49,6 +49,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Smart rename object (updates dependents) | host (sp_rename + ALTER for dependent modules, opened in a new window; never executed) |
 | Split table | host: pick columns to move; script creates the new table keyed and foreign-keyed on the primary key, copies data, drops moved columns in one transaction; opened in a new window, never executed |
 | Encapsulate as new stored procedure | host (CREATE PROCEDURE script from the selection, variables become parameters; new window) |
+| Script for multiple databases | host (tick databases on the connected server; USE/GO block per database in a new window, never executed; optional SQLCMD stop on first error) |
 | Find unused variables and parameters | host (Error List) |
 | Summarize script (outline of statements) | host (Error List, click to navigate) |
 | Find invalid objects | host: read-only binding check of up to 2000 modules (sys.dm_sql_referenced_entities in TRY/CATCH + unresolved sys.sql_expression_dependencies); report opens in a new window |
@@ -63,6 +64,9 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Script as INSERT (temp table + values) | host (`#Results` with reported column types, 1000-row batches, new window, never executed) |
 | Open in Excel | host (.xlsx in %TEMP%, removed after a day; cells are Text so dates and codes match the grid exactly, numeric columns stay numbers with the grid's decimals; no formulas) |
 | Save as CSV | host (RFC 4180, UTF-8, formula-injection guard) |
+| Copy as Markdown / JSON | host (Markdown table with '|' escaped; JSON array with numbers for numeric columns, NULL as null) |
+| Script as UPDATE / MERGE | host (keyed on the first column; target is the query's first table; MERGE updates and inserts, never deletes; rowversion skipped; opens in a new window, never executed) |
+| Script as CREATE TABLE | host (grid's column types; NOT NULL where no row is NULL; opens in a new window, never executed) |
 
 In the results grid's right-click menu and the Querywright menu. SSMS has no public grid API, so the
 host reflects over the focused `GridControl` and its `IGridStorage` (the approach used by

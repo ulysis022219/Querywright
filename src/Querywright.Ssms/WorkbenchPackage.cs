@@ -186,6 +186,13 @@ namespace Querywright.Ssms
             Add(0x011E, FormatFolderAsync);
             Add(0x011F, CompareObjectAsync);
             Add(0x0120, GoToDefinitionAsync);
+            Add(0x0122, ScriptForDatabasesAsync);
+            Add(0x0123, () => CopyGridAsync(c => ResultGrid.Markdown(c.Headers, c.Rows), "Markdown"));
+            Add(0x0124, () => CopyGridAsync(c => ResultGrid.Json(c.Headers, c.Types, c.Rows), "JSON"));
+            Add(0x0125, () => ScriptGridAsync((c, t) => ResultGrid.UpdateScript(c.Headers, c.Types, c.Rows, t), "UPDATE"));
+            Add(0x0126, () => ScriptGridAsync((c, t) => ResultGrid.MergeScript(c.Headers, c.Types, c.Rows, t), "MERGE"));
+            Add(0x0127, () => ScriptGridAsync((c, t) => ResultGrid.CreateTableScript(c.Headers, c.Types, c.Rows), "CREATE TABLE"));
+            Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             Instance = this;
             ServerColorMenu.Start();
             PriorityCommands.Start(this);
@@ -892,6 +899,24 @@ namespace Querywright.Ssms
             status?.SetText("Querywright: " + items.Count + " invalid object issue(s) found.");
         });
 
+        private Task ScriptForDatabasesAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            string sql = QueryTextOrNull();
+            if (string.IsNullOrWhiteSpace(sql)) throw new InvalidOperationException("Open a query window with the script to run in each database.");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server whose databases you want, and turn on Read live metadata under Tools > Options > Querywright.");
+            var databases = await Task.Run(() => LiveMetadata.Databases(connection));
+            bool hasUse = await Task.Run(() => SqlRefactoring.ContainsUse(sql));
+            var previous = new HashSet<string>((options.MultiDatabaseSelection ?? "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
+            var picker = new DatabasePickerDialog(connection.Server, databases, previous, hasUse);
+            if (!await ShowDialogAsync(picker)) return;
+            options.MultiDatabaseSelection = string.Join("\n", picker.Selected);
+            options.SaveSettingsToStorage();
+            string script = await Task.Run(() => SqlRefactoring.ForDatabases(sql, picker.Selected, picker.StopOnError, picker.PrintName));
+            await OpenInNewQueryAsync(script, "Script for " + picker.Selected.Count + " databases");
+        });
+
         private Task EncapsulateAsync() => RunCommandAsync(async () =>
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -1000,6 +1025,25 @@ namespace Querywright.Ssms
             await GridStatusAsync($"scripted {cells.Rows.Count} rows as INSERT (not executed).", cells);
         });
 
+        private Task CopyGridAsync(Func<GridCells, string> format, string what) => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var cells = ReadFocusedGrid(valuesOnly: false);
+            System.Windows.Clipboard.SetDataObject(format(cells), true);
+            await GridStatusAsync($"copied {cells.Rows.Count} rows as {what}.", cells);
+        });
+
+        /// <summary>Scripts the grid into a new window; <paramref name="script"/> gets the cells and the query's first table. Never executed.</summary>
+        private Task ScriptGridAsync(Func<GridCells, string, string> script, string what) => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var cells = ReadFocusedGrid(valuesOnly: false);
+            string table = ResultGrid.SourceTable(QueryTextOrNull()) ?? "[dbo].[TargetTable]";
+            string text = await Task.Run(() => script(cells, table));
+            await OpenInNewQueryAsync(text, "Script results as " + what);
+            await GridStatusAsync($"scripted {cells.Rows.Count} rows as {what} (not executed).", cells);
+        });
+
         /// <summary>
         /// Excel opens a UTF-16 tab-delimited .csv correctly in every locale (a comma CSV breaks where the list separator is ';').
         /// Files older than a day are removed so result data does not linger in %TEMP%.
@@ -1033,9 +1077,14 @@ namespace Querywright.Ssms
             var dialog = new Microsoft.Win32.SaveFileDialog { Title = "Querywright: save results as CSV", Filter = "CSV (comma delimited)|*.csv|All files|*.*", FileName = ResultGrid.FileName(QueryTextOrNull(), DateTime.Now) + ".csv", OverwritePrompt = true };
             if (dialog.ShowDialog() != true) return;
             string file = dialog.FileName;
-            await Task.Run(() => File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, ','), new UTF8Encoding(true)));
+            char separator = CsvSeparator(options?.CsvDelimiter);
+            bool headers = options?.CsvHeaders != false;
+            await Task.Run(() => File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, separator, includeHeaders: headers), new UTF8Encoding(true)));
             await GridStatusAsync($"saved {cells.Rows.Count} rows.", cells);
         });
+
+        private static char CsvSeparator(CsvDelimiter? delimiter) =>
+            delimiter == CsvDelimiter.Semicolon ? ';' : delimiter == CsvDelimiter.Tab ? '\t' : delimiter == CsvDelimiter.Pipe ? '|' : ',';
 
         private Task EditFormattingStyleAsync() => RunCommandAsync(async () =>
         {

@@ -358,6 +358,42 @@ namespace Querywright.Core
         }
 
         /// <summary>
+        /// The script repeated once per chosen database as "USE db; GO; script; GO" blocks, for the user to review and execute.
+        /// Nothing is run here. The database name is printed in the USE batch so the script still starts its own batch
+        /// (CREATE PROCEDURE must be first). Stop on first error uses SQLCMD's ":on error exit".
+        /// </summary>
+        public static string ForDatabases(string sql, IReadOnlyList<string> databases, bool stopOnError = false, bool printName = true, string newline = "\r\n")
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (databases == null || databases.Count == 0) throw new ArgumentException("Choose at least one database.", nameof(databases));
+            string body = sql.Trim();
+            if (body.Length == 0) throw new ArgumentException("There is no SQL to script.", nameof(sql));
+            if ((long)body.Length * databases.Count > 20_000_000) throw new InvalidOperationException("The script is too large for that many databases.");
+            var lines = body.Split('\n');
+            bool endsWithGo = Regex.IsMatch(lines[lines.Length - 1], @"^\s*GO\s*(\d+\s*)?$", RegexOptions.IgnoreCase);
+            var builder = new StringBuilder();
+            builder.Append("-- Querywright: script for ").Append(databases.Count).Append(databases.Count == 1 ? " database" : " databases")
+                .Append(". Review, then execute. Nothing has been run.").Append(newline);
+            if (stopOnError)
+                builder.Append("-- Stop on first error needs SQLCMD mode (Query > SQLCMD Mode).").Append(newline).Append(":on error exit").Append(newline);
+            foreach (var database in databases)
+            {
+                builder.Append(newline).Append("USE [").Append(database.Replace("]", "]]")).Append("];").Append(newline);
+                if (printName) builder.Append("PRINT N'").Append(database.Replace("'", "''")).Append("';").Append(newline);
+                builder.Append("GO").Append(newline).Append(body).Append(newline);
+                if (!endsWithGo) builder.Append("GO").Append(newline);
+            }
+            return builder.ToString();
+        }
+
+        /// <summary>True when the script has its own USE, which would override the target database of each block.</summary>
+        public static bool ContainsUse(string sql)
+        {
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql ?? ""), out _);
+            return tokens.Any(t => t.TokenType == TSqlTokenType.Use);
+        }
+
+        /// <summary>
         /// Wraps the selected statements in CREATE PROCEDURE. Variables used but not declared in the selection become parameters,
         /// typed from their declarations elsewhere in the script (sql_variant when unknown); assigned ones become OUTPUT.
         /// </summary>

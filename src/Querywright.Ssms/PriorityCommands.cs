@@ -99,7 +99,7 @@ namespace Querywright.Ssms
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             // Keep F12 enabled in SQL editors even when SSMS's language service disables Go To Definition.
-            if (cCmds == 1 && IsDefinition(pguidCmdGroup, prgCmds[0].cmdID))
+            if (cCmds == 1 && package.Options?.GoToDefinition != false && IsDefinition(pguidCmdGroup, prgCmds[0].cmdID))
             {
                 try
                 {
@@ -117,7 +117,7 @@ namespace Querywright.Ssms
             ThreadHelper.ThrowIfNotOnUIThread();
             // NOTSUPPORTED passes the command on to SSMS; S_OK swallows it.
             // F12 comes here too: SSMS's language service claims GotoDefn before editor filters see it once connected.
-            if (IsDefinition(pguidCmdGroup, nCmdID))
+            if (package.Options?.GoToDefinition != false && IsDefinition(pguidCmdGroup, nCmdID))
             {
                 SelfTest.Note = "f12 priority";
                 try
@@ -131,7 +131,7 @@ namespace Querywright.Ssms
                 catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return VSConstants.S_OK; }
             }
             const int pass = (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
-            if (pguidCmdGroup == VSConstants.VSStd2K && nCmdID == (uint)VSConstants.VSStd2KCmdID.GOTOBRACE)
+            if (pguidCmdGroup == VSConstants.VSStd2K && nCmdID == (uint)VSConstants.VSStd2KCmdID.GOTOBRACE && package.Options?.JumpToBlockPartner != false)
             {
                 // Ctrl+]: BEGIN <-> END; brackets and anything else go to SSMS.
                 try { return GoToPartner(package.GetSqlView()) ? VSConstants.S_OK : pass; }
@@ -142,12 +142,13 @@ namespace Querywright.Ssms
             try
             {
                 var view = package.GetSqlView();
-                if (package.Options?.WarnUnfilteredChanges == true)
+                var options = package.Options;
+                if (options != null && (options.WarnUnfilteredChanges || options.WarnDropTruncate))
                 {
                     // SSMS runs the selection when there is one, otherwise the whole window.
                     string sql = view.Selection.IsEmpty ? view.TextSnapshot.GetText()
                         : string.Join("\n", view.Selection.SelectedSpans.Select(s => s.GetText()));
-                    var targets = sql.Length > 1_000_000 ? System.Array.Empty<string>() : SqlAnalysis.UnfilteredChanges(sql);
+                    var targets = sql.Length > 1_000_000 ? System.Array.Empty<string>() : SqlAnalysis.UnfilteredChanges(sql, options.WarnUnfilteredChanges, options.WarnDropTruncate);
                     if (targets.Count > 0 && !Ask(targets)) return VSConstants.S_OK;
                 }
                 // Tab history keeps an executed version, like SQL Prompt's ▶ entries.
@@ -180,7 +181,7 @@ namespace Querywright.Ssms
             {
                 var layout = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false };
                 layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0),
-                    Text = "You're about to execute " + (targets.Count == 1 ? "a statement" : targets.Count + " statements") + " without a WHERE clause:" });
+                    Text = "You're about to execute " + (targets.Count == 1 ? "a statement" : targets.Count + " statements") + " that can change or remove every row:" });
                 layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0), Font = new System.Drawing.Font(form.Font, System.Drawing.FontStyle.Bold),
                     Text = string.Join(Environment.NewLine, targets.Take(10)) + (targets.Count > 10 ? Environment.NewLine + "..." : ""), Margin = new Padding(3, 8, 3, 12) });
                 var never = new CheckBox { AutoSize = true, Text = "Don't show this warning again" };
@@ -199,6 +200,7 @@ namespace Querywright.Ssms
                 if (never.Checked)
                 {
                     package.Options.WarnUnfilteredChanges = false;
+                    package.Options.WarnDropTruncate = false;
                     package.Options.SaveSettingsToStorage();
                 }
                 return execute;

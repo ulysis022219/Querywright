@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.Editor;
+using Microsoft.VisualStudio.Language.Intellisense;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion.Data;
 using Microsoft.VisualStudio.OLE.Interop;
@@ -51,6 +52,21 @@ namespace Querywright.Ssms
             poll.Tick += (s, e) => { if (view.HasAggregateFocus && WorkbenchPackage.Instance?.LiveMetadataEnabled == true) LiveMetadata.TryGet(LiveMetadata.Capture()); };
             view.Closed += (s, e) => poll.Stop();
             poll.Start();
+            // Tab history: one file per window, saved every minute when changed and on close. Local only; opt out in options.
+            var historyId = Guid.NewGuid();
+            ITextSnapshot? saved = null;
+            void SaveHistory()
+            {
+                var snapshot = view.TextBuffer.CurrentSnapshot;
+                if (snapshot == saved || WorkbenchPackage.Instance?.TabHistoryEnabled != true) return;
+                saved = snapshot;
+                string text = snapshot.GetText();
+                _ = System.Threading.Tasks.Task.Run(() => TabHistory.Save(historyId, text));
+            }
+            var history = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+            history.Tick += (s, e) => SaveHistory();
+            view.Closed += (s, e) => { history.Stop(); SaveHistory(); };
+            history.Start();
             var filter = new EditorCommandFilter(view, Completion);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
             SelfTest.Adapter = adapter;
@@ -184,5 +200,51 @@ namespace Querywright.Ssms
 
         public Task<object> GetDescriptionAsync(IAsyncCompletionSession session, VsCompletionItem item, CancellationToken token) =>
             Task.FromResult<object>(item.Suffix);
+    }
+
+    [Export(typeof(IAsyncQuickInfoSourceProvider))]
+    [Name("Querywright quick info")]
+    [ContentType("text")]
+    internal sealed class QuickInfoSourceProvider : IAsyncQuickInfoSourceProvider
+    {
+        public IAsyncQuickInfoSource? TryCreateQuickInfoSource(ITextBuffer textBuffer) =>
+            EditorListener.IsSql(textBuffer.ContentType) ? textBuffer.Properties.GetOrCreateSingletonProperty(() => new QuickInfoSource()) : null;
+    }
+
+    /// <summary>Hover: variable types, procedure parameters, table columns. Reads cached metadata only; never queries on hover.</summary>
+    internal sealed class QuickInfoSource : IAsyncQuickInfoSource
+    {
+        private static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '@' || c == '#';
+
+        public async Task<QuickInfoItem?> GetQuickInfoItemAsync(IAsyncQuickInfoSession session, CancellationToken token)
+        {
+            var package = WorkbenchPackage.Instance;
+            var point = session.GetTriggerPoint(session.TextView.TextBuffer.CurrentSnapshot);
+            if (package == null || point == null) return null;
+            var snapshot = point.Value.Snapshot;
+            int position = point.Value.Position;
+            await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+            var tables = package.CurrentTables();
+            var live = package.CurrentProcedures(""); // live only; the script is parsed off the UI thread below
+            string sql = snapshot.GetText();
+            var text = await Task.Run(() =>
+            {
+                try
+                {
+                    var procedures = sql.Length > 1_000_000 ? live : SqlAssist.ProceduresFromScript(sql).Concat(live).ToArray();
+                    return SqlAssist.Describe(sql, position, tables, procedures);
+                }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }
+            }, token).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(text)) return null;
+            int start = position, end = position;
+            while (start > 0 && IsWord(snapshot[start - 1])) start--;
+            while (end < snapshot.Length && IsWord(snapshot[end])) end++;
+            var span = snapshot.CreateTrackingSpan(start, end - start, SpanTrackingMode.EdgeInclusive);
+            return new QuickInfoItem(span, new ContainerElement(ContainerElementStyle.Stacked,
+                text!.Split('\n').Select(line => (object)new ClassifiedTextElement(new ClassifiedTextRun("text", line.TrimEnd('\r'))))));
+        }
+
+        public void Dispose() { }
     }
 }

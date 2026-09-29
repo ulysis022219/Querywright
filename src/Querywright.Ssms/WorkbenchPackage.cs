@@ -65,6 +65,18 @@ namespace Querywright.Ssms
             return Merge(live, offline);
         }
 
+        /// <summary>Live procedures plus those created in the script itself. Never blocks (typing path).</summary>
+        internal IReadOnlyList<SchemaProcedure> CurrentProcedures(string sql)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var live = options?.LiveMetadata != false ? LiveMetadata.Procedures(LiveMetadata.Capture()) : null;
+            IReadOnlyList<SchemaProcedure> local;
+            try { local = sql.Length > 1_000_000 ? Array.Empty<SchemaProcedure>() : SqlAssist.ProceduresFromScript(sql); }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { local = Array.Empty<SchemaProcedure>(); }
+            // Script definitions first: they are what the user is editing and they carry parameter defaults.
+            return live == null ? local : local.Concat(live).ToArray();
+        }
+
         /// <summary>For explicit commands: waits for live metadata and reports offline schema errors.</summary>
         private async Task<IReadOnlyList<SchemaTable>> RequireTablesAsync()
         {
@@ -141,6 +153,12 @@ namespace Querywright.Ssms
             Add(0x010E, () => ListAsync(SqlRefactoring.UnusedDeclarationItems, "unused declarations", TaskErrorCategory.Warning));
             Add(0x010F, RefreshMetadataAsync);
             Add(0x0110, ExecuteCurrentStatementAsync);
+            Add(0x0111, PickColumnsAsync);
+            Add(0x0112, TabHistoryAsync);
+            Add(0x0113, RenameObjectAsync);
+            Add(0x0114, EncapsulateAsync);
+            Add(0x0115, FixAtCaretAsync);
+            Add(0x0116, FixAllAsync);
             Instance = this;
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
@@ -208,6 +226,18 @@ namespace Querywright.Ssms
                     try { edit = SqlCompletion.ExpandWildcard(snapshot.GetText(), caret - 1, tables); }
                     catch (FormatException) { return false; } // Incomplete SQL while typing: ordinary Tab.
                     ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
+                    return true;
+                }
+                // SQL Prompt: Tab after INSERT INTO t / EXEC p writes the column list or parameters.
+                // ponytail: cheap keyword gate so ordinary Tabs never parse the whole script on the UI thread.
+                int from = Math.Max(0, caret - 300);
+                string recent = snapshot.GetText(from, caret - from);
+                string text = recent.IndexOf("INSERT", StringComparison.OrdinalIgnoreCase) >= 0 || recent.IndexOf("EXEC", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? snapshot.GetText() : null;
+                var fill = text == null ? null : SqlAssist.FillStatement(text, caret, CurrentTables(), CurrentProcedures(text));
+                if (fill != null)
+                {
+                    ReplaceText(view, new SnapshotSpan(snapshot, fill.Start, fill.Length), fill.Text, fill.Text.Length, 0, 0, "Fill statement");
                     return true;
                 }
                 string shortcut = SnippetFiles.ShortcutBefore(line.GetText(), caret - line.Start.Position);
@@ -531,6 +561,140 @@ namespace Querywright.Ssms
                 ShowWarning((error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
             }
         }
+
+        private async Task<bool> ShowDialogAsync(System.Windows.Window dialog)
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var shell = await GetServiceAsync(typeof(SVsUIShell)) as IVsUIShell;
+            if (shell == null) throw new InvalidOperationException("SSMS window service unavailable.");
+            ErrorHandler.ThrowOnFailure(shell.GetDialogOwnerHwnd(out var owner));
+            new System.Windows.Interop.WindowInteropHelper(dialog).Owner = owner;
+            return dialog.ShowDialog() == true;
+        }
+
+        /// <summary>New query window (same connection as the active one) holding <paramref name="text"/>. Never executes it.</summary>
+        private async Task OpenInNewQueryAsync(string text, string name)
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var dte = await GetServiceAsync(typeof(SDTE));
+            if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
+            IWpfTextView source = null;
+            try { source = GetSqlView(); } catch (InvalidOperationException) { }
+            dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { "File.NewQuery", "" });
+            var view = GetSqlView();
+            if (view == source) throw new InvalidOperationException("Could not open a new query window.");
+            ReplaceText(view, new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length), text, 0, 0, 0, name);
+        }
+
+        private async Task RunCommandAsync(Func<Task> body)
+        {
+            try { await body(); }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning((error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
+            }
+        }
+
+        /// <summary>SQL Prompt's column picker: choose which columns replace * (or alias.*).</summary>
+        private Task PickColumnsAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            if (!view.Selection.IsEmpty || view.Caret.InVirtualSpace) throw new InvalidOperationException("Place the caret on * without selecting text.");
+            var snapshot = view.TextSnapshot;
+            string sql = snapshot.GetText();
+            int position = view.Caret.Position.BufferPosition.Position;
+            var tables = await RequireTablesAsync();
+            var found = await Task.Run(() => SqlCompletion.WildcardColumns(sql, position, tables));
+            var dialog = new ColumnPickerDialog(found.Columns);
+            if (!await ShowDialogAsync(dialog) || dialog.Selected.Count == 0) return;
+            string text = string.Join(", ", dialog.Selected);
+            ReplaceText(view, new SnapshotSpan(snapshot, found.Wildcard.Start, found.Wildcard.Length), text, text.Length, 0, 0, "Pick columns");
+        });
+
+        private Task TabHistoryAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var dialog = new TabHistoryDialog(TabHistory.Folder);
+            if (!await ShowDialogAsync(dialog) || dialog.Text == null) return;
+            await OpenInNewQueryAsync(dialog.Text, "Reopen from tab history");
+        });
+
+        internal bool TabHistoryEnabled => options?.TabHistory != false;
+
+        /// <summary>Smart rename: a reviewable sp_rename + ALTER script for dependent modules, opened in a new window, never executed.</summary>
+        private Task RenameObjectAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            DefinitionTarget target;
+            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), view.Caret.Position.BufferPosition.Position); }
+            catch (FormatException) { target = null; }
+            if (target == null || target.Offset >= 0 || target.Name == null)
+                throw new InvalidOperationException("Place the caret on a table, view, procedure or function name in a script without syntax errors.");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the object.");
+            string schema = target.Schema ?? "dbo";
+            var prompt = new PromptDialog("Querywright: rename " + schema + "." + target.Name, "_New name (the script opens in a new window; nothing runs):", target.Name);
+            if (!await ShowDialogAsync(prompt)) return;
+            string newName = prompt.Value;
+            var dependents = await Task.Run(() => LiveMetadata.Dependents(connection, schema, target.Name));
+            string script = SqlRefactoring.RenameObjectScript(schema, target.Name, newName, dependents);
+            await OpenInNewQueryAsync(script, "Rename " + target.Name);
+        });
+
+        private Task EncapsulateAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            if (view.Selection.IsEmpty || view.Selection.Mode != TextSelectionMode.Stream)
+                throw new InvalidOperationException("Select the statements to encapsulate.");
+            var span = view.Selection.StreamSelectionSpan.SnapshotSpan;
+            string sql = span.Snapshot.GetText();
+            var prompt = new PromptDialog("Querywright: encapsulate as stored procedure", "_Procedure name (schema.name):", "dbo.usp_NewProcedure");
+            if (!await ShowDialogAsync(prompt)) return;
+            string full = prompt.Value.Trim();
+            int dot = full.IndexOf('.');
+            string schema = dot > 0 ? full.Substring(0, dot).Trim('[', ']') : "dbo", name = (dot > 0 ? full.Substring(dot + 1) : full).Trim('[', ']');
+            string script = await Task.Run(() => SqlRefactoring.EncapsulateAsProcedure(sql, span.Start.Position, span.Length, schema, name));
+            await OpenInNewQueryAsync(script, "Encapsulate as procedure");
+        });
+
+        private Task FixAtCaretAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            var snapshot = view.TextSnapshot;
+            string sql = snapshot.GetText();
+            int caret = view.Caret.Position.BufferPosition.Position;
+            var settings = await ReadSettingsAsync();
+            var diagnostic = (await Task.Run(() => SqlAnalysis.Analyze(sql, default, settings))).Diagnostics
+                .Where(d => SqlAnalysis.FixableRules.Contains(d.Rule) && d.Offset <= caret && caret <= d.Offset + d.Length)
+                .OrderBy(d => d.Length).FirstOrDefault();
+            if (diagnostic == null) throw new InvalidOperationException("No fixable issue at the caret. Fixable rules: " + string.Join(", ", SqlAnalysis.FixableRules) + ".");
+            var tables = diagnostic.Rule == "SW001" ? await RequireTablesAsync() : null;
+            var edit = await Task.Run(() => SqlAnalysis.Fix(sql, diagnostic, tables));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (edit == null) throw new InvalidOperationException(diagnostic.Rule + " has no safe automatic fix here.");
+            ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Fix " + diagnostic.Rule);
+        });
+
+        private Task FixAllAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            var snapshot = view.TextSnapshot;
+            string sql = snapshot.GetText();
+            var tables = CurrentTables();
+            var settings = await ReadSettingsAsync();
+            var result = await Task.Run(() => SqlAnalysis.FixAll(sql, tables, "dbo", settings));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (result.Fixed > 0)
+                ReplaceText(view, new SnapshotSpan(snapshot, 0, snapshot.Length), result.Text, Math.Min(view.Caret.Position.BufferPosition.Position, result.Text.Length), 0, 0, "Fix all issues");
+            var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
+            status?.SetText($"Querywright: fixed {result.Fixed} issues.");
+        });
 
         private async Task<WorkbenchSettings> ReadSettingsAsync()
         {

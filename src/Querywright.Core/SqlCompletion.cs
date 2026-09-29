@@ -526,6 +526,15 @@ namespace Querywright.Core
             return (new TextEdit(star.Start, star.Length, sql.Substring(star.Start, star.Length)), visitor.Parts.ToArray());
         }
 
+        /// <summary>Columns one per line, each aligned under the column where the list starts.</summary>
+        public static string ColumnList(string sql, int start, IEnumerable<string> columns)
+        {
+            int lineStart = sql.LastIndexOf('\n', Math.Max(0, start - 1)) + 1;
+            // Keep tabs so the alignment holds whatever the editor's tab size.
+            string indent = new string(sql.Substring(lineStart, start - lineStart).Select(c => c == '\t' ? '\t' : ' ').ToArray());
+            return string.Join("," + (sql.Contains("\r\n") || !sql.Contains("\n") ? "\r\n" : "\n") + indent, columns);
+        }
+
         private static Resolver Expand(string sql, int position, IReadOnlyList<SchemaTable> tables, string defaultSchema, bool caseSensitive)
         {
             if (sql == null || tables == null) throw new ArgumentNullException(sql == null ? nameof(sql) : nameof(tables));
@@ -537,6 +546,7 @@ namespace Querywright.Core
             var visitor = new Resolver(tables, defaultSchema, caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase, position);
             fragment.Accept(visitor);
             if (visitor.Expansion == null) throw new InvalidOperationException("Place the caret on * or alias.* in a SELECT list.");
+            visitor.Expansion = new TextEdit(visitor.Expansion.Start, visitor.Expansion.Length, ColumnList(sql, visitor.Expansion.Start, visitor.Parts));
             string result = sql.Substring(0, visitor.Expansion.Start) + visitor.Expansion.Text +
                 sql.Substring(visitor.Expansion.Start + visitor.Expansion.Length);
             parser.Parse(new StringReader(result), out var finalErrors);

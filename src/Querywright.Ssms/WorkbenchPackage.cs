@@ -687,7 +687,7 @@ namespace Querywright.Ssms
             var found = await Task.Run(() => SqlCompletion.WildcardColumns(sql, position, tables));
             var dialog = new ColumnPickerDialog(found.Columns);
             if (!await ShowDialogAsync(dialog) || dialog.Selected.Count == 0) return;
-            string text = string.Join(", ", dialog.Selected);
+            string text = SqlCompletion.ColumnList(sql, found.Wildcard.Start, dialog.Selected);
             ReplaceText(view, new SnapshotSpan(snapshot, found.Wildcard.Start, found.Wildcard.Length), text, text.Length, 0, 0, "Pick columns");
         });
 

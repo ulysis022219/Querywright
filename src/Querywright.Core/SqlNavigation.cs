@@ -27,8 +27,84 @@ namespace Querywright.Core
         internal StatementSpan(int start, int length) { Start = start; Length = length; }
     }
 
+    /// <summary>A BEGIN/END, BEGIN TRY/END TRY or CASE/END pair; Header is the IF, WHILE or ELSE that owns a BEGIN, else -1.</summary>
+    public sealed class SqlBlock
+    {
+        public int OpenStart { get; }
+        public int OpenLength { get; }
+        public int CloseStart { get; }
+        public int CloseLength { get; }
+        public int HeaderStart { get; }
+        public int HeaderLength { get; }
+        /// <summary>Nesting level, 0 for outermost.</summary>
+        public int Depth { get; }
+        internal SqlBlock(int openStart, int openLength, int closeStart, int closeLength, int headerStart, int headerLength, int depth)
+        {
+            OpenStart = openStart; OpenLength = openLength; CloseStart = closeStart; CloseLength = closeLength;
+            HeaderStart = headerStart; HeaderLength = headerLength; Depth = depth;
+        }
+    }
+
     public static class SqlNavigation
     {
+        private static readonly HashSet<string> BeginStatements = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TRAN", "TRANSACTION", "DISTRIBUTED", "DIALOG", "CONVERSATION" };
+        private static readonly HashSet<string> StatementStarts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "DECLARE", "SET", "EXEC", "EXECUTE", "PRINT", "RETURN", "TRUNCATE", "BREAK", "CONTINUE", "RAISERROR", "THROW" };
+
+        /// <summary>
+        /// Matching block keywords from the tokens alone, so half-typed scripts still pair up. Unmatched keywords are left out;
+        /// each GO starts afresh.
+        /// </summary>
+        public static IReadOnlyList<SqlBlock> Blocks(string sql)
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (sql.Length > 2_000_000) throw new ArgumentException("Navigation input exceeds 2,000,000 characters.");
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql), out _)
+                .Where(t => t.TokenType != TSqlTokenType.WhiteSpace && t.TokenType != TSqlTokenType.SingleLineComment &&
+                    t.TokenType != TSqlTokenType.MultilineComment && t.TokenType != TSqlTokenType.EndOfFile).ToList();
+            var blocks = new List<SqlBlock>();
+            var open = new Stack<(int Start, int Length, int HeaderStart, int HeaderLength, int Parens)>();
+            TSqlParserToken? header = null;
+            int parens = 0;
+            bool Word(int i, string text) => i < tokens.Count && tokens[i].TokenType != TSqlTokenType.QuotedIdentifier &&
+                string.Equals(tokens[i].Text, text, StringComparison.OrdinalIgnoreCase);
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                var t = tokens[i];
+                switch (t.TokenType)
+                {
+                    case TSqlTokenType.LeftParenthesis: parens++; break;
+                    case TSqlTokenType.RightParenthesis: parens = Math.Max(0, parens - 1); break;
+                    case TSqlTokenType.Go: open.Clear(); header = null; parens = 0; break;
+                    case TSqlTokenType.If:
+                    case TSqlTokenType.While:
+                    case TSqlTokenType.Else:
+                        header = t; break;
+                    case TSqlTokenType.Case:
+                        open.Push((t.Offset, t.Text.Length, -1, 0, parens)); break;
+                    case TSqlTokenType.Begin:
+                        if (i + 1 < tokens.Count && BeginStatements.Contains(tokens[i + 1].Text ?? "") && tokens[i + 1].TokenType != TSqlTokenType.QuotedIdentifier) break;
+                        int length = Word(i + 1, "TRY") || Word(i + 1, "CATCH") ? tokens[i + 1].Offset + tokens[i + 1].Text.Length - t.Offset : t.Text.Length;
+                        open.Push((t.Offset, length, header?.Offset ?? -1, header?.Text.Length ?? 0, parens));
+                        header = null;
+                        break;
+                    case TSqlTokenType.End:
+                        if (Word(i + 1, "CONVERSATION") || open.Count == 0) break;
+                        var o = open.Pop();
+                        int close = Word(i + 1, "TRY") || Word(i + 1, "CATCH") ? tokens[i + 1].Offset + tokens[i + 1].Text.Length - t.Offset : t.Text.Length;
+                        blocks.Add(new SqlBlock(o.Start, o.Length, t.Offset, close, o.HeaderStart, o.HeaderLength, open.Count));
+                        parens = o.Parens;
+                        header = null;
+                        break;
+                    default:
+                        // IF x SELECT ... has no BEGIN: a statement in the condition's place means the header owns no block.
+                        if (parens == (open.Count == 0 ? 0 : open.Peek().Parens) && StatementStarts.Contains(t.Text ?? "") && t.TokenType != TSqlTokenType.QuotedIdentifier) header = null;
+                        break;
+                }
+            }
+            return blocks.OrderBy(b => b.OpenStart).ToList();
+        }
+
         public static DefinitionTarget? FindDefinition(string sql, int position)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));

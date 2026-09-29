@@ -64,14 +64,19 @@ namespace Querywright.Ssms
             ThreadHelper.ThrowIfNotOnUIThread();
             try
             {
-                var standard = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Edit.GoToDefinition", -1 });
-                // ponytail: the full scan touches every command, so it runs only when the usual binding is missing.
-                if (OnF12(standard)) return;
+                // Some SSMS builds have no Edit.GoToDefinition, so a failed lookup falls through to the scan.
+                try
+                {
+                    var standard = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Edit.GoToDefinition", -1 });
+                    // ponytail: the full scan touches every command, so it runs only when the usual binding is missing.
+                    if (OnF12(standard)) { ActivityLog.TryLogInformation("Querywright", "F12 bound to: Edit.GoToDefinition"); return; }
+                }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 foreach (object command in (System.Collections.IEnumerable)commandList)
                 {
-                    string name = Get(command, "Name") as string ?? "";
-                    if (name.IndexOf("Definition", StringComparison.OrdinalIgnoreCase) < 0 || !OnF12(command)) continue;
-                    F12Commands.Add((new Guid((string)Get(command, "Guid")), (uint)(int)Get(command, "ID"), name));
+                    // Whatever owns plain F12 is handled; TryGoToDefinition passes it on when there is nothing to go to.
+                    try { if (OnF12(command)) F12Commands.Add((new Guid((string)Get(command, "Guid")), (uint)(int)Get(command, "ID"), Get(command, "Name") as string ?? "")); }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 }
                 ActivityLog.TryLogInformation("Querywright", "F12 bound to: " + string.Join(", ", F12Commands.Select(c => c.Name)));
             }
@@ -114,6 +119,13 @@ namespace Querywright.Ssms
                 catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return VSConstants.S_OK; }
             }
             const int pass = (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            if (pguidCmdGroup == VSConstants.VSStd2K && nCmdID == (uint)VSConstants.VSStd2KCmdID.GOTOBRACE)
+            {
+                // Ctrl+]: BEGIN <-> END; brackets and anything else go to SSMS.
+                try { return GoToPartner(package.GetSqlView()) ? VSConstants.S_OK : pass; }
+                catch (InvalidOperationException) { return pass; }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return pass; }
+            }
             if (pguidCmdGroup != group || nCmdID != id) return pass;
             try
             {
@@ -131,6 +143,19 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException)) { if (!(error is InvalidOperationException)) EditorCommandFilter.Swallowed(error); }
             return pass;
+        }
+
+        private static bool GoToPartner(Microsoft.VisualStudio.Text.Editor.IWpfTextView view)
+        {
+            var snapshot = view.TextSnapshot;
+            int caret = view.Caret.Position.BufferPosition.Position;
+            var block = BlockCache.At(BlockCache.For(view.TextBuffer).Current(snapshot), caret);
+            if (block == null) return false;
+            int target = BlockCache.On(caret, block.CloseStart, block.CloseLength) ? (block.HeaderStart >= 0 ? block.HeaderStart : block.OpenStart) : block.CloseStart;
+            var point = new Microsoft.VisualStudio.Text.SnapshotPoint(snapshot, target);
+            view.Caret.MoveTo(point);
+            view.ViewScroller.EnsureSpanVisible(new Microsoft.VisualStudio.Text.SnapshotSpan(point, 0), Microsoft.VisualStudio.Text.Editor.EnsureSpanVisibleOptions.AlwaysCenter);
+            return true;
         }
 
         private bool Ask(System.Collections.Generic.IReadOnlyList<string> targets)

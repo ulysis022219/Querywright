@@ -221,6 +221,23 @@ CompletionResult Complete(string text)
     return SqlCompletion.Complete(text.Remove(position, 1), position, catalog);
 }
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Count == 3, "alias columns");
+string blockSql = "WHILE @i < 10\nBEGIN\n  IF EXISTS(SELECT 1 FROM t) BEGIN SELECT CASE WHEN a=1 THEN 2 ELSE 3 END END\n  ELSE BEGIN PRINT 'end' END\nEND";
+var blocks = SqlNavigation.Blocks(blockSql);
+Check(blocks.Select(b => (blockSql.Substring(b.CloseStart, b.CloseLength), b.Depth, b.HeaderStart < 0 ? "" : blockSql.Substring(b.HeaderStart, b.HeaderLength)))
+    .SequenceEqual(new[] { ("END", 0, "WHILE"), ("END", 1, "IF"), ("END", 2, ""), ("END", 1, "ELSE") }), "block pairs, depth and headers");
+Check(blocks[0].CloseStart == blockSql.Length - 3, "outer END matched past strings and nested blocks");
+string tryCatch = "BEGIN TRAN\nBEGIN TRY\n SELECT 1\nEND TRY\nBEGIN CATCH\n ROLLBACK\nEND CATCH\nCOMMIT";
+Check(SqlNavigation.Blocks(tryCatch).Select(b => tryCatch.Substring(b.OpenStart, b.OpenLength) + "/" + tryCatch.Substring(b.CloseStart, b.CloseLength))
+    .SequenceEqual(new[] { "BEGIN TRY/END TRY", "BEGIN CATCH/END CATCH" }), "TRY/CATCH blocks, BEGIN TRAN skipped");
+Check(SqlNavigation.Blocks("IF 1=1 SELECT 1\nBEGIN\nEND\nGO\nEND\nBEGIN").Single().HeaderStart == -1, "IF without BEGIN; GO resets");
+Check(SqlNavigation.Blocks("BEGIN -- END\n SELECT 'END', [end] FROM x\n/* END */ END").Single().CloseStart == 51, "END in comments, strings and names ignored");
+var twin = new[] { new SchemaTable("dbo", "People", "Id", "Name"), new SchemaTable("dbo", "Orders", "Id", "Name") };
+CompletionResult CompleteTwin(string text, bool qualify = true) { int at = text.IndexOf('|'); return SqlCompletion.Complete(text.Remove(at, 1), at, twin, qualifySingleTable: qualify); }
+Check(CompleteTwin("SELECT * FROM dbo.People\nSELECT * FROM dbo.Orders WHERE Na|").Items[0].InsertText == "Orders.Name", "own statement's columns first");
+Check(CompleteTwin("SELECT * FROM dbo.People p WHERE p.Id = 1\nSELECT * FROM dbo.Orders o WHERE Na| = 1 AND").Items[0].InsertText == "o.Name", "own statement's columns first without parse");
+Check(CompleteTwin("SELECT * FROM dbo.People WHERE Na|", false).Items[0].InsertText == "Name", "single table column unqualified");
+Check(CompleteTwin("SELECT * FROM dbo.People WHERE Na| = 1 AND", false).Items[0].InsertText == "Name", "single table column unqualified without parse");
+Check(CompleteTwin("SELECT * FROM dbo.People p JOIN dbo.Orders o ON o.Id = p.Id WHERE Na|", false).Items.Select(i => i.InsertText).SequenceEqual(new[] { "p.Name", "o.Name" }), "join columns keep aliases");
 Check(Complete("SELECT p.Na|me FROM dbo.People p;").Items.Single().InsertText == "Name", "partial identifier replacement");
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Any(i => i.InsertText == "[odd]]column]"), "escaped insertion");
 Check(Complete("SELECT 1 FROM dbo.Pe|;").Items.Single().InsertText == "People", "schema objects");

@@ -30,6 +30,7 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - Typing `'` inserts `''` with the cursor inside; typing `'` again steps over the closing quote (turn off under Tools > Options > Querywright).
 - Expand `*` into a column list, or pick the columns you want.
 - **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view, function or trigger it opens an ALTER script in a new query and on a table a CREATE TABLE script (also in scripts with syntax errors elsewhere), including three-part names in another database on the same server (`OtherDb.dbo.Proc`).
+- **BEGIN/END pairs** are colored by nesting level (BEGIN/END, BEGIN TRY/END TRY, CASE/END, with their IF, WHILE or ELSE); the pair at the caret is highlighted, **Ctrl+]** jumps between them, and hovering an END shows the line that opened it.
 - **Shift+F5** runs only the statement under the caret (only when you press it).
 - Executing a **DELETE or UPDATE without WHERE** asks first ("Execute anyway" / "Don't execute"); turn it off in the prompt or under Tools > Options > Querywright.
 

@@ -51,24 +51,38 @@ namespace Querywright.Ssms
             // ponytail: SSMS raises no public connect event; a cheap poll starts the load once the window connects.
             // TryGet only starts a background load when the connection key is new, so repeats are no-ops.
             var poll = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-            poll.Tick += (s, e) => { if (view.HasAggregateFocus && WorkbenchPackage.Instance?.LiveMetadataEnabled == true) LiveMetadata.TryGet(LiveMetadata.Capture()); };
+            poll.Tick += (s, e) =>
+            {
+                try { if (view.HasAggregateFocus && WorkbenchPackage.Instance?.LiveMetadataEnabled == true) LiveMetadata.TryGet(LiveMetadata.Capture()); }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
+            };
             view.Closed += (s, e) => poll.Stop();
             poll.Start();
-            // Tab history: one file per window, saved every minute when changed and on close. Local only; opt out in options.
+            // Tab history: a timestamped version per window a few seconds after each edit, on execute, and on close.
+            // Local only; opt out in options.
             var historyId = Guid.NewGuid();
             ITextSnapshot? saved = null;
-            void SaveHistory()
+            void SaveHistory(bool executed)
             {
                 var snapshot = view.TextBuffer.CurrentSnapshot;
-                if (snapshot == saved || WorkbenchPackage.Instance?.TabHistoryEnabled != true) return;
+                if ((!executed && snapshot == saved) || WorkbenchPackage.Instance?.TabHistoryEnabled != true) return;
                 saved = snapshot;
                 string text = snapshot.GetText();
-                _ = System.Threading.Tasks.Task.Run(() => TabHistory.Save(historyId, text));
+                string name = view.TextBuffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument document)
+                    ? System.IO.Path.GetFileName(document.FilePath) : "";
+                string connection = view.Properties.TryGetProperty("QuerywrightConnection", out string label) ? label : "";
+                _ = System.Threading.Tasks.Task.Run(() => TabHistory.Save(historyId, name, connection, text, executed));
             }
-            var history = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
-            history.Tick += (s, e) => SaveHistory();
-            view.Closed += (s, e) => { history.Stop(); SaveHistory(); };
-            history.Start();
+            view.Properties["QuerywrightHistory"] = (Action<bool>)SaveHistory;
+            var history = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            history.Tick += (s, e) =>
+            {
+                history.Stop();
+                try { SaveHistory(false); }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
+            };
+            view.TextBuffer.Changed += (s, e) => { history.Stop(); history.Start(); };
+            view.Closed += (s, e) => { history.Stop(); SaveHistory(false); };
             var filter = new EditorCommandFilter(view, Completion);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
             SelfTest.Adapter = adapter;
@@ -82,6 +96,46 @@ namespace Querywright.Ssms
         private readonly IAsyncCompletionBroker completion;
         internal IOleCommandTarget? Next;
         internal EditorCommandFilter(IWpfTextView view, IAsyncCompletionBroker completion) { this.view = view; this.completion = completion; }
+
+        /// <summary>The closing quote this filter inserted; typing ' right before it steps over it.</summary>
+        private ITrackingPoint? closer;
+
+        /// <summary>SQL Prompt-style closing quote: ' types '' with the caret between; Backspace in an empty pair removes both.</summary>
+        private bool TryQuote(Guid group, uint id, IntPtr input)
+        {
+            if (group != VSConstants.VSStd2K || !view.Selection.IsEmpty) return false;
+            var caret = view.Caret.Position.BufferPosition;
+            var snapshot = caret.Snapshot;
+            int at = caret.Position;
+            bool atCloser = closer != null && closer.GetPosition(snapshot) == at && at < snapshot.Length && snapshot[at] == '\'';
+            if (id == (uint)VSConstants.VSStd2KCmdID.BACKSPACE)
+            {
+                if (!atCloser || at == 0 || snapshot[at - 1] != '\'') return false;
+                view.TextBuffer.Delete(new Span(at - 1, 2));
+                closer = null;
+                return true;
+            }
+            if (id != (uint)VSConstants.VSStd2KCmdID.TYPECHAR || input == IntPtr.Zero ||
+                (char)(ushort)System.Runtime.InteropServices.Marshal.GetObjectForNativeVariant(input) != '\'') return false;
+            if (atCloser)
+            {
+                view.Caret.MoveTo(new SnapshotPoint(snapshot, at + 1));
+                closer = null;
+                return true;
+            }
+            var line = caret.GetContainingLine();
+            string before = snapshot.GetText(line.Start, at - line.Start);
+            char next = at < line.End ? snapshot[at] : ' ';
+            // ponytail: single-line check; a quote inside a multi-line string or block comment may still get a pair.
+            // Plain quote inside a string or -- comment, when doubling an escape, or touching a word (N'...' excepted).
+            if (before.Count(c => c == '\'') % 2 == 1 || before.Contains("--") || before.EndsWith("'") || char.IsLetterOrDigit(next) || next == '_' ||
+                (System.Text.RegularExpressions.Regex.IsMatch(before, @"[\w@#]$") && !System.Text.RegularExpressions.Regex.IsMatch(before, @"(^|[^\w@#])[Nn]$")))
+                return false;
+            var after = view.TextBuffer.Insert(at, "''");
+            view.Caret.MoveTo(new SnapshotPoint(after, at + 1));
+            closer = after.CreateTrackingPoint(at + 1, PointTrackingMode.Positive);
+            return true;
+        }
 
         private static bool IsTab(Guid group, uint id) => group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.TAB;
         private static bool IsReturn(Guid group, uint id) => group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.RETURN;
@@ -102,6 +156,9 @@ namespace Querywright.Ssms
         {
             Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
             var package = WorkbenchPackage.Instance;
+            // A bug in an extra must never surface as a dialog while typing: log the type and let the key through.
+            try
+            {
             // ponytail: no commit manager is registered for SQL, so the session would otherwise span spaces and dots and
             // Tab would replace the whole run. Punctuation closes the list without inserting; Tab/Enter still commit.
             if (group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.TYPECHAR && input != IntPtr.Zero &&
@@ -112,6 +169,7 @@ namespace Querywright.Ssms
             }
             if (package != null)
             {
+                if (package.Options?.CloseQuotes != false && TryQuote(group, id, input)) return VSConstants.S_OK;
                 // SQL Prompt: Tab on a typed snippet shortcut expands it even while the suggestion list is open.
                 if (IsTab(group, id) && completion.IsCompletionActive(view) && (package.HasSnippetShortcut(view) || !SelectionMatches()))
                     completion.GetSession(view)?.Dismiss();
@@ -123,16 +181,32 @@ namespace Querywright.Ssms
                 }
                 if (IsGoToDefinition(group, id) && package.TryGoToDefinition(view)) return VSConstants.S_OK;
             }
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { Swallowed(error); }
             // Tab/Enter that commits a table or procedure after INSERT INTO / EXEC fills the statement in the same keystroke.
             // SSMS's own IntelliSense list commits inside Next.Exec too; a changed buffer after Tab/Enter gets the same fill.
             bool key = package != null && (IsTab(group, id) || IsReturn(group, id));
             bool committing = key && completion.IsCompletionActive(view);
             var before = view.TextSnapshot;
-            int result = Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            int result;
+            // ponytail: SSMS's own IntelliSense can throw while typing an unknown name, and the shell turns that into a
+            // modal "Object reference not set" box. Log it instead; the red squiggle already marks the name.
+            try { result = Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
+            catch (Exception error) when (error is NullReferenceException || error is InvalidOperationException || error is ArgumentException)
+            {
+                Swallowed(error);
+                return VSConstants.S_OK;
+            }
             if (key && ErrorHandler.Succeeded(result) && !completion.IsCompletionActive(view) && (committing || view.TextSnapshot != before))
-                package!.TryFillAfterCommit(view);
+            {
+                try { package!.TryFillAfterCommit(view); }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { Swallowed(error); }
+            }
             return result;
         }
+
+        internal static void Swallowed(Exception error) =>
+            Microsoft.VisualStudio.Shell.ActivityLog.TryLogWarning("Querywright", "Editor command failed: " + error.GetType().Name + " at " + error.TargetSite?.DeclaringType?.FullName + "." + error.TargetSite?.Name);
 
         public int QueryStatus(ref Guid group, uint count, OLECMD[] commands, IntPtr text)
         {

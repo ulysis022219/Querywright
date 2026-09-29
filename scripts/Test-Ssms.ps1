@@ -152,6 +152,10 @@ Expect 'typed ssf + Tab with popup' $text { param($t) $t -eq 'SELECT * FROM ' }
 $text = Session 'keyword' '' @() 'wait:3000|type:SELECT 1 ORD|wait:2500|tab|wait:1000'
 Expect 'keyword completion' $text { param($t) $t -match '^SELECT 1 ORDER' }
 
+# Typing ' closes the string; typing ' at the closer steps over it; escapes and N'' prefixes still work.
+$text = Session 'quotes' '' @() "wait:3000|type:SELECT N'ab'x, 'it''s'|wait:1000"
+Expect 'closing quotes' $text { param($t) $t -eq "SELECT N'ab'x, 'it''s'" }
+
 # Live metadata against LocalDB on the disposable runner (the only database this test writes to).
 $server = '(localdb)\MSSQLLocalDB'
 try {
@@ -185,12 +189,15 @@ if ($live) {
     Expect 'connection label shows server and database' $text { param($t) $t -match '-- \S*MSSQLLocalDB \u00B7 QwTest\r?\n' }
     Expect 'Object Explorer server menu has color item' $text { param($t) $t -match '-- oe menu item added' }
     # F12 on an object opens its script in a new window: ALTER for modules, CREATE TABLE for tables.
-    $text = Session 'f12-procedure' "EXEC dbo.GetPeople;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:10|focus|f12|wait:5000|latest|note'
+    $text = Session 'f12-procedure' "EXEC dbo.GetPeople;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:10|focus|f12|wait:5000|latest|note|keys'
     Expect 'F12 procedure opens ALTER' $text { param($t) $t -match 'ALTER PROCEDURE dbo\.GetPeople' }
     $text = Session 'f12-table' "SELECT * FROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:19|focus|f12|wait:5000|latest|note'
     Expect 'F12 table opens CREATE TABLE' $text { param($t) $t -match 'CREATE TABLE' -and $t -match 'FullName' }
     $text = Session 'exec-fill' "" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|type:EXEC dbo.GetPe|wait:3000|tab|wait:2000'
     Expect 'EXEC procedure suggestion fills parameters' $text { param($t) $t -match '^EXEC dbo\.GetPeople @Id = ' }
+    # A mistyped object name with Tab/Enter must just type (no error dialog blocks the session).
+    $text = Session 'mistyped' "" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|type:SELECT * FROM dbo.Peoplx|wait:3000|tab|wait:1000|type:x|wait:5000'
+    Expect 'mistyped object keeps typing' $text { param($t) $t -match '^SELECT \* FROM dbo\.Peoplx' -and $t.EndsWith('x') }
     # Results grid: run a read-only SELECT, focus the grid, then "Script as INSERT" (0x118) opens a new window.
     $text = Session 'grid-insert' "SELECT Id, FullName FROM dbo.People ORDER BY Id;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|focus|exec|wait:10000|grid|cmd:118|wait:5000|latest'
     Expect 'results grid script as INSERT' $text { param($t) $t -match 'DROP TABLE IF EXISTS #Results' -and $t -match 'CREATE TABLE #Results' -and $t -match 'DROP TABLE #Results;' -and $t -match "\(1, N'Ann O''Neil'\)" -and $t -match '\(2, NULL\)' }

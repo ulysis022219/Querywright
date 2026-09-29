@@ -96,24 +96,33 @@ namespace Querywright.Ssms
         }
     }
 
-    /// <summary>Local, opt-out store of SQL window text so closed tabs can be reopened. Nothing leaves the machine.</summary>
+    /// <summary>
+    /// Local, opt-out store of SQL window text so closed tabs can be reopened. One folder per window holding a timestamped
+    /// version per edit pause, execution and close. Nothing leaves the machine.
+    /// </summary>
     internal static class TabHistory
     {
         internal static readonly string Folder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "TabHistory");
-        private const int MaxFiles = 200, MaxChars = 2 * 1024 * 1024;
+        private const int MaxTabs = 200, MaxVersions = 100, MaxChars = 2 * 1024 * 1024;
+        internal const string Info = "tab.txt", Title = "title.txt";
 
-        /// <summary>A user-given name for a saved tab lives next to it; the .sql write time is left alone.</summary>
+        /// <summary>A user-given name for a saved tab (pre-1.0.2 single-file tabs keep theirs next to the .sql).</summary>
         internal static string TitlePath(string sqlPath) => Path.ChangeExtension(sqlPath, ".title");
 
-        internal static void Save(Guid id, string text)
+        /// <summary>Adds a version. Version files are named by UTC ticks; an "x" suffix marks text sent to Execute.</summary>
+        internal static void Save(Guid id, string name, string connection, string text, bool executed)
         {
             if (string.IsNullOrWhiteSpace(text) || text.Length > MaxChars) return; // ponytail: huge scripts are skipped, not truncated
             try
             {
-                Directory.CreateDirectory(Folder);
-                File.WriteAllText(Path.Combine(Folder, id.ToString("N") + ".sql"), text, Encoding.UTF8);
-                foreach (var old in new DirectoryInfo(Folder).GetFiles("*.sql").OrderByDescending(f => f.LastWriteTimeUtc).Skip(MaxFiles))
+                var tab = Directory.CreateDirectory(Path.Combine(Folder, id.ToString("N")));
+                File.WriteAllText(Path.Combine(tab.FullName, Info), name + "\n" + connection, Encoding.UTF8);
+                File.WriteAllText(Path.Combine(tab.FullName, DateTime.UtcNow.Ticks.ToString("D19") + (executed ? "x" : "") + ".sql"), text, Encoding.UTF8);
+                foreach (var old in tab.GetFiles("*.sql").OrderByDescending(f => f.Name, StringComparer.Ordinal).Skip(MaxVersions)) old.Delete();
+                var root = new DirectoryInfo(Folder);
+                foreach (var old in root.GetDirectories().OrderByDescending(d => d.LastWriteTimeUtc).Skip(MaxTabs)) old.Delete(true);
+                foreach (var old in root.GetFiles("*.sql").OrderByDescending(f => f.LastWriteTimeUtc).Skip(MaxTabs))
                 {
                     old.Delete();
                     File.Delete(TitlePath(old.FullName));
@@ -127,92 +136,150 @@ namespace Querywright.Ssms
         }
     }
 
-    /// <summary>Search, preview, reopen or delete saved tabs.</summary>
+    /// <summary>Search saved tabs, pick a timestamped version, preview it, reopen it; rename or delete a tab.</summary>
     internal sealed class TabHistoryDialog : Window
     {
         internal string? Text { get; private set; }
 
-        private sealed class Entry
+        private sealed class Version
         {
             internal FileInfo File = null!;
-            internal string Body = "";
+            internal DateTime Time;
+            internal bool Executed;
+            public override string ToString() => Time.ToString("yyyy-MM-dd HH:mm:ss") + (Executed ? "   \u25B6 executed" : "   edited");
+        }
+
+        private sealed class Tab
+        {
+            internal DirectoryInfo? Folder;
+            internal FileInfo? Legacy; // pre-1.0.2: one file, one version
+            internal string Caption = "", Connection = "", Latest = "";
             internal string? Name;
+            internal List<Version> Versions = new List<Version>();
+            internal string TitleFile => Folder != null ? Path.Combine(Folder.FullName, TabHistory.Title) : TabHistory.TitlePath(Legacy!.FullName);
             public override string ToString()
             {
-                if (!string.IsNullOrEmpty(Name)) return File.LastWriteTime.ToString("yyyy-MM-dd HH:mm") + "   [" + Name + "]";
-                string first = Body.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
-                if (first.Length > 80) first = first.Substring(0, 80) + "...";
-                return File.LastWriteTime.ToString("yyyy-MM-dd HH:mm") + "   " + first;
+                string first = Latest.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
+                if (first.Length > 60) first = first.Substring(0, 60) + "...";
+                string label = !string.IsNullOrEmpty(Name) ? "[" + Name + "]" : Caption.Length > 0 ? Caption + "   " + first : first;
+                return Versions[0].Time.ToString("yyyy-MM-dd HH:mm") + "   " + label + (Connection.Length > 0 ? "   (" + Connection + ")" : "");
             }
+        }
+
+        private static string? ReadOrNull(string path) => File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+
+        private static Tab? Load(DirectoryInfo folder)
+        {
+            var versions = folder.GetFiles("*.sql").OrderByDescending(f => f.Name, StringComparer.Ordinal).Select(f =>
+            {
+                string stamp = Path.GetFileNameWithoutExtension(f.Name);
+                bool executed = stamp.EndsWith("x");
+                return new Version { File = f, Executed = executed,
+                    Time = long.TryParse(executed ? stamp.Substring(0, stamp.Length - 1) : stamp, out long ticks) && ticks > 0 && ticks < DateTime.MaxValue.Ticks
+                        ? new DateTime(ticks, DateTimeKind.Utc).ToLocalTime() : f.LastWriteTime };
+            }).ToList();
+            if (versions.Count == 0) return null;
+            string[] info = (ReadOrNull(Path.Combine(folder.FullName, TabHistory.Info)) ?? "").Split('\n');
+            return new Tab { Folder = folder, Versions = versions, Latest = File.ReadAllText(versions[0].File.FullName),
+                Caption = info[0].Trim(), Connection = info.Length > 1 ? info[1].Trim() : "", Name = ReadOrNull(Path.Combine(folder.FullName, TabHistory.Title)) };
         }
 
         internal TabHistoryDialog(string folder)
         {
             Title = "Querywright: tab history";
-            Width = 1000; Height = 650; MinWidth = 600; MinHeight = 400;
+            Width = 1100; Height = 700; MinWidth = 700; MinHeight = 450;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            var entries = new List<Entry>();
+            var tabs = new List<Tab>();
             if (Directory.Exists(folder))
-                foreach (var file in new DirectoryInfo(folder).GetFiles("*.sql").OrderByDescending(f => f.LastWriteTimeUtc))
-                {
+            {
+                var root = new DirectoryInfo(folder);
+                foreach (var directory in root.GetDirectories())
+                    try { if (Load(directory) is Tab tab) tabs.Add(tab); }
+                    catch (IOException) { } catch (UnauthorizedAccessException) { }
+                foreach (var file in root.GetFiles("*.sql"))
                     try
                     {
-                        string titlePath = TabHistory.TitlePath(file.FullName);
-                        entries.Add(new Entry { File = file, Body = System.IO.File.ReadAllText(file.FullName),
-                            Name = System.IO.File.Exists(titlePath) ? System.IO.File.ReadAllText(titlePath).Trim() : null });
+                        string body = File.ReadAllText(file.FullName);
+                        tabs.Add(new Tab { Legacy = file, Latest = body, Name = ReadOrNull(TabHistory.TitlePath(file.FullName)),
+                            Versions = { new Version { File = file, Time = file.LastWriteTime } } });
                     }
-                    catch (IOException) { }
-                    catch (UnauthorizedAccessException) { }
-                }
-            var root = new DockPanel { Margin = new Thickness(12) };
+                    catch (IOException) { } catch (UnauthorizedAccessException) { }
+                tabs.Sort((a, b) => b.Versions[0].Time.CompareTo(a.Versions[0].Time));
+            }
+            var layout = new DockPanel { Margin = new Thickness(12) };
             var search = new TextBox { Margin = new Thickness(0, 4, 0, 8) };
             var top = new StackPanel();
             top.Children.Add(new Label { Content = "_Search:", Target = search });
             top.Children.Add(search);
-            DockPanel.SetDock(top, Dock.Top); root.Children.Add(top);
-            var list = new ListBox { Margin = new Thickness(0, 0, 8, 0) };
+            DockPanel.SetDock(top, Dock.Top); layout.Children.Add(top);
+            var list = new ListBox();
+            var versionList = new ListBox();
+            var versionsLabel = new Label { Content = "_History:", Target = versionList, Padding = new Thickness(0, 8, 0, 4) };
             var preview = new TextBox { IsReadOnly = true, AcceptsReturn = true, FontFamily = new System.Windows.Media.FontFamily("Consolas"),
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(8, 0, 0, 0) };
             System.Windows.Automation.AutomationProperties.SetName(list, "Saved tabs");
+            System.Windows.Automation.AutomationProperties.SetName(versionList, "Versions of the selected tab");
             System.Windows.Automation.AutomationProperties.SetName(preview, "Preview");
             void Filter()
             {
+                // ponytail: search covers each tab's name and latest text, not every old version.
                 string term = search.Text.Trim();
-                list.ItemsSource = entries.Where(e => term.Length == 0 || e.Body.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0
-                    || (e.Name ?? "").IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                list.ItemsSource = tabs.Where(t => term.Length == 0 || t.Latest.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0
+                    || (t.Name ?? "").IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0 || t.Caption.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
                 if (list.Items.Count > 0) list.SelectedIndex = 0;
             }
             search.TextChanged += (s, e) => Filter();
-            list.SelectionChanged += (s, e) => preview.Text = (list.SelectedItem as Entry)?.Body ?? "";
-            void Open() { if (list.SelectedItem is Entry entry) { Text = entry.Body; DialogResult = true; } }
+            list.SelectionChanged += (s, e) =>
+            {
+                var tab = list.SelectedItem as Tab;
+                versionsLabel.Content = "_History" + (tab == null ? "" : " for " + (tab.Name ?? (tab.Caption.Length > 0 ? tab.Caption : "this tab")).Replace("_", "__")) + ":";
+                versionList.ItemsSource = tab?.Versions;
+                if (tab != null) versionList.SelectedIndex = 0;
+            };
+            versionList.SelectionChanged += (s, e) =>
+            {
+                try { preview.Text = versionList.SelectedItem is Version version ? File.ReadAllText(version.File.FullName) : ""; }
+                catch (IOException) { preview.Text = ""; } catch (UnauthorizedAccessException) { preview.Text = ""; }
+            };
+            void Open() { if (versionList.SelectedItem is Version) { Text = preview.Text; DialogResult = true; } }
             list.MouseDoubleClick += (s, e) => Open();
-            root.Children.Add(DialogParts.Buttons(this,
+            versionList.MouseDoubleClick += (s, e) => Open();
+            layout.Children.Add(DialogParts.Buttons(this,
                 ("_Open in new window", true, false, Open),
                 ("_Rename...", false, false, () =>
                 {
-                    if (!(list.SelectedItem is Entry entry)) return;
-                    var prompt = new PromptDialog("Querywright: rename saved tab", "_Name:", entry.Name ?? entry.ToString().Substring(19)) { Owner = this };
+                    if (!(list.SelectedItem is Tab tab)) return;
+                    var prompt = new PromptDialog("Querywright: rename saved tab", "_Name:", tab.Name ?? tab.Caption) { Owner = this };
                     if (prompt.ShowDialog() != true) return;
                     string name = System.Text.RegularExpressions.Regex.Replace(prompt.Value, @"\s+", " ").Trim();
                     if (name.Length > 200) name = name.Substring(0, 200);
-                    try { System.IO.File.WriteAllText(TabHistory.TitlePath(entry.File.FullName), name, Encoding.UTF8); }
+                    try { File.WriteAllText(tab.TitleFile, name, Encoding.UTF8); }
                     catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
-                    entry.Name = name; int index = list.SelectedIndex; Filter(); list.SelectedIndex = Math.Min(index, list.Items.Count - 1);
+                    tab.Name = name; int index = list.SelectedIndex; Filter(); list.SelectedIndex = Math.Min(index, list.Items.Count - 1);
                 }),
-                ("_Delete", false, false, () =>
+                ("_Delete tab", false, false, () =>
                 {
-                    if (!(list.SelectedItem is Entry entry)) return;
-                    try { entry.File.Delete(); System.IO.File.Delete(TabHistory.TitlePath(entry.File.FullName)); } catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
-                    entries.Remove(entry); Filter();
+                    if (!(list.SelectedItem is Tab tab)) return;
+                    try
+                    {
+                        if (tab.Folder != null) tab.Folder.Delete(true);
+                        else { tab.Legacy!.Delete(); File.Delete(TabHistory.TitlePath(tab.Legacy.FullName)); }
+                    }
+                    catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
+                    tabs.Remove(tab); Filter();
                 }),
                 ("_Cancel", false, true, null)));
+            var left = new DockPanel();
+            DockPanel.SetDock(versionList, Dock.Bottom); versionList.Height = 220;
+            DockPanel.SetDock(versionsLabel, Dock.Bottom);
+            left.Children.Add(versionList); left.Children.Add(versionsLabel); left.Children.Add(list);
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
             Grid.SetColumn(preview, 1);
-            grid.Children.Add(list); grid.Children.Add(preview);
-            root.Children.Add(grid);
-            Content = root;
+            grid.Children.Add(left); grid.Children.Add(preview);
+            layout.Children.Add(grid);
+            Content = layout;
             Filter();
             Loaded += (s, e) => Keyboard.Focus(search);
         }

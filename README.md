@@ -27,6 +27,7 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
   Press **Ctrl+Shift+D** to reload them after schema changes.
 - Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`.
   56 built in; add your own `.sql` files or share a team folder.
+- Typing `'` inserts `''` with the cursor inside; typing `'` again steps over the closing quote (turn off under Tools > Options > Querywright).
 - Expand `*` into a column list, or pick the columns you want.
 - **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view, function or trigger it opens an ALTER script in a new query and on a table a CREATE TABLE script (also in scripts with syntax errors elsewhere), including three-part names in another database on the same server (`OtherDb.dbo.Proc`).
 - **Shift+F5** runs only the statement under the caret (only when you press it).
@@ -48,7 +49,7 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - Split a table, or wrap a selection as a stored procedure.
 
 **Everyday helpers**
-- Tab history: find and reopen queries you closed, even after a restart (toolbar button next to New Query).
+- Tab history: every SQL window keeps timestamped versions (a few seconds after each edit, and on execute), grouped per tab with a preview; reopen any version, even after a restart (toolbar button next to New Query).
 - A colored strip and a `server · database` label on every query window, so you always know
   where you are connected. Right-click a server in Object Explorer > **Querywright: server color...**
   to pick its color, or write rules like `prod=Red;test=Orange` in Tools > Options.

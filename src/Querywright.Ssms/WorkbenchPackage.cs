@@ -4,6 +4,7 @@ using System.ComponentModel.Design;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.Shell;
@@ -159,6 +160,10 @@ namespace Querywright.Ssms
             Add(0x0114, EncapsulateAsync);
             Add(0x0115, FixAtCaretAsync);
             Add(0x0116, FixAllAsync);
+            Add(0x0117, CopyAsInAsync);
+            Add(0x0118, ScriptAsInsertAsync);
+            Add(0x0119, OpenInExcelAsync);
+            Add(0x011A, SaveAsCsvAsync);
             Instance = this;
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
@@ -694,6 +699,85 @@ namespace Querywright.Ssms
                 ReplaceText(view, new SnapshotSpan(snapshot, 0, snapshot.Length), result.Text, Math.Min(view.Caret.Position.BufferPosition.Position, result.Text.Length), 0, 0, "Fix all issues");
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
             status?.SetText($"Querywright: fixed {result.Fixed} issues.");
+        });
+
+        /// <summary>
+        /// Reads the focused results grid. Must run before the command's first yielding await, while the grid
+        /// still has keyboard focus. Cell text stays in memory; it is never logged.
+        /// </summary>
+        private GridCells ReadFocusedGrid(bool valuesOnly)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var grid = ResultsGridReader.FocusedGrid()
+                ?? throw new InvalidOperationException("Click a cell in a query results grid, then use this command from the grid's right-click menu.");
+            GridCells cells;
+            try { cells = ResultsGridReader.Read(grid, valuesOnly); }
+            catch (Exception error) when (error is System.Reflection.TargetInvocationException || error is NullReferenceException || error is InvalidCastException || error is FormatException || error is OverflowException)
+            {
+                throw new InvalidOperationException("Could not read this SSMS version's results grid (" + (error.InnerException ?? error).GetType().Name + ").");
+            }
+            if (cells.Rows.Count == 0) throw new InvalidOperationException(valuesOnly ? "Select the cells to copy." : "The results grid has no rows.");
+            return cells;
+        }
+
+        private async Task GridStatusAsync(string message, GridCells cells)
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
+            status?.SetText("Querywright: " + message + (cells.Truncated ? " Stopped at the cell limit; select fewer cells for the rest." : ""));
+        }
+
+        private Task CopyAsInAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var cells = ReadFocusedGrid(valuesOnly: true);
+            string text = ResultGrid.InClause(cells.Rows.Select(r => r[0]));
+            System.Windows.Clipboard.SetDataObject(text, true);
+            await GridStatusAsync("copied IN clause.", cells);
+        });
+
+        private Task ScriptAsInsertAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var cells = ReadFocusedGrid(valuesOnly: false);
+            string script = await Task.Run(() => ResultGrid.InsertScript(cells.Headers, cells.Types, cells.Rows));
+            await OpenInNewQueryAsync(script, "Script results as INSERT");
+            await GridStatusAsync($"scripted {cells.Rows.Count} rows as INSERT (not executed).", cells);
+        });
+
+        /// <summary>
+        /// Excel opens a UTF-16 tab-delimited .csv correctly in every locale (a comma CSV breaks where the list separator is ';').
+        /// Files older than a day are removed so result data does not linger in %TEMP%.
+        /// </summary>
+        private Task OpenInExcelAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var cells = ReadFocusedGrid(valuesOnly: false);
+            string path = await Task.Run(() =>
+            {
+                string folder = Path.Combine(Path.GetTempPath(), "Querywright", "Results");
+                Directory.CreateDirectory(folder);
+                foreach (var old in new DirectoryInfo(folder).GetFiles("*.csv").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)))
+                    try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                string file = Path.Combine(folder, "Results-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".csv");
+                File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, '\t'), Encoding.Unicode);
+                return file;
+            });
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }
+            catch (System.ComponentModel.Win32Exception) { throw new InvalidOperationException("No program is registered for .csv files. The results were saved to " + path); }
+            await GridStatusAsync($"opened {cells.Rows.Count} rows.", cells);
+        });
+
+        private Task SaveAsCsvAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var cells = ReadFocusedGrid(valuesOnly: false);
+            var dialog = new Microsoft.Win32.SaveFileDialog { Title = "Querywright: save results as CSV", Filter = "CSV (comma delimited)|*.csv|All files|*.*", FileName = "Results.csv", OverwritePrompt = true };
+            if (dialog.ShowDialog() != true) return;
+            string file = dialog.FileName;
+            await Task.Run(() => File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, ','), new UTF8Encoding(true)));
+            await GridStatusAsync($"saved {cells.Rows.Count} rows.", cells);
         });
 
         private async Task<WorkbenchSettings> ReadSettingsAsync()

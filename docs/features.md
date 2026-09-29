@@ -16,7 +16,7 @@ Status vocabulary: missing, core-only, integrated, verified in SSMS.
 | Navigation | Definitions, ALTER script generation, object explorer, script overview, unused declarations | integrated: F12 locals/aliases/CTEs; modules scripted as ALTER in a new query; summarize script, unused declarations | e2e F12 variable scenario |
 | Editor | Execute statement, environment colors | integrated: Shift+F5 (explicit keypress only), environment color strip | Statement boundaries checked in core |
 | History | Open/closed tabs, search, restore, rename, retention, crash recovery | integrated: local store (60 s + on close, 200 kept), search, preview, reopen, delete, opt-out; rename missing | Crash-safe writes, local privacy, restart recovery |
-| Results | IN-list copy, INSERT scripts, spreadsheet export | out of scope (SSMS has no results-grid API) | — |
+| Results | IN-list copy, INSERT scripts, spreadsheet export | integrated via grid right-click menu: copy as IN clause, script as INSERT (new window, not executed), open in Excel, save as CSV; formula-injection guard | e2e grid script-as-INSERT scenario; grid read by reflection (no public API) |
 | Teams | Shared snippets, formatting and analysis policies; bulk processing | partial: file-based snippet folder and settings file | Bulk processing pending |
 
 AI excluded explicitly: text-to-SQL, explanations, AI suggestions, index/query AI

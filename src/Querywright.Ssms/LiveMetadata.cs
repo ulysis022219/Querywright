@@ -154,7 +154,7 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
             return result;
         }
 
-        private static IReadOnlyList<SchemaTable> Load(ActiveConnection connection)
+        private static IReadOnlyList<SchemaTable> Load(ActiveConnection connection, int attempt = 0)
         {
             try
             {
@@ -197,7 +197,13 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
             {
                 // ponytail: SqlClient can't encrypt to LocalDB/shared memory (error 20); local-only traffic, so retry plain.
                 connection.Encrypt = false;
-                return Load(connection);
+                return Load(connection, attempt);
+            }
+            // Pipe/network not ready yet (cold LocalDB, server starting): retry shortly instead of backing off 30 s.
+            catch (SqlException error) when (attempt < 3 && (error.Number == 233 || error.Number == 53 || error.Number == 2 || error.Number == -2 || error.Number == 10054))
+            {
+                System.Threading.Thread.Sleep(TimeSpan.FromSeconds(2 * (attempt + 1)));
+                return Load(connection, attempt + 1);
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {

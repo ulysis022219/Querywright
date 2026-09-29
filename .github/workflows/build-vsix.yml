@@ -10,6 +10,10 @@ on:
         description: 'Release tag to publish after the tests pass, e.g. v0.4.0 (empty: build only)'
         required: false
         default: ''
+      notes:
+        description: 'What changed, as Markdown (empty: list the commits since the previous release)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -100,6 +104,9 @@ jobs:
     if: github.ref_type == 'tag' || inputs.release != ''
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, for the commits since the previous release
       - uses: actions/download-artifact@v4
         with:
           name: Querywright-ssms22
@@ -107,8 +114,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.release || github.ref_name }}
+          NOTES: ${{ inputs.notes }}
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release tag must look like v1.2.3"; exit 1; }
+          # ponytail: --generate-notes needs more than the job token (HTTP 403), so the list comes from git log.
+          if [ -z "$NOTES" ]; then
+            previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA^" 2>/dev/null || true)
+            NOTES=$(git log --no-merges --format='- %s' ${previous:+"$previous.."}"$GITHUB_SHA")
+          fi
+          printf '## What changed\n\n%s\n\n## Install or update\n\nClose SSMS 22, unzip, double-click Install.cmd (see INSTALL.txt). Free and open source (MIT).\n' "$NOTES" > notes.md
           gh release create "$TAG" Querywright-ssms22.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Querywright $TAG" \
-            --notes "Install or update: close SSMS 22, unzip, double-click Install.cmd (see INSTALL.txt). Free and open source (MIT)."
+            --title "Querywright $TAG" --notes-file notes.md

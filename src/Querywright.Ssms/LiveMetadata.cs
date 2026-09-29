@@ -207,10 +207,13 @@ SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER 
 
         private static readonly string DetailsQuery = @"SET LOCK_TIMEOUT 3000;
 DECLARE @id int = OBJECT_ID(@name);
-SELECT RTRIM(o.type), OBJECT_DEFINITION(o.object_id), ds.name, SCHEMA_NAME(o.schema_id)
+SELECT RTRIM(o.type), OBJECT_DEFINITION(o.object_id), ds.name, SCHEMA_NAME(o.schema_id), DB_NAME(),
+    CAST(COALESCE(m.uses_ansi_nulls, t.uses_ansi_nulls, 1) AS bit), CAST(ISNULL(m.uses_quoted_identifier, 1) AS bit)
 FROM sys.objects AS o
 LEFT JOIN sys.indexes AS i ON i.object_id = o.object_id AND i.index_id < 2
 LEFT JOIN sys.data_spaces AS ds ON ds.data_space_id = i.data_space_id
+LEFT JOIN sys.sql_modules AS m ON m.object_id = o.object_id
+LEFT JOIN sys.tables AS t ON t.object_id = o.object_id
 WHERE o.object_id = @id;
 SELECT c.name, TYPE_NAME(c.user_type_id), CASE WHEN c.user_type_id = c.system_type_id THEN " + SizeSql + @" ELSE '' END, c.is_nullable,
     c.collation_name, CAST(ic.seed_value AS nvarchar(40)) + N', ' + CAST(ic.increment_value AS nvarchar(40)),
@@ -245,6 +248,8 @@ FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY
             internal string Definition;
             internal string Filegroup;
             internal string Schema;
+            internal string Database;
+            internal bool AnsiNulls = true, QuotedIdentifier = true;
             internal readonly List<ScriptColumn> Columns = new List<ScriptColumn>();
             internal readonly List<string> Constraints = new List<string>();
             internal readonly List<(string Name, string Type, bool Output)> Parameters = new List<(string, string, bool)>();
@@ -265,6 +270,7 @@ FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY
                     {
                         if (!reader.Read()) return null;
                         details.Type = reader.GetString(0); details.Definition = Text(reader, 1); details.Filegroup = Text(reader, 2); details.Schema = Text(reader, 3);
+                        details.Database = Text(reader, 4); details.AnsiNulls = reader.GetBoolean(5); details.QuotedIdentifier = reader.GetBoolean(6);
                         reader.NextResult();
                         while (reader.Read())
                             details.Columns.Add(new ScriptColumn(reader.GetString(0), reader.GetString(1), Text(reader, 2), reader.GetBoolean(3))

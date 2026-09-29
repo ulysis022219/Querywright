@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.Design;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -329,7 +330,16 @@ namespace Querywright.Ssms
                 }
                 // OtherDb.dbo.Proc: read the definition from that database on the same server.
                 if (target.Database != null) connection = connection.WithDatabase(target.Database);
-                _ = JoinableTaskFactory.RunAsync(() => ScriptObjectAsync(connection, target.Schema, target.Name));
+                // One tab per object: F12 again switches to it while it is open, and does nothing while it is still loading.
+                // ponytail: "Orders" and "dbo.Orders" share a key only when the schema is dbo.
+                string key = connection.Key + "\0" + (target.Schema ?? "dbo") + "." + target.Name;
+                if (scriptTabs.TryGetValue(key, out var tab))
+                {
+                    if (tab.View == null) { SelfTest.Note += " loading"; return true; }
+                    if (!tab.View.IsClosed && ErrorHandler.Succeeded(tab.Frame.Show())) { SelfTest.Note += " reused"; return true; }
+                }
+                scriptTabs[key] = default;
+                _ = JoinableTaskFactory.RunAsync(() => ScriptObjectAsync(connection, target.Schema, target.Name, key));
                 return true;
             }
             var snapshot = view.TextSnapshot;
@@ -350,7 +360,9 @@ namespace Querywright.Ssms
         });
 
         /// <summary>SQL Prompt's F12: a table opens as CREATE TABLE, a procedure/view/function/trigger as ALTER, in a new query. Never executed.</summary>
-        private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name)
+        private readonly Dictionary<string, (IWpfTextView View, IVsWindowFrame Frame)> scriptTabs = new Dictionary<string, (IWpfTextView, IVsWindowFrame)>(StringComparer.OrdinalIgnoreCase);
+
+        private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name, string key)
         {
             Exception failure = null;
             try
@@ -371,17 +383,23 @@ namespace Querywright.Ssms
                     return;
                 }
                 string owner = details.Schema ?? schema ?? "dbo";
-                string text = table ? ScriptOf(details, owner, name) : SqlRefactoring.CreateToAlter(details.Definition);
-                // The new window connects to the source window's database; switch it so the script targets the object's own database.
-                if (connection.Database != null && !string.Equals(connection.Database, LiveMetadata.Capture()?.Database, StringComparison.OrdinalIgnoreCase))
-                    text = "USE [" + connection.Database.Replace("]", "]]") + "];\r\nGO\r\n" + text;
-                await OpenInNewQueryAsync(text, "Script " + name);
+                // Like SSMS Modify / Script as: USE (so the new window targets the object's database), the Object comment and SET options.
+                string text = Header(details, owner, name) + (table ? ScriptOf(details, owner, name) : SqlRefactoring.CreateToAlter(details.Definition));
+                var view = await OpenInNewQueryAsync(text, "Script " + name);
+                if (await GetServiceAsync(typeof(SVsShellMonitorSelection)) is IVsMonitorSelection selection
+                    && ErrorHandler.Succeeded(selection.GetCurrentElementValue((uint)VSConstants.VSSELELEMID.SEID_WindowFrame, out object frame)) && frame is IVsWindowFrame opened)
+                    scriptTabs[key] = (view, opened);
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 // SqlException text can name the server or login; show only what failed.
                 ShowWarning((error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
+            }
+            finally
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (scriptTabs.TryGetValue(key, out var tab) && tab.View == null) scriptTabs.Remove(key);
             }
         }
 
@@ -656,7 +674,7 @@ namespace Querywright.Ssms
                 if (connection == null) throw new InvalidOperationException("Connect the query window to a database first.");
                 var details = await Task.Run(() => LiveMetadata.Details(connection, schema, name));
                 if (details == null) throw new InvalidOperationException(schema + "." + name + " was not found in the connected database, or you lack VIEW DEFINITION permission.");
-                string script = ScriptOf(details, schema, name);
+                string script = Header(details, details.Schema ?? schema, name) + ScriptOf(details, details.Schema ?? schema, name);
                 bool parameters = details.Columns.Count == 0 && details.Parameters.Count > 0;
                 var summary = parameters
                     ? details.Parameters.Select(p => (p.Name, p.Type, p.Output ? "OUTPUT" : "IN"))
@@ -669,6 +687,9 @@ namespace Querywright.Ssms
                 ShowWarning(error.Message);
             }
         }
+
+        private static string Header(LiveMetadata.ObjectDetails details, string schema, string name) =>
+            ObjectScript.Header(details.Database, details.Type, schema, name, details.AnsiNulls, details.QuotedIdentifier, DateTime.Now.ToString(CultureInfo.CurrentCulture));
 
         private static string ScriptOf(LiveMetadata.ObjectDetails details, string schema, string name) =>
             details.Type == "U" && details.Columns.Count > 0
@@ -732,7 +753,7 @@ namespace Querywright.Ssms
         }
 
         /// <summary>New query window (same connection as the active one) holding <paramref name="text"/>. Never executes it.</summary>
-        private async Task OpenInNewQueryAsync(string text, string name)
+        private async Task<IWpfTextView> OpenInNewQueryAsync(string text, string name)
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var dte = await GetServiceAsync(typeof(SDTE));
@@ -743,6 +764,7 @@ namespace Querywright.Ssms
             var view = GetSqlView();
             if (view == source) throw new InvalidOperationException("Could not open a new query window.");
             ReplaceText(view, new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length), text, 0, 0, 0, name);
+            return view;
         }
 
         private async Task RunCommandAsync(Func<Task> body, [System.Runtime.CompilerServices.CallerMemberName] string command = "")

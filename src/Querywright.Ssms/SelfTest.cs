@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio;
@@ -87,6 +88,17 @@ namespace Querywright.Ssms
                         case "oe": // right-click the first server in Object Explorer and report the menu
                             await package.JoinableTaskFactory.SwitchToMainThreadAsync();
                             view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- oe " + await ServerColorMenu.ProbeAsync(package));
+                            break;
+                        case "keys": // which commands own F12 in this keyboard scheme
+                            var dte = await package.GetServiceAsync(typeof(SDTE)) ?? throw new InvalidOperationException("no DTE");
+                            var bound = new System.Collections.Generic.List<string>();
+                            foreach (object item in (System.Collections.IEnumerable)dte.GetType().InvokeMember("Commands", System.Reflection.BindingFlags.GetProperty, null, dte, null))
+                            {
+                                var bindings = item.GetType().InvokeMember("Bindings", System.Reflection.BindingFlags.GetProperty, null, item, null) as object[];
+                                if (bindings?.OfType<string>().Any(b => b.EndsWith("::F12", StringComparison.OrdinalIgnoreCase)) == true)
+                                    bound.Add(item.GetType().InvokeMember("Name", System.Reflection.BindingFlags.GetProperty, null, item, null) + " " + string.Join("/", bindings));
+                            }
+                            view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- keys " + string.Join("; ", bound));
                             break;
                         case "note": view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- note " + (Note ?? "(none)")); break;
                         case "latest": // follow the newest SQL window, e.g. one a command opened

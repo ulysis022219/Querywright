@@ -189,7 +189,7 @@ if ($live) {
     Expect 'connection label shows server and database' $text { param($t) $t -match '-- \S*MSSQLLocalDB \u00B7 QwTest\r?\n' }
     Expect 'Object Explorer server menu has color item' $text { param($t) $t -match '-- oe menu item added' }
     # F12 on an object opens its script in a new window: ALTER for modules, CREATE TABLE for tables.
-    $text = Session 'f12-procedure' "EXEC dbo.GetPeople;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:10|focus|f12|wait:5000|latest|note'
+    $text = Session 'f12-procedure' "EXEC dbo.GetPeople;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:10|focus|f12|wait:5000|latest|note|keys'
     Expect 'F12 procedure opens ALTER' $text { param($t) $t -match 'ALTER PROCEDURE dbo\.GetPeople' }
     $text = Session 'f12-table' "SELECT * FROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:19|focus|f12|wait:5000|latest|note'
     Expect 'F12 table opens CREATE TABLE' $text { param($t) $t -match 'CREATE TABLE' -and $t -match 'FullName' }

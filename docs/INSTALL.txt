@@ -27,4 +27,4 @@ Report a problem
   https://github.com/ulysis022219/SqlWorkbench/issues
 
 Uninstall
-  Close SSMS 22, then from a command prompt in this folder:  Install.cmd -Uninstall
+  Close SSMS 22, then double-click Uninstall.cmd in this folder.

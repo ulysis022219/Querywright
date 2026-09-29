@@ -18,7 +18,7 @@ It helps you write, format, check and refactor T-SQL faster, right inside the SS
 
 Querywright tells you when a newer release is out (once a day; turn it off under
 Tools > Options > Querywright > Updates). To update, install the new zip the same way; your
-settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL.txt](docs/INSTALL.txt).
+settings are kept. To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt](docs/INSTALL.txt).
 
 ## What it does
 

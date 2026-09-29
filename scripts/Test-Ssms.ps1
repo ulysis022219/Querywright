@@ -115,9 +115,8 @@ function Session([string]$name, [string]$text, [string[]]$extra, [string]$steps)
             Start-Sleep 1
             # First run relaunches SSMS, so follow the newest process; answer first-run prompts that could block the editor.
             $id = (Get-Process SSMS -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1).Id
-            if ($id -and $i % 10 -eq 9) { Dismiss $id }
+            if ($id -and $i % 4 -eq 3) { Dismiss $id }
         }
-        Start-Sleep 2
         Snap "$name-done"
         Thumbnail $name | Write-Host
         if ($id) { Windows $id | Write-Host }
@@ -129,7 +128,7 @@ function Session([string]$name, [string]$text, [string[]]$extra, [string]$steps)
     } finally {
         Remove-Item Env:QUERYWRIGHT_SELFTEST, Env:QUERYWRIGHT_SELFTEST_STEPS -ErrorAction SilentlyContinue
         Get-Process SSMS -ErrorAction SilentlyContinue | Stop-Process -Force
-        Start-Sleep 3
+        Get-Process SSMS -ErrorAction SilentlyContinue | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
         Get-ChildItem "$env:APPDATA\Microsoft\SSMS" -Recurse -Filter ActivityLog.xml -ErrorAction SilentlyContinue |
             Select-Object -First 1 | Copy-Item -Destination (Join-Path $Out "ActivityLog-$name.xml")
     }
@@ -178,28 +177,28 @@ try {
     $live = $true
 } catch { $results['LocalDB setup'] = "FAIL: $($_.Exception.Message)"; $live = $false }
 if ($live) {
-    # The wait lets SSMS connect and the package load the catalog.
-    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:8|tab|wait:3000'
+    # 'ready' waits for SSMS to connect and the package to load the catalog.
+    $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|home|right:8|tab|wait:3000'
     Expect '* + Tab from live metadata' $text { param($t) $t -match 'FullName' -and $t -notmatch '\*' }
-    $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:7|type:p.Ful|wait:3000|tab|wait:1000'
+    $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|home|right:7|type:p.Ful|wait:3000|tab|wait:1000'
     Expect 'column completion from live metadata' $text { param($t) $t -match 'SELECT p\.FullName ?FROM' }
-    $text = Session 'insert-fill' "INSERT INTO dbo.People" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|end|tab|wait:3000'
+    $text = Session 'insert-fill' "INSERT INTO dbo.People" @('-S', $server, '-d', 'QwTest', '-C') 'ready|end|tab|wait:3000'
     Expect 'INSERT + Tab fills columns from live metadata' $text { param($t) $t -match 'Id' -and $t -match 'FullName' -and $t -match 'VALUES' }
-    $text = Session 'connection-label' "SELECT 1;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|caption|oe'
+    $text = Session 'connection-label' "SELECT 1;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|caption|oe'
     Expect 'connection label shows server and database' $text { param($t) $t -match '-- \S*MSSQLLocalDB \u00B7 QwTest\r?\n' }
     Expect 'Object Explorer server menu has color item' $text { param($t) $t -match '-- oe menu item added' }
     # F12 on an object opens its script in a new window: ALTER for modules, CREATE TABLE for tables.
-    $text = Session 'f12-procedure' "EXEC dbo.GetPeople;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:10|focus|f12|wait:5000|latest|note|keys'
+    $text = Session 'f12-procedure' "EXEC dbo.GetPeople;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|home|right:10|focus|f12|wait:5000|latest|note|keys'
     Expect 'F12 procedure opens ALTER' $text { param($t) $t -match 'ALTER PROCEDURE dbo\.GetPeople' }
-    $text = Session 'f12-table' "SELECT * FROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|home|right:19|focus|f12|wait:5000|latest|note'
+    $text = Session 'f12-table' "SELECT * FROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|home|right:19|focus|f12|wait:5000|latest|note'
     Expect 'F12 table opens CREATE TABLE' $text { param($t) $t -match 'CREATE TABLE' -and $t -match 'FullName' }
-    $text = Session 'exec-fill' "" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|type:EXEC dbo.GetPe|wait:3000|tab|wait:2000'
+    $text = Session 'exec-fill' "" @('-S', $server, '-d', 'QwTest', '-C') 'ready|type:EXEC dbo.GetPe|wait:3000|tab|wait:2000'
     Expect 'EXEC procedure suggestion fills parameters' $text { param($t) $t -match '^EXEC dbo\.GetPeople @Id = ' }
     # A mistyped object name with Tab/Enter must just type (no error dialog blocks the session).
-    $text = Session 'mistyped' "" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|type:SELECT * FROM dbo.Peoplx|wait:3000|tab|wait:1000|type:x|wait:5000'
+    $text = Session 'mistyped' "" @('-S', $server, '-d', 'QwTest', '-C') 'ready|type:SELECT * FROM dbo.Peoplx|wait:3000|tab|wait:1000|type:x|wait:5000'
     Expect 'mistyped object keeps typing' $text { param($t) $t -match '^SELECT \* FROM dbo\.Peoplx' -and $t.EndsWith('x') }
     # Results grid: run a read-only SELECT, focus the grid, then "Script as INSERT" (0x118) opens a new window.
-    $text = Session 'grid-insert' "SELECT Id, FullName FROM dbo.People ORDER BY Id;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|focus|exec|wait:10000|grid|cmd:118|wait:5000|latest'
+    $text = Session 'grid-insert' "SELECT Id, FullName FROM dbo.People ORDER BY Id;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|focus|exec|wait:10000|grid|cmd:118|wait:5000|latest'
     Expect 'results grid script as INSERT' $text { param($t) $t -match 'DROP TABLE IF EXISTS #Results' -and $t -match 'CREATE TABLE #Results' -and $t -match 'DROP TABLE #Results;' -and $t -match "\(1, N'Ann O''Neil'\)" -and $t -match '\(2, NULL\)' }
 }
 

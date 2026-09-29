@@ -869,15 +869,15 @@ namespace Querywright.Ssms
             {
                 string folder = Path.Combine(Path.GetTempPath(), "Querywright", "Results");
                 Directory.CreateDirectory(folder);
-                foreach (var old in new DirectoryInfo(folder).GetFiles("*.csv").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)))
+                foreach (var old in new DirectoryInfo(folder).GetFiles("Results-*.*").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)))
                     try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-                string file = Path.Combine(folder, "Results-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".csv");
-                File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, '\t'), Encoding.Unicode);
+                string file = Path.Combine(folder, "Results-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".xlsx");
+                using (var stream = File.Create(file)) ResultGrid.Xlsx(stream, cells.Headers, cells.Types, cells.Rows);
                 return file;
             });
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }
-            catch (System.ComponentModel.Win32Exception) { throw new InvalidOperationException("No program is registered for .csv files. The results were saved to " + path); }
+            catch (System.ComponentModel.Win32Exception) { throw new InvalidOperationException("No program is registered for .xlsx files. The results were saved to " + path); }
             await GridStatusAsync($"opened {cells.Rows.Count} rows.", cells);
         });
 

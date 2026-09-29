@@ -839,6 +839,25 @@ try { ResultGrid.InsertScript(new[] { "a", "b" }, null, new List<string?[]> { ne
 string csv = ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[] { "=1+1", "x,y" }, new[] { "-5", "say \"hi\"\nthere" }, new[] { null, "@SUM(A1)" }, new[] { "-x", "+1" } }, ',', "\n");
 Check(csv == "a,b\n'=1+1,\"x,y\"\n-5,\"say \"\"hi\"\"\nthere\"\n,'@SUM(A1)\n'-x,'+1\n", "csv quoting and injection guard: " + csv);
 Check(ResultGrid.Delimited(new[] { "a" }, new List<string?[]> { new[] { "x\ty" } }, '\t', "\n") == "a\n\"x\ty\"\n", "tab-delimited quoting");
+var xlsxStream = new MemoryStream();
+ResultGrid.Xlsx(xlsxStream, new[] { "When", "Code", "Amt", "Big", "Note", "" }, new[] { "datetime", "varchar(10)", "decimal(18,2)", "bigint", "nvarchar(max)", "float" },
+    new List<string?[]> { new[] { "2026-09-28 13:45:12.123", "007", "12.50", "1234567890123456789", "=1+1 <b>&\u0001", "1.5E-05" }, new string?[] { null, "x", "-3.00", "42", "", "0" } });
+string sheet;
+using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(xlsxStream.ToArray())))
+{
+    Check(zip.Entries.Select(e => e.FullName).OrderBy(n => n, StringComparer.Ordinal).SequenceEqual(new[] { "[Content_Types].xml", "_rels/.rels", "xl/_rels/workbook.xml.rels", "xl/styles.xml", "xl/workbook.xml", "xl/worksheets/sheet1.xml" }), "xlsx parts");
+    using (var reader = new StreamReader(zip.GetEntry("xl/worksheets/sheet1.xml")!.Open())) sheet = reader.ReadToEnd();
+    string xlsxStyles;
+    using (var reader = new StreamReader(zip.GetEntry("xl/styles.xml")!.Open())) xlsxStyles = reader.ReadToEnd();
+    Check(xlsxStyles.Contains("formatCode=\"0.00\"") && xlsxStyles.Contains("formatCode=\"0\""), "xlsx keeps grid decimal places: " + xlsxStyles);
+    foreach (var e in zip.Entries) using (var reader = new StreamReader(e.Open())) System.Xml.Linq.XDocument.Parse(reader.ReadToEnd());
+    checks++;
+}
+Check(sheet.Contains("<c r=\"A2\" s=\"2\" t=\"inlineStr\"><is><t xml:space=\"preserve\">2026-09-28 13:45:12.123</t>"), "xlsx date kept as grid text");
+Check(sheet.Contains(">007</t>") && sheet.Contains(">1234567890123456789</t>") && sheet.Contains(">1.5E-05</t>"), "xlsx codes, long numbers and exponents kept as text");
+Check(sheet.Contains("<c r=\"C2\" s=\"3\"><v>12.50</v>") && sheet.Contains("<c r=\"D3\" s=\"4\"><v>42</v>") && sheet.Contains("<v>-3.00</v>"), "xlsx numeric columns as numbers: " + sheet);
+Check(sheet.Contains("=1+1 &lt;b&gt;&amp;</t>") && !sheet.Contains("<f>"), "xlsx escapes text and never writes formulas");
+Check(!sheet.Contains("r=\"A3\"") && sheet.Contains(">Column6</t>"), "xlsx NULL is an empty cell; unnamed header named");
 Check(Updates.IsNewer("v0.4.0", "0.3.0.57") && Updates.IsNewer("v0.3.1", "0.3.0") && Updates.IsNewer("V1.0", "0.9.9.9"), "newer release detected");
 Check(!Updates.IsNewer("v0.3.0", "0.3.0.57") && !Updates.IsNewer("v0.2.9", "0.3.0.1") && !Updates.IsNewer("dev-master", "0.3.0.1")
     && !Updates.IsNewer("v0.4.0", null) && !Updates.IsNewer(null, "0.3.0") && !Updates.IsNewer("v0.4.0-beta", "0.3.0"), "same, older or malformed versions ignored");

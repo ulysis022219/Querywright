@@ -839,6 +839,10 @@ try { ResultGrid.InsertScript(new[] { "a", "b" }, null, new List<string?[]> { ne
 string csv = ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[] { "=1+1", "x,y" }, new[] { "-5", "say \"hi\"\nthere" }, new[] { null, "@SUM(A1)" }, new[] { "-x", "+1" } }, ',', "\n");
 Check(csv == "a,b\n'=1+1,\"x,y\"\n-5,\"say \"\"hi\"\"\nthere\"\n,'@SUM(A1)\n'-x,'+1\n", "csv quoting and injection guard: " + csv);
 Check(ResultGrid.Delimited(new[] { "a" }, new List<string?[]> { new[] { "x\ty" } }, '\t', "\n") == "a\n\"x\ty\"\n", "tab-delimited quoting");
+string colorRules = ColorRules.Set("prod=Red; test=Orange", ColorRules.ServerPattern(@"10.0.0.1\SQL"), "#FF8800");
+Check(colorRules == @"10.0.0.1\SQL/=#FF8800;prod=Red;test=Orange" && ColorRules.Get(colorRules, @"10.0.0.1\sql/") == "#FF8800", "server color rule added first: " + colorRules);
+Check(ColorRules.Set(ColorRules.Set(colorRules, @"10.0.0.1\SQL/", "Blue"), @"10.0.0.1\SQL/", null) == "prod=Red;test=Orange" && ColorRules.Get("", "x/") == null, "server color rule replaced and cleared");
+try { ColorRules.Set("", "a=b/", "Red"); throw new Exception("Expected odd server rejection"); } catch (ArgumentException) { checks++; }
 var xlsxStream = new MemoryStream();
 ResultGrid.Xlsx(xlsxStream, new[] { "When", "Code", "Amt", "Big", "Note", "" }, new[] { "datetime", "varchar(10)", "decimal(18,2)", "bigint", "nvarchar(max)", "float" },
     new List<string?[]> { new[] { "2026-09-28 13:45:12.123", "007", "12.50", "1234567890123456789", "=1+1 <b>&\u0001", "1.5E-05" }, new string?[] { null, "x", "-3.00", "42", "", "0" } });

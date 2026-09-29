@@ -47,9 +47,10 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - Split a table, or wrap a selection as a stored procedure.
 
 **Everyday helpers**
-- Tab history: find and reopen queries you closed, even after a restart.
+- Tab history: find and reopen queries you closed, even after a restart (toolbar button next to New Query).
 - A colored strip and a `server · database` label on every query window, so you always know
-  where you are connected. Color rules like `prod=Red;test=Orange` are set in Tools > Options.
+  where you are connected. Right-click a server in Object Explorer > **Querywright: server color...**
+  to pick its color, or write rules like `prod=Red;test=Orange` in Tools > Options.
 - Results grid right-click: copy as `IN (...)`, script rows as `INSERT`, open in Excel, save as CSV.
 
 All commands are in the **Tools** menu under "Querywright". Settings are under

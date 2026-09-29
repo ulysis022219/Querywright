@@ -119,6 +119,13 @@ namespace Querywright.Ssms
                 catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return VSConstants.S_OK; }
             }
             const int pass = (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            if (pguidCmdGroup == VSConstants.VSStd2K && nCmdID == (uint)VSConstants.VSStd2KCmdID.GOTOBRACE)
+            {
+                // Ctrl+]: BEGIN <-> END; brackets and anything else go to SSMS.
+                try { return GoToPartner(package.GetSqlView()) ? VSConstants.S_OK : pass; }
+                catch (InvalidOperationException) { return pass; }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return pass; }
+            }
             if (pguidCmdGroup != group || nCmdID != id) return pass;
             try
             {
@@ -136,6 +143,19 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException)) { if (!(error is InvalidOperationException)) EditorCommandFilter.Swallowed(error); }
             return pass;
+        }
+
+        private static bool GoToPartner(Microsoft.VisualStudio.Text.Editor.IWpfTextView view)
+        {
+            var snapshot = view.TextSnapshot;
+            int caret = view.Caret.Position.BufferPosition.Position;
+            var block = BlockCache.At(BlockCache.For(view.TextBuffer).Current(snapshot), caret);
+            if (block == null) return false;
+            int target = BlockCache.On(caret, block.CloseStart, block.CloseLength) ? (block.HeaderStart >= 0 ? block.HeaderStart : block.OpenStart) : block.CloseStart;
+            var point = new Microsoft.VisualStudio.Text.SnapshotPoint(snapshot, target);
+            view.Caret.MoveTo(point);
+            view.ViewScroller.EnsureSpanVisible(new Microsoft.VisualStudio.Text.SnapshotSpan(point, 0), Microsoft.VisualStudio.Text.Editor.EnsureSpanVisibleOptions.AlwaysCenter);
+            return true;
         }
 
         private bool Ask(System.Collections.Generic.IReadOnlyList<string> targets)

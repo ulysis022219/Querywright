@@ -336,6 +336,16 @@ namespace Querywright.Ssms
             if (package == null || point == null) return null;
             var snapshot = point.Value.Snapshot;
             int position = point.Value.Position;
+            // END: which block it closes, when the opening line is off screen.
+            var block = BlockCache.For(snapshot.TextBuffer).Latest is { } cached && cached.Snapshot == snapshot
+                ? cached.Blocks.FirstOrDefault(b => BlockCache.On(position, b.CloseStart, b.CloseLength)) : null;
+            if (block != null)
+            {
+                var line = snapshot.GetLineFromPosition(block.HeaderStart >= 0 ? block.HeaderStart : block.OpenStart);
+                string opener = line.GetText().Trim();
+                return new QuickInfoItem(snapshot.CreateTrackingSpan(block.CloseStart, block.CloseLength, SpanTrackingMode.EdgeInclusive),
+                    new ClassifiedTextElement(new ClassifiedTextRun("text", "line " + (line.LineNumber + 1) + ": " + (opener.Length > 120 ? opener.Substring(0, 120) + "..." : opener))));
+            }
             await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
             var tables = package.CurrentTables();
             var live = package.CurrentProcedures(""); // live only; the script is parsed off the UI thread below

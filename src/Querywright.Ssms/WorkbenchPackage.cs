@@ -608,13 +608,21 @@ namespace Querywright.Ssms
             ReplaceText(view, new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length), text, 0, 0, 0, name);
         }
 
-        private async Task RunCommandAsync(Func<Task> body)
+        private async Task RunCommandAsync(Func<Task> body, [System.Runtime.CompilerServices.CallerMemberName] string command = "")
         {
             try { await body(); }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
-                ShowWarning((error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
+                var cause = (error as System.Reflection.TargetInvocationException)?.InnerException ?? error;
+                // ponytail: commands throw InvalidOperationException for user-facing messages ("select a table"); anything else is a bug worth reporting.
+                if (cause is InvalidOperationException) { ShowWarning(cause.Message); return; }
+                string line = Updates.ErrorLine(UpdateCheck.InstalledVersion(), command, cause.GetType());
+                int answer = VsShellUtilities.ShowMessageBox(this,
+                    cause.Message + "\r\n\r\n" + line + "\r\n\r\nOpen a GitHub issue with this line? Only the line above is sent; the error message, your query and connection are not.",
+                    "Querywright error", OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND);
+                if (answer == (int)VSConstants.MessageBoxResult.IDYES)
+                    try { System.Diagnostics.Process.Start(Updates.IssueUrl(line)); } catch (System.ComponentModel.Win32Exception) { }
             }
         }
 

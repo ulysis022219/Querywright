@@ -14,8 +14,20 @@ namespace Querywright.Ssms
     /// <summary>At most daily, asks GitHub for the latest release and shows an info bar when it is newer. Sends no user data.</summary>
     internal sealed class UpdateCheck : IVsInfoBarUIEvents
     {
-        private const string Releases = "https://github.com/ulysis022219/SqlWorkbench/releases/";
+        private const string Releases = Updates.Repository + "releases/";
         private string url = Releases + "latest";
+
+        /// <summary>Version from the installed extension.vsixmanifest (CI stamps the build number there); null when unreadable.</summary>
+        internal static string InstalledVersion()
+        {
+            try
+            {
+                string manifest = Path.Combine(Path.GetDirectoryName(typeof(UpdateCheck).Assembly.Location), "extension.vsixmanifest");
+                return Regex.Match(File.ReadAllText(manifest), "<Identity [^>]*Version=\"([^\"]+)\"").Groups[1].Value;
+            }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+        }
 
         internal static async Task RunAsync(WorkbenchPackage package)
         {
@@ -26,8 +38,7 @@ namespace Querywright.Ssms
                 Directory.CreateDirectory(Path.GetDirectoryName(stamp));
                 File.WriteAllText(stamp, "");
 
-                string manifest = Path.Combine(Path.GetDirectoryName(typeof(UpdateCheck).Assembly.Location), "extension.vsixmanifest");
-                string installed = Regex.Match(File.ReadAllText(manifest), "<Identity [^>]*Version=\"([^\"]+)\"").Groups[1].Value;
+                string installed = InstalledVersion();
                 string json;
                 using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) })
                 {

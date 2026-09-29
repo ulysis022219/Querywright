@@ -20,5 +20,11 @@ Update
   Tools > Options > Querywright > Updates). Download the new zip and repeat the Install steps:
   the newer version replaces the installed one and keeps your settings, snippets and tab history.
 
+Report a problem
+  When a command fails unexpectedly, the error box shows a line like
+  "Querywright 0.3.0.42 · SplitTable · NullReferenceException" and offers to open a GitHub issue
+  with that line filled in. Only that line is sent; never paste passwords, server names, real queries or data.
+  https://github.com/ulysis022219/SqlWorkbench/issues
+
 Uninstall
   Close SSMS 22, then from a command prompt in this folder:  Install.cmd -Uninstall

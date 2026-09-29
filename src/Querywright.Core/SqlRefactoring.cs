@@ -386,6 +386,25 @@ namespace Querywright.Core
             return builder.ToString();
         }
 
+        /// <summary>Wraps SQL in a dynamic SQL string: quotes doubled, printed, then run with sp_executesql.</summary>
+        public static string WrapAsDynamicSql(string sql, string newline = "\r\n")
+        {
+            if (string.IsNullOrWhiteSpace(sql)) throw new InvalidOperationException("There is no SQL to wrap.");
+            return "DECLARE @sql nvarchar(max) = N'" + sql.Trim().Replace("'", "''") + "';" + newline +
+                "PRINT @sql;" + newline + "EXEC sys.sp_executesql @sql;" + newline;
+        }
+
+        /// <summary>The first string literal in the SQL (a DECLARE @sql = N'...' or EXEC('...')) as plain SQL, quotes undoubled.</summary>
+        public static string UnwrapDynamicSql(string sql)
+        {
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql ?? ""), out _);
+            var literal = tokens.FirstOrDefault(t => t.TokenType == TSqlTokenType.AsciiStringLiteral || t.TokenType == TSqlTokenType.UnicodeStringLiteral);
+            if (literal == null) throw new InvalidOperationException("Select a dynamic SQL string, such as DECLARE @sql nvarchar(max) = N'...'.");
+            string text = literal.Text;
+            int open = text.IndexOf('\'');
+            return text.Substring(open + 1, text.Length - open - 2).Replace("''", "'") + "\r\n";
+        }
+
         /// <summary>True when the script has its own USE, which would override the target database of each block.</summary>
         public static bool ContainsUse(string sql)
         {

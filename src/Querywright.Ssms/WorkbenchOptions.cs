@@ -82,6 +82,11 @@ namespace Querywright.Ssms
         [Description("When you execute DROP TABLE or TRUNCATE TABLE, ask before SSMS runs it.")]
         public bool WarnDropTruncate { get; set; }
 
+        [Category("Environment")]
+        [DisplayName("Warn before USE then change data")]
+        [Description("When a script switches database with USE and then inserts, updates, deletes, merges, truncates or drops, ask before SSMS runs it.")]
+        public bool WarnUseSwitch { get; set; } = true;
+
         [Category("Results grid")]
         [DisplayName("CSV delimiter")]
         [Description("Separator used by Save as CSV. Semicolon suits Excel in locales that use a decimal comma.")]
@@ -91,6 +96,51 @@ namespace Querywright.Ssms
         [DisplayName("CSV column headers")]
         [Description("Write the column names as the first line of Save as CSV.")]
         public bool CsvHeaders { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show copy as IN clause")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowCopyAsIn { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show script as INSERT")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowScriptAsInsert { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show open in Excel")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowOpenInExcel { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show save as CSV")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowSaveAsCsv { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show copy as Markdown table")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowCopyAsMarkdown { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show copy as JSON")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowCopyAsJson { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show script as UPDATE")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowScriptAsUpdate { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show script as MERGE")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowScriptAsMerge { get; set; } = true;
+
+        [Category("Results grid menu")]
+        [DisplayName("Show script as CREATE TABLE")]
+        [Description("Show or hide this item in the results grid right-click menu.")]
+        public bool ShowScriptAsCreateTable { get; set; } = true;
 
         [Category("Updates")]
         [DisplayName("Check for updates")]

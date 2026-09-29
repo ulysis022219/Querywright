@@ -239,6 +239,7 @@ namespace Querywright.Ssms
         private volatile IReadOnlyList<SchemaTable>? tables;
         private volatile IReadOnlyList<string>? databases;
         private volatile IReadOnlyList<SchemaProcedure>? procedures;
+        private volatile Func<string, IReadOnlyList<SchemaTable>>? otherDatabase;
 
         public CompletionStartData InitializeCompletion(CompletionTrigger trigger, SnapshotPoint location, CancellationToken token)
         {
@@ -249,6 +250,7 @@ namespace Querywright.Ssms
             {
                 tables = WorkbenchPackage.Instance.CurrentTables();
                 databases = WorkbenchPackage.Instance.CurrentDatabases();
+                otherDatabase = WorkbenchPackage.Instance.CurrentOtherDatabase();
                 procedures = WorkbenchPackage.Instance.CurrentProcedures(""); // live only; the script is parsed off the UI thread
             }
             if (trigger.Reason == CompletionTriggerReason.Insertion && WorkbenchPackage.Instance.Options?.SuggestWhileTyping == false)
@@ -273,6 +275,7 @@ namespace Querywright.Ssms
             var tables = this.tables;
             var databases = this.databases;
             var live = this.procedures;
+            var other = this.otherDatabase;
             // Mouse clicks commit too; any committed procedure gets its parameters.
             if (!session.Properties.ContainsProperty(typeof(CompletionSource)))
             {
@@ -296,7 +299,7 @@ namespace Querywright.Ssms
                     }
                     catch (Exception error) when (!(error is OutOfMemoryException)) { }
                     return SqlCompletion.Complete(sql, position, tables, databases: databases, procedures: procedures,
-                        qualifySingleTable: WorkbenchPackage.Instance?.Options?.QualifySingleTable == true); // null tables: keywords, functions, variables
+                        qualifySingleTable: WorkbenchPackage.Instance?.Options?.QualifySingleTable == true, otherDatabase: other); // null tables: keywords, functions, variables
                 }
                 // ponytail: typing must never raise dialogs; explicit commands report schema errors.
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }

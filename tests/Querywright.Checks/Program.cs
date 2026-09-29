@@ -221,6 +221,16 @@ CompletionResult Complete(string text)
     return SqlCompletion.Complete(text.Remove(position, 1), position, catalog);
 }
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Count == 3, "alias columns");
+var otherCatalog = new[] { new SchemaTable("sales", "Orders", "OrderId", "Total"), new SchemaTable("hr", "Staff", "Id") };
+CompletionResult CompleteCross(string text, params string[] databases)
+{
+    int at = text.IndexOf('|');
+    return SqlCompletion.Complete(text.Remove(at, 1), at, catalog, databases: databases, otherDatabase: name => name == "Other" ? otherCatalog : null);
+}
+Check(CompleteCross("SELECT * FROM Other.|", "Other").Items.Select(i => i.Name).OrderBy(n => n).SequenceEqual(new[] { "hr", "sales" }), "cross-db schemas");
+Check(CompleteCross("SELECT * FROM Other.sales.|", "Other").Items.Select(i => i.Name).SequenceEqual(new[] { "Orders" }), "cross-db tables");
+Check(CompleteCross("SELECT * FROM Other.sales.Orders.|", "Other").Items.Count == 2, "cross-db columns");
+Check(CompleteCross("SELECT * FROM dbo.People Other JOIN x ON Other.|", "Other").Items.Select(i => i.Name).Contains("Name"), "alias wins over database");
 string blockSql = "WHILE @i < 10\nBEGIN\n  IF EXISTS(SELECT 1 FROM t) BEGIN SELECT CASE WHEN a=1 THEN 2 ELSE 3 END END\n  ELSE BEGIN PRINT 'end' END\nEND";
 var blocks = SqlNavigation.Blocks(blockSql);
 Check(blocks.Select(b => (blockSql.Substring(b.CloseStart, b.CloseLength), b.Depth, b.HeaderStart < 0 ? "" : blockSql.Substring(b.HeaderStart, b.HeaderLength)))
@@ -417,6 +427,9 @@ Check(Rules("CREATE PROCEDURE dbo.p;2 AS SET NOCOUNT ON;").SequenceEqual(new[] {
 Check(Rules("SELECT a FROM dbo.T WHERE a !< 1;").SequenceEqual(new[] { "SW042" }) && Rules("SELECT a FROM dbo.T WHERE a !> 1 OR a <> 2;").SequenceEqual(new[] { "SW042" }), "!< !>");
 Check(Rules("SELECT TOP 100 PERCENT a FROM dbo.T ORDER BY a;").SequenceEqual(new[] { "SW043" }) &&
     Rules("SELECT TOP 50 PERCENT a FROM dbo.T ORDER BY a;").Length == 0, "TOP 100 PERCENT");
+Check(Rules("DECLARE @t sysname = N'x'; EXEC('SELECT 1 FROM ' + @t);").Contains("SW047") && !Rules("EXEC('SELECT 1');").Contains("SW047"), "concatenated EXEC");
+Check(SqlRefactoring.UnwrapDynamicSql(SqlRefactoring.WrapAsDynamicSql("SELECT 'a';")).Trim() == "SELECT 'a';" && SqlRefactoring.WrapAsDynamicSql("SELECT 'a';").Contains("N'SELECT ''a'';'"), "wrap and unwrap dynamic SQL");
+Check(SqlAnalysis.DatabaseSwitchChanges("USE Other; DELETE FROM dbo.T WHERE Id = 1;").SequenceEqual(new[] { "USE Other" }) && SqlAnalysis.DatabaseSwitchChanges("USE Other; SELECT 1;").Count == 0 && SqlAnalysis.DatabaseSwitchChanges("DELETE FROM dbo.T WHERE Id = 1;").Count == 0, "USE with data changes");
 Check(Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T WHERE a = 1) SELECT 1;").SequenceEqual(new[] { "SW044" }) &&
     Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T GROUP BY a) SELECT 1; IF EXISTS (SELECT MAX(a) FROM dbo.T HAVING MAX(a) > 1) SELECT 1;").Length == 0, "EXISTS aggregate");
 Check(Rules("EXEC master.dbo.xp_cmdshell 'dir';").SequenceEqual(new[] { "SW046" }) && Rules("EXEC xp_cmdshell 'dir';").SequenceEqual(new[] { "SW017", "SW046" }) &&

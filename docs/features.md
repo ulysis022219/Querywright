@@ -67,3 +67,15 @@ editor with undo and diagnostics in Error List. Implement connected snippet cont
 Completion must resolve real SQL scopes rather than infer aliases using regex alone.
 Expand the inventory into individual current commands and analysis rules before any
 parity claim. This initial package is not a completed SQL Prompt replacement.
+
+## Cross-database and dynamic SQL
+
+| Feature | Notes |
+|---|---|
+| Run in multiple databases (merged results) | Tick databases, run the script (one batch, no GO) in each, first result set of each merged with a leading Database column in a window; failed databases listed. Confirms before unfiltered changes. Runs with the window's login; 100,000 row cap. |
+| Find object or column in all databases | Name contains text (literal, wildcards escaped) across tables, views, procedures, functions, triggers and columns; read-only catalog query. |
+| Wrap in dynamic SQL / Unwrap dynamic SQL | Selection (or whole window) to `DECLARE @sql ... PRINT ... sp_executesql` with quotes doubled, and back from the first string literal. |
+| SW047 | EXEC of a concatenated string. |
+| Warn before USE then change data | Execution prompt when a script switches database with USE and then modifies data (Options, on by default). |
+
+Not built: completion after `OtherDb.` (F12 already follows three-part names).

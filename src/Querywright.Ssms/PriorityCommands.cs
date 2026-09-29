@@ -143,13 +143,15 @@ namespace Querywright.Ssms
             {
                 var view = package.GetSqlView();
                 var options = package.Options;
-                if (options != null && (options.WarnUnfilteredChanges || options.WarnDropTruncate))
+                if (options != null && (options.WarnUnfilteredChanges || options.WarnDropTruncate || options.WarnUseSwitch))
                 {
                     // SSMS runs the selection when there is one, otherwise the whole window.
                     string sql = view.Selection.IsEmpty ? view.TextSnapshot.GetText()
                         : string.Join("\n", view.Selection.SelectedSpans.Select(s => s.GetText()));
                     var targets = sql.Length > 1_000_000 ? System.Array.Empty<string>() : SqlAnalysis.UnfilteredChanges(sql, options.WarnUnfilteredChanges, options.WarnDropTruncate);
-                    if (targets.Count > 0 && !Ask(targets)) return VSConstants.S_OK;
+                    if (targets.Count > 0 && !Ask(targets, false)) return VSConstants.S_OK;
+                    var switches = options.WarnUseSwitch && sql.Length <= 1_000_000 ? SqlAnalysis.DatabaseSwitchChanges(sql) : System.Array.Empty<string>();
+                    if (switches.Count > 0 && !Ask(switches, true)) return VSConstants.S_OK;
                 }
                 // Tab history keeps an executed version, like SQL Prompt's ▶ entries.
                 if (view.Properties.TryGetProperty("QuerywrightHistory", out Action<bool> save)) save(true);
@@ -171,7 +173,7 @@ namespace Querywright.Ssms
             return true;
         }
 
-        private bool Ask(System.Collections.Generic.IReadOnlyList<string> targets)
+        private bool Ask(System.Collections.Generic.IReadOnlyList<string> targets, bool switched)
         {
             using (var form = new Form
             {
@@ -181,7 +183,8 @@ namespace Querywright.Ssms
             {
                 var layout = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false };
                 layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0),
-                    Text = "You're about to execute " + (targets.Count == 1 ? "a statement" : targets.Count + " statements") + " that can change or remove every row:" });
+                    Text = switched ? "This script switches database with USE and then changes data:"
+                        : "You're about to execute " + (targets.Count == 1 ? "a statement" : targets.Count + " statements") + " that can change or remove every row:" });
                 layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0), Font = new System.Drawing.Font(form.Font, System.Drawing.FontStyle.Bold),
                     Text = string.Join(Environment.NewLine, targets.Take(10)) + (targets.Count > 10 ? Environment.NewLine + "..." : ""), Margin = new Padding(3, 8, 3, 12) });
                 var never = new CheckBox { AutoSize = true, Text = "Don't show this warning again" };
@@ -199,8 +202,8 @@ namespace Querywright.Ssms
                 bool execute = form.ShowDialog() == DialogResult.OK;
                 if (never.Checked)
                 {
-                    package.Options.WarnUnfilteredChanges = false;
-                    package.Options.WarnDropTruncate = false;
+                    if (switched) package.Options.WarnUseSwitch = false;
+                    else { package.Options.WarnUnfilteredChanges = false; package.Options.WarnDropTruncate = false; }
                     package.Options.SaveSettingsToStorage();
                 }
                 return execute;

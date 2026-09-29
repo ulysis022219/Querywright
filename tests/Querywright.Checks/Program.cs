@@ -842,4 +842,7 @@ Check(ResultGrid.Delimited(new[] { "a" }, new List<string?[]> { new[] { "x\ty" }
 Check(Updates.IsNewer("v0.4.0", "0.3.0.57") && Updates.IsNewer("v0.3.1", "0.3.0") && Updates.IsNewer("V1.0", "0.9.9.9"), "newer release detected");
 Check(!Updates.IsNewer("v0.3.0", "0.3.0.57") && !Updates.IsNewer("v0.2.9", "0.3.0.1") && !Updates.IsNewer("dev-master", "0.3.0.1")
     && !Updates.IsNewer("v0.4.0", null) && !Updates.IsNewer(null, "0.3.0") && !Updates.IsNewer("v0.4.0-beta", "0.3.0"), "same, older or malformed versions ignored");
+Check(Updates.ErrorLine("0.3.0.42", "SplitTableAsync", typeof(FormatException)) == "Querywright 0.3.0.42 \u00B7 SplitTable \u00B7 FormatException"
+    && Updates.ErrorLine(null, "Format", typeof(IOException)) == "Querywright unknown \u00B7 Format \u00B7 IOException", "error report line");
+Check(Updates.IssueUrl("Querywright 0.3.0 \u00B7 Format \u00B7 IOException") == "https://github.com/ulysis022219/SqlWorkbench/issues/new?template=bug_report.yml&error=Querywright%200.3.0%20%C2%B7%20Format%20%C2%B7%20IOException", "issue link escapes the line");
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, fixes and object refactors. SSMS integration not tested.");

@@ -186,6 +186,7 @@ namespace Querywright.Ssms
             Add(0x011F, CompareObjectAsync);
             Instance = this;
             ServerColorMenu.Start();
+            ExecuteGuard.Start(this);
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
             if (options.CheckForUpdates && Environment.GetEnvironmentVariable("QUERYWRIGHT_SELFTEST") == null)
@@ -1119,7 +1120,9 @@ namespace Querywright.Ssms
             view.Caret.EnsureVisible();
         }
 
-        private IWpfTextView GetSqlView()
+        internal WorkbenchOptions Options => options;
+
+        internal IWpfTextView GetSqlView()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             if (textManager == null || components == null)

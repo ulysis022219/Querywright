@@ -9,8 +9,8 @@ https://documentation.red-gate.com/codeanalysis/code-analysis-for-sql-server/bes
 | SW002 | INSERT lacks explicit target columns | BP004 | Column list and DEFAULT VALUES excluded |
 | SW003 | Direct or parenthesized NULL comparison | BP011 subset | IS NULL excluded; expressions inside strings/comments ignored |
 | SW004 | CASE without fallback expression | BP012 | Both CASE forms; explicit ELSE excluded |
-| SW005 | DELETE without WHERE | BP017 | WHERE excluded |
-| SW006 | UPDATE without WHERE | BP018 | WHERE excluded |
+| SW005 | DELETE without WHERE | BP017 | WHERE excluded; off by default (execute prompt instead) |
+| SW006 | UPDATE without WHERE | BP018 | WHERE excluded; off by default (execute prompt instead) |
 | SW007 | ORDER BY constant or ordinal | BP002 | Column names excluded |
 | SW008 | char/varchar/nchar/nvarchar/binary/varbinary without length | BP007, BP008 | Declarations, CAST/CONVERT, columns; (n)/(max) excluded |
 | SW009 | @@IDENTITY | BP010 | SCOPE_IDENTITY excluded |

@@ -455,7 +455,7 @@ namespace Querywright.Ssms
                 int position = view.Caret.Position.BufferPosition.Position;
                 string sql = snapshot.GetText();
                 var tables = await RequireTablesAsync();
-                var result = await Task.Run(() => SqlCompletion.Complete(sql, position, tables));
+                var result = await Task.Run(() => SqlCompletion.Complete(sql, position, tables, qualifySingleTable: Options?.QualifySingleTable == true));
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (view.IsClosed || view.TextSnapshot != snapshot) throw new InvalidOperationException("Query changed. Request suggestions again.");
                 if (result.Items.Count == 0)

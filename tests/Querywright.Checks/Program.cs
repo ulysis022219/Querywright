@@ -221,6 +221,13 @@ CompletionResult Complete(string text)
     return SqlCompletion.Complete(text.Remove(position, 1), position, catalog);
 }
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Count == 3, "alias columns");
+var twin = new[] { new SchemaTable("dbo", "People", "Id", "Name"), new SchemaTable("dbo", "Orders", "Id", "Name") };
+CompletionResult CompleteTwin(string text, bool qualify = true) { int at = text.IndexOf('|'); return SqlCompletion.Complete(text.Remove(at, 1), at, twin, qualifySingleTable: qualify); }
+Check(CompleteTwin("SELECT * FROM dbo.People\nSELECT * FROM dbo.Orders WHERE Na|").Items[0].InsertText == "Orders.Name", "own statement's columns first");
+Check(CompleteTwin("SELECT * FROM dbo.People p WHERE p.Id = 1\nSELECT * FROM dbo.Orders o WHERE Na| = 1 AND").Items[0].InsertText == "o.Name", "own statement's columns first without parse");
+Check(CompleteTwin("SELECT * FROM dbo.People WHERE Na|", false).Items[0].InsertText == "Name", "single table column unqualified");
+Check(CompleteTwin("SELECT * FROM dbo.People WHERE Na| = 1 AND", false).Items[0].InsertText == "Name", "single table column unqualified without parse");
+Check(CompleteTwin("SELECT * FROM dbo.People p JOIN dbo.Orders o ON o.Id = p.Id WHERE Na|", false).Items.Select(i => i.InsertText).SequenceEqual(new[] { "p.Name", "o.Name" }), "join columns keep aliases");
 Check(Complete("SELECT p.Na|me FROM dbo.People p;").Items.Single().InsertText == "Name", "partial identifier replacement");
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Any(i => i.InsertText == "[odd]]column]"), "escaped insertion");
 Check(Complete("SELECT 1 FROM dbo.Pe|;").Items.Single().InsertText == "People", "schema objects");

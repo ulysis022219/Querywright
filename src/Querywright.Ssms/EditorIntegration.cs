@@ -293,7 +293,8 @@ namespace Querywright.Ssms
                             procedures = SqlAssist.ProceduresFromScript(sql).Concat(live ?? Array.Empty<SchemaProcedure>()).ToArray();
                     }
                     catch (Exception error) when (!(error is OutOfMemoryException)) { }
-                    return SqlCompletion.Complete(sql, position, tables, databases: databases, procedures: procedures); // null tables: keywords, functions, variables
+                    return SqlCompletion.Complete(sql, position, tables, databases: databases, procedures: procedures,
+                        qualifySingleTable: WorkbenchPackage.Instance?.Options?.QualifySingleTable == true); // null tables: keywords, functions, variables
                 }
                 // ponytail: typing must never raise dialogs; explicit commands report schema errors.
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }

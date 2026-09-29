@@ -23,6 +23,8 @@ namespace Querywright.Ssms
     {
         internal static IVsTextView? Adapter;
         internal static IWpfTextView? View;
+        /// <summary>Last point a traced feature reached; the "note" step prints it. Never logged.</summary>
+        internal static string? Note;
 
         internal static async Task RunAsync(WorkbenchPackage package)
         {
@@ -86,6 +88,7 @@ namespace Querywright.Ssms
                             await package.JoinableTaskFactory.SwitchToMainThreadAsync();
                             view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- oe " + await ServerColorMenu.ProbeAsync(package));
                             break;
+                        case "note": view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- note " + (Note ?? "(none)")); break;
                         case "latest": // follow the newest SQL window, e.g. one a command opened
                             if (View == null || Adapter == null) throw new InvalidOperationException("no SQL editor");
                             view = View; adapter = Adapter; target = (IOleCommandTarget)adapter;

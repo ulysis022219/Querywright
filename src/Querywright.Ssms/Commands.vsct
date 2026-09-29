@@ -4,9 +4,16 @@
   <Extern href="vsshlids.h" />
   <Include href="KnownImageIds.vsct" />
   <Commands package="PackageGuid">
+    <!-- Own top-level menu, between Tools and Extensions. -->
+    <Menus>
+      <Menu guid="CommandsGuid" id="QuerywrightMenu" priority="0x0100" type="Menu">
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_MM_TOOLSADDINS" />
+        <Strings><ButtonText>&amp;Querywright</ButtonText><CommandName>Querywright</CommandName></Strings>
+      </Menu>
+    </Menus>
     <Groups>
       <Group guid="CommandsGuid" id="ToolsGroup" priority="0x0600">
-        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS" />
+        <Parent guid="CommandsGuid" id="QuerywrightMenu" />
       </Group>
       <!-- SSMS results-grid right-click menu (GUID_SQLEditorGroup:IDM_SQLWB_SQLRESGRID_CONTEXT, from SQLEditors.dll). -->
       <Group guid="CommandsGuid" id="GridGroup" priority="0x0600">
@@ -24,117 +31,117 @@
     <Buttons>
       <Button guid="CommandsGuid" id="AddSemicolons" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: insert semicolons</ButtonText></Strings>
+        <Strings><ButtonText>Insert semicolons</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ExpandWildcard" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: expand wildcard</ButtonText></Strings>
+        <Strings><ButtonText>Expand wildcard</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameVariable" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: rename local variable...</ButtonText></Strings>
+        <Strings><ButtonText>Rename local variable...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CompleteSql" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: suggest from offline schema...</ButtonText></Strings>
+        <Strings><ButtonText>Suggest from offline schema...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FormatSql" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: format SQL selection/document</ButtonText></Strings>
+        <Strings><ButtonText>Format SQL selection/document</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AnalyzeDocument" priority="0x0080" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: analyze SQL document</ButtonText></Strings>
+        <Strings><ButtonText>Analyze SQL document</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="InsertSnippet" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: insert snippet...</ButtonText></Strings>
+        <Strings><ButtonText>Insert snippet...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SnippetCheck" priority="0x0100" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: snippet smoke check</ButtonText></Strings>
+        <Strings><ButtonText>Snippet smoke check</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ApplyCasing" priority="0x0110" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: apply keyword casing</ButtonText></Strings>
+        <Strings><ButtonText>Apply keyword casing</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AddBrackets" priority="0x0120" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: add square brackets</ButtonText></Strings>
+        <Strings><ButtonText>Add square brackets</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RemoveBrackets" priority="0x0130" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: remove square brackets</ButtonText></Strings>
+        <Strings><ButtonText>Remove square brackets</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="QualifyNames" priority="0x0140" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: qualify object names</ButtonText></Strings>
+        <Strings><ButtonText>Qualify object names</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameAlias" priority="0x0150" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: rename table alias...</ButtonText></Strings>
+        <Strings><ButtonText>Rename table alias...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SummarizeScript" priority="0x0160" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: summarize script</ButtonText></Strings>
+        <Strings><ButtonText>Summarize script</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="UnusedDeclarations" priority="0x0170" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: find unused variables and parameters</ButtonText></Strings>
+        <Strings><ButtonText>Find unused variables and parameters</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RefreshMetadata" priority="0x0180" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: refresh suggestions</ButtonText></Strings>
+        <Strings><ButtonText>Refresh suggestions</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ExecuteStatement" priority="0x0190" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: execute current statement</ButtonText></Strings>
+        <Strings><ButtonText>Execute current statement</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="PickColumns" priority="0x01A0" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: pick columns for *...</ButtonText></Strings>
+        <Strings><ButtonText>Pick columns for *...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="TabHistory" priority="0x01B0" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
         <Icon guid="ImageCatalogGuid" id="History" />
         <CommandFlag>IconIsMoniker</CommandFlag>
-        <Strings><ButtonText>Querywright: tab history...</ButtonText><ToolTipText>Querywright: tab history (reopen closed queries)</ToolTipText></Strings>
+        <Strings><ButtonText>Tab history...</ButtonText><ToolTipText>Querywright: tab history (reopen closed queries)</ToolTipText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameObject" priority="0x01C0" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: smart rename object (script)...</ButtonText></Strings>
+        <Strings><ButtonText>Smart rename object (script)...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="Encapsulate" priority="0x01D0" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: encapsulate as stored procedure...</ButtonText></Strings>
+        <Strings><ButtonText>Encapsulate as stored procedure...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FixAtCaret" priority="0x01E0" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: fix issue at caret</ButtonText></Strings>
+        <Strings><ButtonText>Fix issue at caret</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FixAll" priority="0x01F0" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: fix all issues</ButtonText></Strings>
+        <Strings><ButtonText>Fix all issues</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="GoToDefinition" priority="0x0200" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: go to definition</ButtonText></Strings>
+        <Strings><ButtonText>Go to definition</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FindInvalidObjects" priority="0x0240" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: find invalid objects</ButtonText></Strings>
+        <Strings><ButtonText>Find invalid objects</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SplitTable" priority="0x0250" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: split table (script)...</ButtonText></Strings>
+        <Strings><ButtonText>Split table (script)...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="EditFormattingStyle" priority="0x0260" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: formatting style...</ButtonText></Strings>
+        <Strings><ButtonText>Formatting style...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FormatFolder" priority="0x0270" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: format SQL files in folder...</ButtonText></Strings>
+        <Strings><ButtonText>Format SQL files in folder...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CompareObject" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="EditorGroup" />
@@ -187,6 +194,7 @@
   <Symbols>
     <GuidSymbol name="PackageGuid" value="{a13c1b0c-af94-4f53-8d06-edf816e39450}" />
     <GuidSymbol name="CommandsGuid" value="{b48a692b-82fb-47cf-bfc9-bdf13483d6c7}">
+      <IDSymbol name="QuerywrightMenu" value="0x1010" />
       <IDSymbol name="ToolsGroup" value="0x1020" />
       <IDSymbol name="SnippetCheck" value="0x0100" />
       <IDSymbol name="InsertSnippet" value="0x0101" />

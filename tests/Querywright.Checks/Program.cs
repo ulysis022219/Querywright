@@ -244,6 +244,9 @@ Check(Complete("SELECT FROM WHERE;\nGO\nSELECT p.| FROM dbo.People p;\nGO\nSELEC
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Any(i => i.InsertText == "[odd]]column]"), "escaped insertion");
 Check(Complete("SELECT 1 FROM dbo.Pe|;").Items.Single().InsertText == "People", "schema objects");
 Check(Complete("SELECT 1 FROM Pe|;").Items.Single().InsertText == "dbo.People", "qualified object insertion");
+Check(SqlCompletion.Complete("SELECT * FROM No", 16, catalog, databases: new[] { "NOAH_BALCOR", "master" }).Items.Single().InsertText == "NOAH_BALCOR" &&
+    SqlCompletion.Complete("SELECT * FROM dbo.No", 20, catalog, databases: new[] { "NOAH_BALCOR" }).Items.Count == 0 &&
+    SqlCompletion.Complete("SELECT No", 9, catalog, databases: new[] { "NOAH_BALCOR" }).Items.All(i => i.InsertText != "NOAH_BALCOR"), "FROM offers databases before a schema");
 Check(Complete("SELECT p.| FROM dbo.People p INNER JOIN dbo.Orders o ON p.Id=o.PersonId;").Items.Count == 3, "join scope");
 Check(Complete("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT p.| FROM dbo.Orders p);").Items.All(i => i.Name != "Name"), "inner alias shadows outer");
 Check(Complete("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT p.| FROM dbo.Orders o);").Items.Count == 3, "correlated scope");
@@ -864,6 +867,11 @@ foreach (var (text, s, l) in new[] { (doc, doc.IndexOf("SELECT * FROM", StringCo
 var picker = SqlCompletion.WildcardColumns("SELECT p.* FROM dbo.People p", 9, assistTables);
 Check(picker.Wildcard.Start == 7 && picker.Wildcard.Text == "p.*" && picker.Columns.SequenceEqual(new[] { "p.Id", "p.FullName", "p.Born", "p.Code", "p.Stamp", "p.Twice" }), "column picker columns");
 
+var fileTime = new DateTime(2026, 9, 29, 14, 5, 9);
+Check(ResultGrid.FileName("SELECT * FROM lc.getRefDatabase WHERE descr LIKE '%x%'", fileTime) == "lc.getRefDatabase_20260929_140509", "result file name from FROM table");
+Check(ResultGrid.FileName("select a from Orders o join dbo.Lines l on l.id = o.id", fileTime) == "dbo.Orders_20260929_140509", "result file name defaults schema to dbo");
+Check(ResultGrid.FileName("SELECT 1", fileTime) == "Results_20260929_140509", "result file name without a table");
+Check(ResultGrid.FileName(null, fileTime) == "Results_20260929_140509", "result file name without query text");
 Check(ResultGrid.InClause(new[] { "3", "1", "3", null, "-2.5" }) == "(3, 1, -2.5)", "IN clause numbers, distinct, NULL dropped");
 Check(ResultGrid.InClause(new[] { "7", "007", "O'Brien" }) == "(N'7', N'007', N'O''Brien')", "IN clause mixed quotes all");
 Check(ResultGrid.InClause(new[] { "NULL" }) == "(N'NULL')", "IN clause literal NULL text is a string");

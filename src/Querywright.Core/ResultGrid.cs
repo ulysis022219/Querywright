@@ -21,6 +21,32 @@ namespace Querywright.Core
         private static readonly HashSet<string> BinaryTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "binary", "varbinary", "image", "timestamp", "rowversion", "geography", "geometry", "hierarchyid" };
 
+        /// <summary>
+        /// "Schema.Table_yyyyMMdd_HHmmss" from the first table in a FROM of <paramref name="sql"/> (the query
+        /// that filled the grid), else "Results_yyyyMMdd_HHmmss". Invalid file-name characters become '_'.
+        /// </summary>
+        public static string FileName(string? sql, DateTime now)
+        {
+            string name = "Results";
+            var fragment = new Microsoft.SqlServer.TransactSql.ScriptDom.TSql170Parser(true).Parse(new StringReader(sql ?? ""), out _);
+            var finder = new FirstTable();
+            fragment?.Accept(finder);
+            if (finder.Name != null)
+                name = (finder.Name.SchemaIdentifier?.Value ?? "dbo") + "." + finder.Name.BaseIdentifier.Value;
+            foreach (char bad in Path.GetInvalidFileNameChars()) name = name.Replace(bad, '_');
+            return name + "_" + now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+        }
+
+        private sealed class FirstTable : Microsoft.SqlServer.TransactSql.ScriptDom.TSqlFragmentVisitor
+        {
+            internal Microsoft.SqlServer.TransactSql.ScriptDom.SchemaObjectName? Name;
+            public override void Visit(Microsoft.SqlServer.TransactSql.ScriptDom.NamedTableReference node)
+            {
+                // ponytail: first table in visit order, #temp skipped; a CTE body is visited before its outer query.
+                if (Name == null && !node.SchemaObject.BaseIdentifier.Value.StartsWith("#", StringComparison.Ordinal)) Name = node.SchemaObject;
+            }
+        }
+
         /// <summary>A plain decimal number (no leading zeros, so codes like 007 stay strings).</summary>
         public static bool IsNumber(string? value) =>
             value != null && Regex.IsMatch(value, @"^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?$", RegexOptions.CultureInvariant);

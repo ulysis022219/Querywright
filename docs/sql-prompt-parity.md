@@ -18,7 +18,7 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 | F12 | Scripts object as ALTER in new tab; local declarations | host (locals; procedures, views, functions, triggers scripted as ALTER from the live connection; tables and unreadable objects defer to SSMS) | — |
 | Execute current statement | Shift+F5 runs the statement under the caret | host (selects the statement, then SSMS's own Query.Execute — only on explicit keypress) | — |
 | Tab coloring | Color query tabs per server/database environment | host (colored strip above the editor; rules in Options) | — |
-| Tab history | Searchable history of opened/closed tabs, restore after crash | host (local files, saved each minute and on close, newest 200; search, preview, reopen, delete; opt out in Options) | — |
+| Tab history | Searchable history of opened/closed tabs, restore after crash | host (local files, saved each minute and on close, newest 200; search, preview, reopen, rename, delete; opt out in Options) | — |
 | Quick info | Hover shows object definition / column type | host (variables, procedure parameters, table columns and types; cached metadata only) | — |
 
 ## 2. Formatting (Ctrl+K Ctrl+Y)

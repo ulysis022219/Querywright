@@ -16,22 +16,29 @@ namespace Querywright.Ssms
         {
             Title = "Querywright: rename " + what;
             DialogParts.Style(this);
-            Width = 1000; Height = 650; MinWidth = 600; MinHeight = 400;
+            Width = 1000; Height = 700; MinWidth = 640; MinHeight = 500;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
+            root.Children.Add(DialogParts.Header("Rename " + what, "Compare changes before applying them. SQL will not be executed."));
             var controls = new StackPanel();
             var name = new TextBox { Text = initialName, Margin = new Thickness(0, 4, 0, 8) };
             controls.Children.Add(new Label { Content = "_New " + what + " name:", Target = name });
             controls.Children.Add(name);
-            var status = new TextBlock { Text = "Preview changes before applying. SQL will not be executed.", TextWrapping = TextWrapping.Wrap };
+            var status = DialogParts.Status();
+            status.Text = "Enter a new name, then preview changes.";
             controls.Children.Add(status);
+            var progress = new ProgressBar { IsIndeterminate = true, Height = 3, Margin = new Thickness(0, 8, 0, 0), Visibility = Visibility.Collapsed };
+            System.Windows.Automation.AutomationProperties.SetName(progress, "Preparing rename preview");
+            controls.Children.Add(progress);
             DockPanel.SetDock(controls, Dock.Top); root.Children.Add(controls);
             var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
             var preview = new Button { Content = "_Preview", MinWidth = 90, Margin = new Thickness(4), IsDefault = true };
             var apply = new Button { Content = "_Apply", MinWidth = 90, Margin = new Thickness(4), IsEnabled = false };
+            apply.ToolTip = "Apply only the changes shown in Proposed SQL.";
+            preview.ToolTip = "Check the new name and generate a preview (Enter).";
             var cancel = new Button { Content = "_Cancel", MinWidth = 90, Margin = new Thickness(4), IsCancel = true };
             buttons.Children.Add(preview); buttons.Children.Add(apply); buttons.Children.Add(cancel);
-            DockPanel.SetDock(buttons, Dock.Bottom); root.Children.Add(buttons);
+            root.Children.Add(DialogParts.Footer(buttons));
             var grid = new Grid { Margin = new Thickness(0, 10, 0, 0) };
             grid.ColumnDefinitions.Add(new ColumnDefinition { MinWidth = 180 });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -57,7 +64,10 @@ namespace Querywright.Ssms
             async Task PreviewAsync()
             {
                 string requested = name.Text;
+                if (string.IsNullOrWhiteSpace(requested)) { status.Text = "Enter a name before previewing."; name.Focus(); return; }
                 preview.IsEnabled = false; apply.IsEnabled = false; Result = null;
+                preview.Content = "Preparing...";
+                progress.Visibility = Visibility.Visible;
                 status.Text = "Preparing preview...";
                 try
                 {
@@ -71,7 +81,7 @@ namespace Querywright.Ssms
                 {
                     if (IsLoaded) { proposed.Clear(); status.Text = error.Message; }
                 }
-                finally { if (IsLoaded) preview.IsEnabled = true; }
+                finally { if (IsLoaded) { preview.IsEnabled = true; preview.Content = "_Preview"; progress.Visibility = Visibility.Collapsed; } }
             }
             preview.Click += (sender, args) => { _ = PreviewAsync(); };
             apply.Click += (sender, args) => { if (Result != null) DialogResult = true; };

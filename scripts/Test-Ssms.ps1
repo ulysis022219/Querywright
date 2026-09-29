@@ -137,7 +137,7 @@ function Expect([string]$name, [string]$actual, [scriptblock]$ok) {
     $results[$name] = if (& $ok $actual) { 'PASS' } else { "FAIL: file contains [$actual]" }
 }
 
-$text = Session 'snippet' 'ssf' @() 'wait:3000|end|tab|wait:1000'
+$text = Session 'snippet' 'ssf' @() 'wait:3000|dialogs|end|tab|wait:1000'
 Expect 'ssf + Tab' $text { param($t) $t -eq 'SELECT * FROM ' }
 
 $text = Session 'definition' "DECLARE @abc int;`r`nSELECT @abc;" @() 'wait:3000|end|left:2|f12|wait:1000|type:Z'

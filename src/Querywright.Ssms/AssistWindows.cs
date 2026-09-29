@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -150,7 +151,7 @@ namespace Querywright.Ssms
             internal FileInfo File = null!;
             internal DateTime Time;
             internal bool Executed;
-            public override string ToString() => Time.ToString("yyyy-MM-dd HH:mm:ss") + (Executed ? "   \u25B6 executed" : "   edited");
+            public override string ToString() => Time.ToString("yyyy-MM-dd h:mm:ss tt", CultureInfo.InvariantCulture) + (Executed ? "   \u25B6 executed" : "   edited");
         }
 
         private sealed class Tab
@@ -168,7 +169,7 @@ namespace Querywright.Ssms
                 string first = Latest.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
                 if (first.Length > 60) first = first.Substring(0, 60) + "...";
                 string label = !string.IsNullOrEmpty(Name) ? "[" + Name + "]" : Caption.Length > 0 ? Caption + "   " + first : first;
-                return Versions[0].Time.ToString("yyyy-MM-dd HH:mm") + "   " + label + (Connection.Length > 0 ? "   (" + Connection + ")" : "");
+                return Versions[0].Time.ToString("yyyy-MM-dd h:mm tt", CultureInfo.InvariantCulture) + "   " + label + (Connection.Length > 0 ? "   (" + Connection + ")" : "");
             }
         }
 

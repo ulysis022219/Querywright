@@ -963,6 +963,18 @@ namespace Querywright.Ssms
             return cells;
         }
 
+        /// <summary>Selected text of the query window, else its whole text; null when there is none. Never logged.</summary>
+        private string? QueryTextOrNull()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try
+            {
+                var view = GetSqlView();
+                return view.Selection.IsEmpty ? view.TextSnapshot.GetText() : string.Concat(view.Selection.SelectedSpans.Select(s => s.GetText()));
+            }
+            catch (InvalidOperationException) { return null; }
+        }
+
         private async Task GridStatusAsync(string message, GridCells cells)
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -996,13 +1008,15 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var cells = ReadFocusedGrid(valuesOnly: false);
+            string baseName = ResultGrid.FileName(QueryTextOrNull(), DateTime.Now);
             string path = await Task.Run(() =>
             {
                 string folder = Path.Combine(Path.GetTempPath(), "Querywright", "Results");
                 Directory.CreateDirectory(folder);
-                foreach (var old in new DirectoryInfo(folder).GetFiles("Results-*.*").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)))
+                foreach (var old in new DirectoryInfo(folder).GetFiles("*.xlsx").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)))
                     try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-                string file = Path.Combine(folder, "Results-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".xlsx");
+                string file = Path.Combine(folder, baseName + ".xlsx");
+                for (int n = 2; File.Exists(file); n++) file = Path.Combine(folder, baseName + "_" + n + ".xlsx");
                 using (var stream = File.Create(file)) ResultGrid.Xlsx(stream, cells.Headers, cells.Types, cells.Rows);
                 return file;
             });
@@ -1016,7 +1030,7 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var cells = ReadFocusedGrid(valuesOnly: false);
-            var dialog = new Microsoft.Win32.SaveFileDialog { Title = "Querywright: save results as CSV", Filter = "CSV (comma delimited)|*.csv|All files|*.*", FileName = "Results.csv", OverwritePrompt = true };
+            var dialog = new Microsoft.Win32.SaveFileDialog { Title = "Querywright: save results as CSV", Filter = "CSV (comma delimited)|*.csv|All files|*.*", FileName = ResultGrid.FileName(QueryTextOrNull(), DateTime.Now) + ".csv", OverwritePrompt = true };
             if (dialog.ShowDialog() != true) return;
             string file = dialog.FileName;
             await Task.Run(() => File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, ','), new UTF8Encoding(true)));

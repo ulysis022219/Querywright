@@ -159,13 +159,18 @@ namespace Querywright.Ssms
     {
         private static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
         private volatile IReadOnlyList<SchemaTable>? tables;
+        private volatile IReadOnlyList<string>? databases;
 
         public CompletionStartData InitializeCompletion(CompletionTrigger trigger, SnapshotPoint location, CancellationToken token)
         {
             if (!EditorListener.IsSql(location.Snapshot.ContentType) || WorkbenchPackage.Instance == null)
                 return CompletionStartData.DoesNotParticipateInCompletion;
             // Connection lookup needs the UI thread, where the broker normally calls this.
-            if (Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess()) tables = WorkbenchPackage.Instance.CurrentTables();
+            if (Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess())
+            {
+                tables = WorkbenchPackage.Instance.CurrentTables();
+                databases = WorkbenchPackage.Instance.CurrentDatabases();
+            }
             if (trigger.Reason == CompletionTriggerReason.Insertion &&
                 !(char.IsLetter(trigger.Character) || trigger.Character == '_' || trigger.Character == '.' || trigger.Character == ' '))
                 return CompletionStartData.DoesNotParticipateInCompletion;
@@ -184,11 +189,12 @@ namespace Querywright.Ssms
             string sql = location.Snapshot.GetText();
             int position = location.Position;
             var tables = this.tables;
+            var databases = this.databases;
             var result = await Task.Run(() =>
             {
                 try
                 {
-                    return SqlCompletion.Complete(sql, position, tables); // null tables: keywords, functions, variables
+                    return SqlCompletion.Complete(sql, position, tables, databases: databases); // null tables: keywords, functions, variables
                 }
                 // ponytail: typing must never raise dialogs; explicit commands report schema errors.
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }

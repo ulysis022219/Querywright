@@ -89,7 +89,8 @@ SELECT SCHEMA_NAME(o.schema_id), o.name, p.name, " + TypeSql("p") + @", p.is_out
 FROM sys.objects AS o
 LEFT JOIN sys.parameters AS p ON p.object_id = o.object_id AND p.parameter_id > 0
 WHERE o.type IN ('P', 'PC') AND o.is_ms_shipped = 0
-ORDER BY 1, 2, p.parameter_id;";
+ORDER BY 1, 2, p.parameter_id;
+SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;";
 
         private static readonly ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>> cache =
             new ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>>();
@@ -97,7 +98,14 @@ ORDER BY 1, 2, p.parameter_id;";
         private static readonly ConcurrentDictionary<string, IReadOnlyList<SchemaProcedure>> procedureCache =
             new ConcurrentDictionary<string, IReadOnlyList<SchemaProcedure>>();
 
-        internal static void Refresh() { cache.Clear(); procedureCache.Clear(); }
+        private static readonly ConcurrentDictionary<string, IReadOnlyList<string>> databaseCache =
+            new ConcurrentDictionary<string, IReadOnlyList<string>>();
+
+        internal static void Refresh() { cache.Clear(); procedureCache.Clear(); databaseCache.Clear(); }
+
+        /// <summary>Databases on the server, read with the catalog; null until that load completes.</summary>
+        internal static IReadOnlyList<string> DatabaseNames(ActiveConnection connection) =>
+            connection != null && databaseCache.TryGetValue(connection.Key, out var databases) ? databases : null;
 
         /// <summary>Stored procedures read with the catalog; null until that load completes.</summary>
         internal static IReadOnlyList<SchemaProcedure> Procedures(ActiveConnection connection) =>
@@ -354,6 +362,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             {
                 var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View)>();
                 var parameters = new List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default)>();
+                var databases = new List<string>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
                 using (var sql = connection.Open())
                 {
@@ -373,6 +382,9 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                             while (reader.Read() && parameters.Count < MaxRows)
                                 parameters.Add((reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
                                     reader.IsDBNull(3) ? null : reader.GetString(3), !reader.IsDBNull(4) && reader.GetBoolean(4), !reader.IsDBNull(5) && reader.GetBoolean(5)));
+                        while (reader.Read()) { }
+                        if (reader.NextResult())
+                            while (reader.Read()) databases.Add(reader.GetString(0));
                     }
                 }
                 var foreignKeys = keys.GroupBy(k => k.Id).ToLookup(g => (g.First().Schema, g.First().Table),
@@ -381,6 +393,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     .Select(g => new SchemaTable(g.Key.Schema, g.Key.Table, g.Select(c => c.Column).ToArray(),
                         g.Select(c => c.Type).ToArray(), foreignKeys[g.Key].ToArray(), g.Select(c => c.Generated).ToArray(), g.First().View)).ToArray();
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
+                databaseCache[connection.Key] = databases;
                 procedureCache[connection.Key] = parameters.GroupBy(p => (p.Schema, p.Procedure))
                     .Select(g => new SchemaProcedure(g.Key.Schema, g.Key.Procedure, g.Where(p => p.Name != null)
                         .Select(p => new SchemaParameter(p.Name, p.Type, p.Output, p.Default)).ToArray())).ToArray();

@@ -74,6 +74,13 @@ namespace Querywright.Ssms
             return Merge(live, offline);
         }
 
+        /// <summary>Databases on the connected server for USE. Never blocks (typing path).</summary>
+        internal IReadOnlyList<string> CurrentDatabases()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            return options?.LiveMetadata != false ? LiveMetadata.DatabaseNames(LiveMetadata.Capture()) : null;
+        }
+
         /// <summary>Live procedures plus those created in the script itself. Never blocks (typing path).</summary>
         internal IReadOnlyList<SchemaProcedure> CurrentProcedures(string sql)
         {

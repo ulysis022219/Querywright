@@ -99,6 +99,9 @@ namespace Querywright.Ssms
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "TabHistory");
         private const int MaxFiles = 200, MaxChars = 2 * 1024 * 1024;
 
+        /// <summary>A user-given name for a saved tab lives next to it; the .sql write time is left alone.</summary>
+        internal static string TitlePath(string sqlPath) => Path.ChangeExtension(sqlPath, ".title");
+
         internal static void Save(Guid id, string text)
         {
             if (string.IsNullOrWhiteSpace(text) || text.Length > MaxChars) return; // ponytail: huge scripts are skipped, not truncated
@@ -107,7 +110,10 @@ namespace Querywright.Ssms
                 Directory.CreateDirectory(Folder);
                 File.WriteAllText(Path.Combine(Folder, id.ToString("N") + ".sql"), text, Encoding.UTF8);
                 foreach (var old in new DirectoryInfo(Folder).GetFiles("*.sql").OrderByDescending(f => f.LastWriteTimeUtc).Skip(MaxFiles))
+                {
                     old.Delete();
+                    File.Delete(TitlePath(old.FullName));
+                }
             }
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException)
             {
@@ -126,8 +132,10 @@ namespace Querywright.Ssms
         {
             internal FileInfo File = null!;
             internal string Body = "";
+            internal string? Name;
             public override string ToString()
             {
+                if (!string.IsNullOrEmpty(Name)) return File.LastWriteTime.ToString("yyyy-MM-dd HH:mm") + "   [" + Name + "]";
                 string first = Body.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
                 if (first.Length > 80) first = first.Substring(0, 80) + "...";
                 return File.LastWriteTime.ToString("yyyy-MM-dd HH:mm") + "   " + first;
@@ -143,7 +151,12 @@ namespace Querywright.Ssms
             if (Directory.Exists(folder))
                 foreach (var file in new DirectoryInfo(folder).GetFiles("*.sql").OrderByDescending(f => f.LastWriteTimeUtc))
                 {
-                    try { entries.Add(new Entry { File = file, Body = System.IO.File.ReadAllText(file.FullName) }); }
+                    try
+                    {
+                        string titlePath = TabHistory.TitlePath(file.FullName);
+                        entries.Add(new Entry { File = file, Body = System.IO.File.ReadAllText(file.FullName),
+                            Name = System.IO.File.Exists(titlePath) ? System.IO.File.ReadAllText(titlePath).Trim() : null });
+                    }
                     catch (IOException) { }
                     catch (UnauthorizedAccessException) { }
                 }
@@ -161,7 +174,8 @@ namespace Querywright.Ssms
             void Filter()
             {
                 string term = search.Text.Trim();
-                list.ItemsSource = entries.Where(e => term.Length == 0 || e.Body.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                list.ItemsSource = entries.Where(e => term.Length == 0 || e.Body.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0
+                    || (e.Name ?? "").IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
                 if (list.Items.Count > 0) list.SelectedIndex = 0;
             }
             search.TextChanged += (s, e) => Filter();
@@ -170,10 +184,21 @@ namespace Querywright.Ssms
             list.MouseDoubleClick += (s, e) => Open();
             root.Children.Add(DialogParts.Buttons(this,
                 ("_Open in new window", true, false, Open),
+                ("_Rename...", false, false, () =>
+                {
+                    if (!(list.SelectedItem is Entry entry)) return;
+                    var prompt = new PromptDialog("Querywright: rename saved tab", "_Name:", entry.Name ?? entry.ToString().Substring(19)) { Owner = this };
+                    if (prompt.ShowDialog() != true) return;
+                    string name = System.Text.RegularExpressions.Regex.Replace(prompt.Value, @"\s+", " ").Trim();
+                    if (name.Length > 200) name = name.Substring(0, 200);
+                    try { System.IO.File.WriteAllText(TabHistory.TitlePath(entry.File.FullName), name, Encoding.UTF8); }
+                    catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
+                    entry.Name = name; int index = list.SelectedIndex; Filter(); list.SelectedIndex = Math.Min(index, list.Items.Count - 1);
+                }),
                 ("_Delete", false, false, () =>
                 {
                     if (!(list.SelectedItem is Entry entry)) return;
-                    try { entry.File.Delete(); } catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
+                    try { entry.File.Delete(); System.IO.File.Delete(TabHistory.TitlePath(entry.File.FullName)); } catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
                     entries.Remove(entry); Filter();
                 }),
                 ("_Cancel", false, true, null)));

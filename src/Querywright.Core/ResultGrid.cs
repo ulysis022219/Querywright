@@ -91,7 +91,7 @@ namespace Querywright.Core
             return Quote(value);
         }
 
-        /// <summary>SQL Prompt's "Script as INSERT": CREATE TABLE #Results plus INSERT ... VALUES in batches of 1000 (SQL Server's row-constructor limit).</summary>
+        /// <summary>SQL Prompt's "Script as INSERT": DROP/CREATE TABLE #Results plus INSERT ... VALUES in batches of 1000 (SQL Server's row-constructor limit).</summary>
         public static string InsertScript(IReadOnlyList<string?> headers, IReadOnlyList<string?>? types, IReadOnlyList<string?[]> rows, string newline = "\r\n")
         {
             if (headers.Count == 0) throw new InvalidOperationException("The results have no columns.");
@@ -100,6 +100,7 @@ namespace Querywright.Core
             var reported = Enumerable.Range(0, headers.Count).Select(c => types != null && c < types.Count && BaseType(types[c]) != null ? types[c] : null).ToList();
             var builder = new StringBuilder();
             builder.Append("-- Querywright: results scripted as INSERT. Values are the grid's display text (floats rounded, long text may be truncated).").Append(newline);
+            builder.Append("DROP TABLE IF EXISTS #Results;").Append(newline);
             builder.Append("CREATE TABLE #Results").Append(newline).Append("(").Append(newline);
             for (int c = 0; c < names.Count; c++)
                 builder.Append("    ").Append(Bracket(names[c])).Append(' ').Append(ColumnType(reported[c], rows.Select(r => r[c])))
@@ -120,6 +121,7 @@ namespace Querywright.Core
                 }
             }
             builder.Append(newline).Append(newline).Append("SELECT * FROM #Results;").Append(newline);
+            builder.Append(newline).Append("DROP TABLE #Results;").Append(newline);
             return builder.ToString();
         }
 

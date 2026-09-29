@@ -82,6 +82,7 @@ namespace Querywright.Ssms
         internal EditorCommandFilter(IWpfTextView view, IAsyncCompletionBroker completion) { this.view = view; this.completion = completion; }
 
         private static bool IsTab(Guid group, uint id) => group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.TAB;
+        private static bool IsReturn(Guid group, uint id) => group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.RETURN;
         private static bool IsGoToDefinition(Guid group, uint id) =>
             group == VSConstants.GUID_VSStandardCommandSet97 && id == (uint)VSConstants.VSStd97CmdID.GotoDefn;
 
@@ -120,7 +121,11 @@ namespace Querywright.Ssms
                 }
                 if (IsGoToDefinition(group, id) && package.TryGoToDefinition(view)) return VSConstants.S_OK;
             }
-            return Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            // Tab/Enter that commits a table or procedure after INSERT INTO / EXEC fills the statement in the same keystroke.
+            bool committing = package != null && (IsTab(group, id) || IsReturn(group, id)) && completion.IsCompletionActive(view);
+            int result = Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            if (committing && ErrorHandler.Succeeded(result) && !completion.IsCompletionActive(view)) package!.TryFillAfterCommit(view);
+            return result;
         }
 
         public int QueryStatus(ref Guid group, uint count, OLECMD[] commands, IntPtr text)

@@ -826,7 +826,7 @@ Check(ResultGrid.ColumnNames(new[] { "Id", "(No column name)", "id", "", null, "
 var gridRows = new List<string?[]> { new[] { "1", "Ann", "2024-01-02 03:04:05.123", "0x0A", "12.50" }, new[] { "2", null, null, null, "-1" } };
 string insert = ResultGrid.InsertScript(new[] { "Id", "Name", "When", "Bin", "Amt" }, new[] { "int", "nvarchar(50)", "datetime", "varbinary(max)", null }, gridRows, "\n");
 Check(insert.Contains("    [Id] int NULL,\n    [Name] nvarchar(50) NULL,\n    [When] datetime NULL,\n    [Bin] varbinary(max) NULL,\n    [Amt] decimal(38, 10) NULL\n);") &&
-    insert.Contains("VALUES\n    (1, N'Ann', '2024-01-02T03:04:05.123', 0x0A, 12.50),\n    (2, NULL, NULL, NULL, -1);") && insert.EndsWith("SELECT * FROM #Results;\n"), "insert script: " + insert);
+    insert.Contains("VALUES\n    (1, N'Ann', '2024-01-02T03:04:05.123', 0x0A, 12.50),\n    (2, NULL, NULL, NULL, -1);") && insert.Contains("\nDROP TABLE IF EXISTS #Results;\nCREATE TABLE #Results") && insert.EndsWith("SELECT * FROM #Results;\n\nDROP TABLE #Results;\n"), "insert script: " + insert);
 string inferred = ResultGrid.InsertScript(new[] { "a", "b", "c" }, null, new List<string?[]> { new[] { "1", "x", "007" }, new[] { "3000000000", "it's", "1" } }, "\n");
 Check(inferred.Contains("[a] bigint NULL") && inferred.Contains("[b] nvarchar(4) NULL") && inferred.Contains("[c] nvarchar(3) NULL") && inferred.Contains("(1, N'x', N'007')") && inferred.Contains("(3000000000, N'it''s', N'1')"), "insert inferred types: " + inferred);
 Check(ResultGrid.InsertScript(new[] { "v" }, new[] { "int; DROP TABLE x" }, new List<string?[]> { new[] { "1" } }, "\n").Contains("[v] int NULL"), "insert rejects odd type text");

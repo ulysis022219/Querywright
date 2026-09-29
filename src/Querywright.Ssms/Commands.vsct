@@ -77,6 +77,30 @@
         <Parent guid="CommandsGuid" id="ToolsGroup" />
         <Strings><ButtonText>Querywright: execute current statement</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="PickColumns" priority="0x01A0" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: pick columns for *...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="TabHistory" priority="0x01B0" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: tab history...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="RenameObject" priority="0x01C0" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: smart rename object (script)...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="Encapsulate" priority="0x01D0" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: encapsulate as stored procedure...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="FixAtCaret" priority="0x01E0" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: fix issue at caret</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="FixAll" priority="0x01F0" type="Button">
+        <Parent guid="CommandsGuid" id="ToolsGroup" />
+        <Strings><ButtonText>Querywright: fix all issues</ButtonText></Strings>
+      </Button>
     </Buttons>
   </Commands>
   <KeyBindings>
@@ -104,6 +128,12 @@
       <IDSymbol name="UnusedDeclarations" value="0x010E" />
       <IDSymbol name="RefreshMetadata" value="0x010F" />
       <IDSymbol name="ExecuteStatement" value="0x0110" />
+      <IDSymbol name="PickColumns" value="0x0111" />
+      <IDSymbol name="TabHistory" value="0x0112" />
+      <IDSymbol name="RenameObject" value="0x0113" />
+      <IDSymbol name="Encapsulate" value="0x0114" />
+      <IDSymbol name="FixAtCaret" value="0x0115" />
+      <IDSymbol name="FixAll" value="0x0116" />
     </GuidSymbol>
   </Symbols>
 </CommandTable>

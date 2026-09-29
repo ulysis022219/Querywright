@@ -148,7 +148,7 @@ namespace Querywright.Core
             string target = parts[parts.Count - 1];
             if (parts.Count >= 2) return items.FirstOrDefault(t => names.Equals(schema(t), parts[parts.Count - 2]) && names.Equals(name(t), target));
             var matches = items.Where(t => names.Equals(name(t), target)).ToList();
-            return matches.FirstOrDefault(t => names.Equals(schema(t), defaultSchema)) ?? (matches.Count == 1 ? matches[0] : null);
+            return matches.FirstOrDefault(t => names.Equals(schema(t), defaultSchema)) ?? (matches.Select(schema).Distinct(names).Count() == 1 ? matches[0] : null);
         }
 
         /// <summary>CREATE/ALTER PROCEDURE headers in the script; batches that do not parse are skipped.</summary>

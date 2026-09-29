@@ -66,6 +66,9 @@ autoloads in the background so they are active as soon as a query window opens.
 - **Completion popup while typing:** tables after FROM/JOIN and columns after SELECT or `alias.`,
   from the offline schema file. Soft-selected after a space so Enter still inserts a newline.
   SSMS's built-in IntelliSense may show its own list alongside; live metadata is still pending.
+- **Connection and environment colors:** the bottom right of each connected query editor shows
+  `server · database`. Tools > Options > Querywright > Tab color rules (e.g. `prod=Red;test=Orange`,
+  matched against `server/database`) colors that label and a strip above the editor.
 - **Insert semicolons:** Tools > Querywright: insert semicolons terminates every statement,
   including inside IF/ELSE, TRY/CATCH and procedure bodies. Only semicolons change; verified by tokens.
 

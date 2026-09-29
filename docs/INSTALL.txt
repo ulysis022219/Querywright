@@ -3,9 +3,9 @@ Querywright development build for SSMS 22 (x64). Untested prototype; no affiliat
 Install
 1. Save your work and close SSMS 22.
 2. Right-click the zip > Properties > Unblock (if shown), then extract it.
-3. In the extracted folder open PowerShell and run:
-     powershell -ExecutionPolicy Bypass -File .\Install-Querywright.ps1
-   (Double-clicking Querywright.Ssms.vsix may also work, but the script targets the SSMS 22 instance explicitly.)
+3. Double-click Install.cmd in the extracted folder.
+   (Same as: powershell -ExecutionPolicy Bypass -File .\Install-Querywright.ps1
+    Double-clicking Querywright.Ssms.vsix may open Visual Studio's installer instead of SSMS's.)
 4. Start SSMS 22 and open a new query window.
 
 Try
@@ -16,4 +16,4 @@ Try
 - Tools menu: Querywright commands (format, analyze, semicolons, rename, ...)
 
 Uninstall
-  powershell -ExecutionPolicy Bypass -File .\Install-Querywright.ps1 -Uninstall
+  Close SSMS 22, then from a command prompt in this folder:  Install.cmd -Uninstall

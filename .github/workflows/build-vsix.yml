@@ -30,6 +30,7 @@ jobs:
           Copy-Item src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix $out
           Copy-Item scripts/Install-Development.ps1 (Join-Path $out 'Install-Querywright.ps1')
           Copy-Item scripts/Test-Package.ps1 $out
+          Copy-Item scripts/Install.cmd $out
           Copy-Item examples/offline-schema.sql $out
           Copy-Item docs/INSTALL.txt $out
           Compress-Archive -Path "$out/*" -DestinationPath dist/Querywright-ssms22.zip -Force

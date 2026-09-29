@@ -252,6 +252,20 @@ namespace Querywright.Core
             return unused;
         }
 
+        /// <summary>"Find invalid objects": a comment-only report of modules that no longer bind, sorted and de-duplicated.</summary>
+        public static string InvalidObjectsReport(string? database, IEnumerable<(string Schema, string Name, string Problem)> items, string newline = "\r\n")
+        {
+            string Line(string? text) => Regex.Replace(text ?? "", @"\s+", " ").Trim();
+            var rows = items.Select(i => (Object: Line(i.Schema) + "." + Line(i.Name), Problem: Line(i.Problem)))
+                .Distinct().OrderBy(i => i.Object, StringComparer.OrdinalIgnoreCase).ThenBy(i => i.Problem, StringComparer.Ordinal).ToList();
+            var report = new StringBuilder();
+            report.Append("-- Querywright: invalid objects in ").Append(Line(database ?? "(default database)")).Append(" (").Append(rows.Count)
+                .Append(rows.Count == 1 ? " issue" : " issues").Append("). Read-only check; nothing was altered.").Append(newline);
+            if (rows.Count == 0) report.Append("-- No invalid objects found.").Append(newline);
+            foreach (var row in rows) report.Append("-- ").Append(row.Object).Append(": ").Append(row.Problem).Append(newline);
+            return report.ToString();
+        }
+
         /// <summary>
         /// A reviewable script that renames an object with sp_rename and alters dependent modules to the new name.
         /// Querywright never runs it; dependents that do not parse are listed for manual review.

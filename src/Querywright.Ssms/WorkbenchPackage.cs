@@ -164,6 +164,7 @@ namespace Querywright.Ssms
             Add(0x0118, ScriptAsInsertAsync);
             Add(0x0119, OpenInExcelAsync);
             Add(0x011A, SaveAsCsvAsync);
+            Add(0x011B, FindInvalidObjectsAsync);
             Instance = this;
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
@@ -647,6 +648,20 @@ namespace Querywright.Ssms
             var dependents = await Task.Run(() => LiveMetadata.Dependents(connection, schema, target.Name));
             string script = SqlRefactoring.RenameObjectScript(schema, target.Name, newName, dependents);
             await OpenInNewQueryAsync(script, "Rename " + target.Name);
+        });
+
+        /// <summary>Find invalid objects: a read-only binding check of every module, reported in a new window.</summary>
+        private Task FindInvalidObjectsAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the database to check.");
+            var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
+            status?.SetText("Querywright: checking modules for invalid references...");
+            var items = await Task.Run(() => LiveMetadata.InvalidObjects(connection));
+            await OpenInNewQueryAsync(SqlRefactoring.InvalidObjectsReport(connection.Database, items), "Invalid objects");
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            status?.SetText("Querywright: " + items.Count + " invalid object issue(s) found.");
         });
 
         private Task EncapsulateAsync() => RunCommandAsync(async () =>

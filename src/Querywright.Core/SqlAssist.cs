@@ -177,20 +177,39 @@ namespace Querywright.Core
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (sql.Length > MaxInput) return Array.Empty<SchemaProcedure>();
             var result = new List<SchemaProcedure>();
+            // Every procedure header spells PROC, so other batches cannot add one; the rest are cached since typing changes one batch at a time.
             foreach (var batch in Batches(sql))
-            {
-                var fragment = new TSql170Parser(true).Parse(new StringReader(batch), out var errors);
-                if (errors.Count > 0) continue;
+                if (batch.IndexOf("PROC", StringComparison.OrdinalIgnoreCase) >= 0) result.AddRange(BatchProcedures(batch, defaultSchema));
+            return result;
+        }
+
+        private static readonly Dictionary<string, SchemaProcedure[]> batchProcedures = new Dictionary<string, SchemaProcedure[]>();
+        private static long batchProcedureChars;
+
+        private static SchemaProcedure[] BatchProcedures(string batch, string defaultSchema)
+        {
+            string key = defaultSchema + "\0" + batch;
+            lock (batchProcedures) if (batchProcedures.TryGetValue(key, out var cached)) return cached;
+            var found = new List<SchemaProcedure>();
+            var fragment = new TSql170Parser(true).Parse(new StringReader(batch), out var errors);
+            if (errors.Count == 0)
                 foreach (var body in ((TSqlScript)fragment).Batches.SelectMany(b => b.Statements).OfType<ProcedureStatementBody>())
                 {
                     var name = body.ProcedureReference?.Name;
                     if (name == null || name.DatabaseIdentifier != null) continue;
-                    result.Add(new SchemaProcedure(name.SchemaIdentifier?.Value ?? defaultSchema, name.BaseIdentifier.Value,
+                    found.Add(new SchemaProcedure(name.SchemaIdentifier?.Value ?? defaultSchema, name.BaseIdentifier.Value,
                         body.Parameters.Select(p => new SchemaParameter(p.VariableName.Value, SchemaCatalog.TypeName(p.DataType),
                             p.Modifier == ParameterModifier.Output, p.Value != null)).ToArray()));
                 }
+            var procedures = found.ToArray();
+            lock (batchProcedures)
+            {
+                // ponytail: dropping everything at the cap is simpler than LRU; one keystroke refills it.
+                if (batchProcedureChars + key.Length > 4_000_000) { batchProcedures.Clear(); batchProcedureChars = 0; }
+                if (!batchProcedures.ContainsKey(key)) batchProcedureChars += key.Length;
+                batchProcedures[key] = procedures;
             }
-            return result;
+            return procedures;
         }
 
         private static IEnumerable<string> Batches(string sql)

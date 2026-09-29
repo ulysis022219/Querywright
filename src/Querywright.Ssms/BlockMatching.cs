@@ -143,14 +143,24 @@ namespace Querywright.Ssms
         {
             this.view = view;
             cache = BlockCache.For(view.TextBuffer);
-            view.Caret.PositionChanged += (sender, args) => Refresh(view.TextSnapshot);
+            view.Caret.PositionChanged += (sender, args) => { if (BlockAtCaret() != shown) Refresh(view.TextSnapshot); };
             cache.Updated += snapshot => Refresh(view.TextSnapshot);
+        }
+
+        // Caret moves that keep the same pair (usually none) repaint nothing.
+        private SqlBlock shown;
+
+        private SqlBlock BlockAtCaret()
+        {
+            if (!(cache.Latest is { } latest)) return null;
+            return BlockCache.At(latest.Blocks, view.Caret.Position.BufferPosition.TranslateTo(latest.Snapshot, PointTrackingMode.Negative));
         }
 
         private void Refresh(ITextSnapshot snapshot) => TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length)));
 
         public IEnumerable<ITagSpan<TextMarkerTag>> GetTags(NormalizedSnapshotSpanCollection spans)
         {
+            shown = null;
             if (spans.Count == 0) yield break;
             var latest = cache.Latest;
             if (latest == null) yield break;
@@ -158,7 +168,7 @@ namespace Querywright.Ssms
             var target = spans[0].Snapshot;
             var caret = view.Caret.Position.BufferPosition;
             if (caret.Snapshot != target) yield break;
-            var block = BlockCache.At(blocks, caret.TranslateTo(snapshot, PointTrackingMode.Negative));
+            var block = shown = BlockCache.At(blocks, caret.TranslateTo(snapshot, PointTrackingMode.Negative));
             if (block == null) yield break;
             foreach (var span in BlockCache.Spans(block))
                 yield return new TagSpan<TextMarkerTag>(new SnapshotSpan(snapshot, span).TranslateTo(target, SpanTrackingMode.EdgeExclusive), Marker);

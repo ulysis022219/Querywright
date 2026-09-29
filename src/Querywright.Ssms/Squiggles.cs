@@ -41,6 +41,24 @@ namespace Querywright.Ssms
             Schedule();
         }
 
+        private static (string Path, DateTime Written, WorkbenchSettings Settings) loaded;
+
+        // Re-read only when the file changes; every pause in typing would otherwise parse it again.
+        private static WorkbenchSettings Settings(string path)
+        {
+            if (path.Length == 0) return new WorkbenchSettings();
+            try
+            {
+                var written = System.IO.File.GetLastWriteTimeUtc(path);
+                var cached = loaded;
+                if (cached.Path == path && cached.Written == written) return cached.Settings;
+                var settings = WorkbenchSettings.Load(path);
+                loaded = (path, written, settings);
+                return settings;
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { return new WorkbenchSettings(); }
+        }
+
         private void Schedule()
         {
             pending?.Cancel();
@@ -53,9 +71,7 @@ namespace Querywright.Ssms
                     await Task.Delay(700, cancellation.Token);
                     if (snapshot.Length > 2_000_000) return;
                     string settingsFile = WorkbenchPackage.Instance?.SettingsFile ?? "";
-                    WorkbenchSettings settings;
-                    try { settings = settingsFile.Length == 0 ? new WorkbenchSettings() : WorkbenchSettings.Load(settingsFile); }
-                    catch (Exception error) when (!(error is OutOfMemoryException)) { settings = new WorkbenchSettings(); }
+                    var settings = Settings(settingsFile);
                     var result = SqlAnalysis.Analyze(snapshot.GetText(), cancellation.Token, settings);
                     latest = (snapshot, result.Diagnostics.Where(d => d.Rule.StartsWith("SW", StringComparison.Ordinal))
                         .Select(d => (d, settings.Severity(d.Rule))).Where(d => d.Item2 != RuleSeverity.Disabled).ToArray());

@@ -238,7 +238,12 @@ namespace Querywright.Core
             Resolver? resolver = null;
             if (!sql.Contains(Marker))
             {
-                var fragment = parser.Parse(new StringReader(sql.Substring(0, start) + Marker + sql.Substring(end)), out var errors);
+                // Only the caret's batch is parsed: faster on long scripts, and syntax errors in other batches no longer turn resolution off.
+                int batchEnd = caret;
+                while (batchEnd < tokens.Count && tokens[batchEnd].Type != TSqlTokenType.Go) batchEnd++;
+                int from = batchStart == 0 ? 0 : tokens[batchStart - 1].Offset + tokens[batchStart - 1].Text.Length;
+                int to = batchEnd < tokens.Count ? tokens[batchEnd].Offset : sql.Length;
+                var fragment = parser.Parse(new StringReader(sql.Substring(from, start - from) + Marker + sql.Substring(end, to - end)), out var errors);
                 if (errors.Count == 0) { resolver = new Resolver(catalog, defaultSchema, names); fragment.Accept(resolver); }
             }
             var scan = new Scanner(sql, segment, catalog, defaultSchema, names);

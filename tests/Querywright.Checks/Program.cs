@@ -244,6 +244,9 @@ Check(Complete("SELECT FROM WHERE;\nGO\nSELECT p.| FROM dbo.People p;\nGO\nSELEC
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Any(i => i.InsertText == "[odd]]column]"), "escaped insertion");
 Check(Complete("SELECT 1 FROM dbo.Pe|;").Items.Single().InsertText == "People", "schema objects");
 Check(Complete("SELECT 1 FROM Pe|;").Items.Single().InsertText == "dbo.People", "qualified object insertion");
+Check(SqlCompletion.Complete("SELECT * FROM No", 16, catalog, databases: new[] { "NOAH_BALCOR", "master" }).Items.Single().InsertText == "NOAH_BALCOR" &&
+    SqlCompletion.Complete("SELECT * FROM dbo.No", 20, catalog, databases: new[] { "NOAH_BALCOR" }).Items.Count == 0 &&
+    SqlCompletion.Complete("SELECT No", 9, catalog, databases: new[] { "NOAH_BALCOR" }).Items.All(i => i.InsertText != "NOAH_BALCOR"), "FROM offers databases before a schema");
 Check(Complete("SELECT p.| FROM dbo.People p INNER JOIN dbo.Orders o ON p.Id=o.PersonId;").Items.Count == 3, "join scope");
 Check(Complete("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT p.| FROM dbo.Orders p);").Items.All(i => i.Name != "Name"), "inner alias shadows outer");
 Check(Complete("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT p.| FROM dbo.Orders o);").Items.Count == 3, "correlated scope");

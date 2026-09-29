@@ -304,6 +304,9 @@ namespace Querywright.Core
                     Add(Kind.Variable, v.Key, v.Key, v.Value ? "table variable" : "variable");
                 foreach (var table in catalog)
                     Add(Kind.Table, table.Name, QuoteIfNeeded(table.Schema) + "." + QuoteIfNeeded(table.Name), "table " + table.Schema + "." + table.Name);
+                // FROM | also offers databases, for OtherDb.schema.table.
+                if (context == Context.Table)
+                    foreach (var database in databases ?? Array.Empty<string>()) Add(Kind.Table, database, QuoteIfNeeded(database), "database");
                 if (context != Context.Table)
                 {
                     foreach (var join in Joins(segment, at, scan, catalog, defaultSchema, names)) items.Add((join, Kind.Join));

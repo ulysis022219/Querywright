@@ -12,11 +12,13 @@ on:
         default: ''
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write # dev prerelease
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -93,6 +95,8 @@ jobs:
   release:
     # A v* tag push, or Run workflow with a release tag, publishes a release after the SSMS end-to-end tests pass.
     needs: [build, e2e]
+    permissions:
+      contents: write
     if: github.ref_type == 'tag' || inputs.release != ''
     runs-on: ubuntu-latest
     steps:

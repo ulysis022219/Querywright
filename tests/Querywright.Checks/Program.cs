@@ -611,3 +611,117 @@ Check(SqlNavigation.FindDefinition("EXEC otherdb.dbo.p;", 16) == null, "cross-da
 var procTarget = SqlNavigation.FindDefinition("EXEC dbo.usp_Load @x = 1;", 10);
 Check(procTarget != null && procTarget.Offset < 0 && procTarget.Schema == "dbo" && procTarget.Name == "usp_Load", "F12 on procedure names object");
 Console.WriteLine($"PASS: {checks} total checks including object F12 targets. SSMS integration not tested.");
+
+// INSERT/EXEC fill, quick info, auto-fixes, object refactors, column picker.
+var assistTables = SchemaCatalog.FromDdl("CREATE TABLE dbo.People (Id int IDENTITY PRIMARY KEY, FullName nvarchar(100) NOT NULL, Born date NULL, Code char(3), Stamp rowversion, Twice AS Id * 2);\n" +
+    "CREATE TABLE sales.Orders (OrderId int NOT NULL, Total decimal(9,2), Ref uniqueidentifier, At datetimeoffset, Blob varbinary(max), Doc xml, Odd sql_variant);\n" +
+    "CREATE TABLE dbo.OnlyId (Id int IDENTITY);");
+var procs = SqlAssist.ProceduresFromScript("CREATE PROCEDURE dbo.usp_Add @Name nvarchar(50), @Age int = 18, @NewId int OUTPUT AS SELECT 1;\nGO\nCREATE PROC NoArgs AS SELECT 1;\nGO\nCREATE PROC broken AS SELEC");
+Check(procs.Count == 2 && procs[0].Parameters.Count == 3 && procs[0].Parameters[1].HasDefault && procs[0].Parameters[2].IsOutput &&
+    procs[0].Parameters[0].Type == "nvarchar(50)" && procs[1].Schema == "dbo", "procedures from script skip broken batches");
+Check(assistTables[0].Generated!.SequenceEqual(new[] { true, false, false, false, true, true }), "identity, rowversion and computed are generated");
+TextEdit? Fill(string text, IReadOnlyList<SchemaProcedure>? p = null)
+{
+    int position = text.IndexOf('|');
+    return SqlAssist.FillStatement(text.Remove(position, 1), position, assistTables, p ?? procs);
+}
+var insertFill = Fill("INSERT INTO dbo.People|");
+Check(insertFill != null && insertFill.Start == 22 && insertFill.Length == 0 && insertFill.Text ==
+    "\n(\n    FullName,\n    Born,\n    Code\n)\nVALUES\n(\n    N'',       -- FullName - nvarchar(100)\n    GETDATE(), -- Born - date\n    ''         -- Code - char(3)\n)", "INSERT fill skips generated columns");
+var indented = Fill("BEGIN\r\n\tINSERT People|\r\nEND");
+Check(indented != null && indented.Text.StartsWith("\r\n\t(\r\n\t    FullName,") && indented.Text.EndsWith("\r\n\t)"), "INSERT fill keeps indent and CRLF");
+var orders = Fill("insert sales.[Orders]|;");
+Check(orders != null && orders.Text.Contains("    0,                   -- OrderId - int") && orders.Text.Contains("NEWID(),") && orders.Text.Contains("SYSDATETIMEOFFSET(),") &&
+    orders.Text.Contains("0x,") && orders.Text.Contains("N'',") && orders.Text.Contains("    NULL                 -- Odd - sql_variant"), "INSERT fill placeholders by type");
+Check(Fill("INSERT OnlyId|")!.Text == " DEFAULT VALUES", "all generated uses DEFAULT VALUES");
+Check(Fill("INSERT INTO dbo.People| (Id) VALUES (1)") == null && Fill("INSERT INTO dbo.People|\nSELECT 1") == null && Fill("INSERT INTO dbo.People| x") == null,
+    "INSERT fill skips continued statements");
+Check(Fill("INSERT INTO dbo.People|\nSELECT 2;") == null && Fill("INSERT INTO dbo.Peo|ple") == null && Fill("INSERT INTO dbo.Missing|") == null &&
+    Fill("SELECT * FROM dbo.People|") == null && Fill("-- INSERT INTO dbo.People|") == null && Fill("SELECT 'INSERT INTO dbo.People|") == null, "INSERT fill only after INSERT target");
+Check(Fill("INSERT INTO dbo.People|\nGO") != null && Fill("INSERT INTO dbo.People|\n\nUPDATE x SET y = 1") != null && Fill("INSERT INTO dbo.People |") == null, "INSERT fill before later statements");
+Check(Fill("INSERT INTO [dbo].[People]|") != null && Fill("INSERT INTO otherdb.dbo.People|") != null && Fill("INSERT INTO x.dbo.People|") != null, "bracketed and three-part names");
+var exec = Fill("EXEC dbo.usp_Add|");
+Check(exec != null && exec.Text == " @Name = N'',            -- nvarchar(50)\n                 @Age = DEFAULT,         -- int\n                 @NewId = @NewId OUTPUT  -- int", "EXEC fill aligned: " + exec?.Text);
+var execRc = Fill("\tEXECUTE @rc = usp_Add|;");
+Check(execRc != null && execRc.Text.Split('\n')[1].StartsWith("\t                      @Age"), "EXEC @rc fill aligns with tabs");
+Check(Fill("EXEC NoArgs|") == null && Fill("EXEC dbo.usp_Add| @Name = N'x'") == null && Fill("EXEC dbo.usp_Add| 'x'") == null && Fill("EXEC @sql|") == null, "EXEC fill skips");
+Check(Fill("EXEC dbo.usp_Add|\n@Name = 1") == null, "EXEC fill skips arguments on next line");
+
+string? Info(string text)
+{
+    int position = text.IndexOf('|');
+    return SqlAssist.Describe(text.Remove(position, 1), position, assistTables, procs);
+}
+Check(Info("DECLARE @x nvarchar(20) = N'';\nSELECT @x|;") == "@x: variable nvarchar(20)", "quick info variable type");
+Check(Info("DECLARE @t TABLE (a int);\nSELECT * FROM @|t") == "@t: table variable", "quick info table variable");
+Check(Info("CREATE PROC p @p int AS SELECT @p|;") == "@p: parameter int", "quick info parameter");
+Check(Info("DECLARE @x int;\nSELECT @x| FROM") == "@x: variable int", "quick info variable in unfinished SQL");
+Check(Info("SELECT @@IDENT|ITY") == null && Info("SELECT | 1") == null, "quick info nothing");
+var tableInfo = Info("SELECT * FROM dbo.Peo|ple");
+Check(tableInfo != null && tableInfo.StartsWith("table dbo.People") && tableInfo.Contains("  FullName nvarchar(100)") && tableInfo.Contains("  Twice"), "quick info table columns");
+Check(Info("SELECT p.Full|Name FROM dbo.People p") == "FullName: column nvarchar(100) p.FullName", "quick info column");
+Check(Info("SELECT p|.FullName FROM dbo.People p")!.StartsWith("p: alias"), "quick info alias");
+var procInfo = Info("EXEC dbo.usp_A|dd");
+Check(procInfo != null && procInfo.StartsWith("procedure dbo.usp_Add") && procInfo.Contains("@NewId int OUTPUT") && procInfo.Contains("@Age int = default"), "quick info procedure");
+var wideTable = new SchemaTable("dbo", "Wide", Enumerable.Range(0, 60).Select(i => "c" + i).ToArray());
+Check(SqlAssist.Describe("SELECT * FROM Wide", 16, new[] { wideTable }, null)!.EndsWith("... 10 more"), "quick info caps columns");
+
+string FixOne(string sql, string rule, IReadOnlyList<SchemaTable>? t = null)
+{
+    var d = SqlAnalysis.Analyze(sql).Diagnostics.First(x => x.Rule == rule);
+    var e = SqlAnalysis.Fix(sql, d, t);
+    return e == null ? "<null>" : sql.Substring(0, e.Start) + e.Text + sql.Substring(e.Start + e.Length);
+}
+Check(FixOne("SELECT @@IDENTITY;", "SW009") == "SELECT SCOPE_IDENTITY();", "fix @@IDENTITY");
+Check(FixOne("EXEC usp_Load;", "SW017") == "EXEC dbo.usp_Load;", "fix unqualified procedure");
+Check(FixOne("SELECT 1 WHERE @a = NULL;", "SW003") == "SELECT 1 WHERE @a IS NULL;" && FixOne("SELECT 1 WHERE NULL <> (@a + 1);", "SW003") == "SELECT 1 WHERE (@a + 1) IS NOT NULL;" &&
+    FixOne("SELECT 1 WHERE @a != NULL;", "SW003") == "SELECT 1 WHERE @a IS NOT NULL;" && FixOne("SELECT 1 WHERE @a > NULL;", "SW003") == "<null>", "fix NULL comparison");
+Check(FixOne("CREATE TABLE t (a TEXT NOT NULL, b ntext NULL);", "SW010") == "CREATE TABLE t (a VARCHAR(MAX) NOT NULL, b ntext NULL);" &&
+    FixOne("DECLARE @i [image];SELECT @i;", "SW010") == "DECLARE @i varbinary(max);SELECT @i;", "fix deprecated types");
+Check(FixOne("CREATE PROCEDURE dbo.p\nAS\nBEGIN\n    SELECT 1;\nEND", "SW015") == "CREATE PROCEDURE dbo.p\nAS\nBEGIN\n    SET NOCOUNT ON;\n    SELECT 1;\nEND" &&
+    FixOne("CREATE PROC dbo.p AS SELECT 1;", "SW015") == "CREATE PROC dbo.p AS SET NOCOUNT ON; SELECT 1;", "fix missing NOCOUNT");
+Check(FixOne("DECLARE @a int;\nDECLARE @b int = 1;\nSELECT @a;", "SW016") == "DECLARE @a int;\nSELECT @a;" &&
+    FixOne("DECLARE @a int, @b int;\nSELECT @b;", "SW016") == "DECLARE @b int;\nSELECT @b;" && FixOne("DECLARE @a int, @b int;\nSELECT @a;", "SW016") == "DECLARE @a int;\nSELECT @a;" &&
+    FixOne("SELECT 1; DECLARE @t TABLE (a int);", "SW016") == "SELECT 1; ", "fix unused declaration");
+Check(FixOne("SELECT * FROM dbo.People;", "SW001", assistTables) == "SELECT Id, FullName, Born, Code, Stamp, Twice FROM dbo.People;" &&
+    FixOne("SELECT * FROM dbo.Missing;", "SW001", assistTables) == "<null>" && FixOne("SELECT * FROM dbo.People;", "SW001") == "<null>", "fix wildcard needs metadata");
+var fixedAll = SqlAnalysis.FixAll("DECLARE @unused int, @x int = 1;\nSELECT @@IDENTITY WHERE @x = NULL;\nEXEC usp_Load;\n-- querywright-disable-next-line SW009\nSELECT @@IDENTITY;");
+Check(fixedAll.Fixed == 4 && fixedAll.Text == "DECLARE @x int = 1;\nSELECT SCOPE_IDENTITY() WHERE @x IS NULL;\nEXEC dbo.usp_Load;\n-- querywright-disable-next-line SW009\nSELECT @@IDENTITY;", "fix all respects suppression: " + fixedAll.Text);
+Check(SqlAnalysis.FixAll("SELECT @@IDENTITY FROM").Fixed == 0 && SqlAnalysis.FixAll("SELEC 1").Text == "dbo.SELEC 1", "fix all needs parsable SQL");
+
+var renameScript = SqlRefactoring.RenameObjectScript("dbo", "People", "Person", new[]
+{
+    ("dbo", "vPeople", "CREATE VIEW dbo.vPeople AS SELECT People.Id, dbo.People.FullName FROM People JOIN sales.People sp ON 1 = 1 -- People\n"),
+    ("dbo", "usp_P", "CREATE PROCEDURE dbo.usp_P AS SELECT p.Id FROM dbo.People AS p WHERE dbo.People_Count() > 0 AND 'People' <> ''"),
+    ("sales", "vS", "CREATE VIEW sales.vS AS SELECT 1 AS a FROM People"),
+    ("dbo", "bad", "CREATE VIEW dbo.bad AS SELEC"),
+}, "\n");
+Check(renameScript.Contains("EXEC sys.sp_rename N'[dbo].[People]', N'Person';\nGO") &&
+    renameScript.Contains("ALTER VIEW dbo.vPeople AS SELECT Person.Id, dbo.Person.FullName FROM Person JOIN sales.People sp ON 1 = 1 -- People\nGO") &&
+    renameScript.Contains("ALTER PROCEDURE dbo.usp_P AS SELECT p.Id FROM dbo.Person AS p WHERE dbo.People_Count() > 0 AND 'People' <> ''") &&
+    renameScript.Contains("-- sales.vS: no direct reference") && renameScript.Contains("-- dbo.bad: definition could not be parsed"), "rename object script: " + renameScript);
+Check(SqlRefactoring.RenameObjectScript("dbo", "fn", "fn2", new[] { ("dbo", "v", "CREATE VIEW v AS SELECT dbo.fn(1) AS x") }, "\n").Contains("ALTER VIEW v AS SELECT dbo.fn2(1) AS x"), "rename scalar function callers");
+Check(SqlRefactoring.RenameObjectScript("dbo", "t", "a b", null, "\n").Contains("N'a b'") && SqlRefactoring.RenameObjectScript("dbo", "t", "it's", null).Contains("N'it''s'"), "rename quotes new name");
+foreach (var bad in new[] { "", "t", new string('x', 129), "a\nb" })
+{
+    try { SqlRefactoring.RenameObjectScript("dbo", "t", bad, null); throw new Exception("Expected rename rejection"); }
+    catch (ArgumentException) { checks++; }
+}
+Check(SqlRefactoring.RenameObjectScript("dbo", "People", "P", new[] { ("dbo", "v", "CREATE VIEW v AS SELECT People.Id FROM dbo.Orders AS People") }, "\n").Contains("-- dbo.v: no direct reference"), "alias spelled like object is left alone");
+
+string doc = "DECLARE @id int = 1, @name nvarchar(50);\nDECLARE @t TABLE (a int);\nSELECT @name = FullName FROM dbo.People WHERE Id = @id;\nPRINT @name;";
+int selStart = doc.IndexOf("SELECT"), selLen = doc.IndexOf("\nPRINT") - selStart;
+var encapsulated = SqlRefactoring.EncapsulateAsProcedure(doc, selStart, selLen, "dbo", "usp_GetName", "\n");
+Check(encapsulated == "CREATE PROCEDURE dbo.usp_GetName\n    @name nvarchar(50) OUTPUT,\n    @id int\nAS\nBEGIN\n    SET NOCOUNT ON;\nSELECT @name = FullName FROM dbo.People WHERE Id = @id;\nEND;\nGO\n-- EXEC dbo.usp_GetName @name = @name OUTPUT, @id = @id;\n", "encapsulate: " + encapsulated);
+Check(SqlRefactoring.EncapsulateAsProcedure("SELECT @q;", 0, 10, "dbo", "p", "\n").Contains("@q sql_variant"), "encapsulate unknown type");
+Check(SqlRefactoring.EncapsulateAsProcedure("SELECT 1;", 0, 9, "my schema", "select", "\n").StartsWith("CREATE PROCEDURE [my schema].[select]\nAS"), "encapsulate quotes names");
+Check(SqlRefactoring.EncapsulateAsProcedure("DECLARE @t TABLE (a int); SELECT * FROM @t;", 0, 43, "dbo", "p", "\n").Contains("DECLARE @t TABLE"), "encapsulate local table variable");
+foreach (var (text, s, l) in new[] { (doc, doc.IndexOf("SELECT * FROM", StringComparison.Ordinal) < 0 ? doc.IndexOf("@t") : 0, 0), ("SELECT * FROM @t;", 0, 17), ("SELECT 1;\nGO\nSELECT 2;", 0, 20), ("SELEC 1", 0, 7), ("CREATE VIEW v AS SELECT 1 a", 0, 27) })
+{
+    try { SqlRefactoring.EncapsulateAsProcedure(text, s, l, "dbo", "p"); throw new Exception("Expected encapsulate rejection for " + text); }
+    catch (Exception e) when (e is ArgumentException || e is InvalidOperationException || e is FormatException) { checks++; }
+}
+
+var picker = SqlCompletion.WildcardColumns("SELECT p.* FROM dbo.People p", 9, assistTables);
+Check(picker.Wildcard.Start == 7 && picker.Wildcard.Text == "p.*" && picker.Columns.SequenceEqual(new[] { "p.Id", "p.FullName", "p.Born", "p.Code", "p.Stamp", "p.Twice" }), "column picker columns");
+Console.WriteLine($"PASS: {checks} total checks including fill, quick info, fixes and object refactors. SSMS integration not tested.");

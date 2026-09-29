@@ -252,6 +252,94 @@ namespace Querywright.Core
             return unused;
         }
 
+        /// <summary>
+        /// A reviewable script that renames an object with sp_rename and alters dependent modules to the new name.
+        /// Querywright never runs it; dependents that do not parse are listed for manual review.
+        /// </summary>
+        public static string RenameObjectScript(string schema, string oldName, string newName,
+            IReadOnlyList<(string Schema, string Name, string Definition)>? dependents, string newline = "\r\n")
+        {
+            if (string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(oldName)) throw new ArgumentException("Choose an object to rename.");
+            if (string.IsNullOrWhiteSpace(newName) || newName.Length > 128 || newName.IndexOfAny(new[] { '\r', '\n' }) >= 0)
+                throw new ArgumentException("Enter a new name of at most 128 characters.", nameof(newName));
+            if (string.Equals(oldName, newName, StringComparison.Ordinal)) throw new ArgumentException("The new name matches the current name.", nameof(newName));
+            string Literal(string text) => "N'" + text.Replace("'", "''") + "'";
+            string Bracket(string text) => "[" + text.Replace("]", "]]") + "]";
+            var script = new StringBuilder();
+            script.Append("-- Rename ").Append(schema).Append('.').Append(oldName).Append(" to ").Append(newName).Append(". Review, then run it yourself.").Append(newline);
+            script.Append("-- Querywright does not execute this script. Check dynamic SQL and other databases separately.").Append(newline);
+            script.Append("EXEC sys.sp_rename ").Append(Literal(Bracket(schema) + "." + Bracket(oldName))).Append(", ").Append(Literal(newName)).Append(';').Append(newline);
+            script.Append("GO").Append(newline);
+            var names = StringComparer.OrdinalIgnoreCase;
+            string replacement = SqlCompletion.QuoteIfNeeded(newName);
+            foreach (var dependent in dependents ?? Array.Empty<(string, string, string)>())
+            {
+                var parser = new TSql170Parser(true);
+                var fragment = dependent.Definition == null ? null : parser.Parse(new StringReader(dependent.Definition), out var errors) is var f && errors.Count == 0 ? f : null;
+                if (fragment == null)
+                {
+                    script.Append("-- ").Append(dependent.Schema).Append('.').Append(dependent.Name).Append(": definition could not be parsed; update it by hand.").Append(newline);
+                    continue;
+                }
+                var references = new References(schema, oldName, dependent.Schema);
+                fragment.Accept(references);
+                if (!references.Aliased) references.Items.AddRange(references.Qualifiers);
+                if (references.Items.Count == 0)
+                {
+                    script.Append("-- ").Append(dependent.Schema).Append('.').Append(dependent.Name).Append(": no direct reference found (dynamic SQL?); review by hand.").Append(newline);
+                    continue;
+                }
+                var output = new StringBuilder(dependent.Definition);
+                foreach (var identifier in references.Items.GroupBy(i => i.StartOffset).Select(g => g.First()).OrderByDescending(i => i.StartOffset))
+                    output.Remove(identifier.StartOffset, identifier.FragmentLength).Insert(identifier.StartOffset, replacement);
+                script.Append(CreateToAlter(output.ToString()).Trim()).Append(newline).Append("GO").Append(newline);
+            }
+            return script.ToString();
+        }
+
+        /// <summary>
+        /// Wraps the selected statements in CREATE PROCEDURE. Variables used but not declared in the selection become parameters,
+        /// typed from their declarations elsewhere in the script (sql_variant when unknown); assigned ones become OUTPUT.
+        /// </summary>
+        public static string EncapsulateAsProcedure(string sql, int start, int length, string schema, string name, string newline = "\r\n")
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (start < 0 || length <= 0 || start + length > sql.Length) throw new ArgumentOutOfRangeException(nameof(length), "Select the statements to encapsulate.");
+            if (string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(name) || schema.Length > 128 || name.Length > 128)
+                throw new ArgumentException("Enter a schema and procedure name of at most 128 characters.");
+            var parser = new TSql170Parser(true);
+            string body = sql.Substring(start, length).Trim();
+            var selection = Parse(parser, body, "encapsulating");
+            if (selection.Batches.Count != 1 || selection.Batches[0].Statements.Count == 0)
+                throw new InvalidOperationException("Select statements from a single batch (no GO).");
+            if (selection.Batches[0].Statements.Any(s => s is ProcedureStatementBody || s is ViewStatementBody || s is FunctionStatementBody || s is TriggerStatementBody))
+                throw new InvalidOperationException("The selection already defines a module.");
+            var used = new Parameters();
+            selection.Accept(used);
+            var names = StringComparer.OrdinalIgnoreCase;
+            if (used.Tables.Any(t => !used.Declared.Contains(t)))
+                throw new InvalidOperationException("Table variables declared outside the selection cannot become parameters.");
+            var types = new SqlAssist.Declarations();
+            var whole = parser.Parse(new StringReader(sql), out var errors);
+            if (errors.Count == 0) whole.Accept(types);
+            var parameters = used.Referenced.Where(v => !used.Declared.Contains(v)).Distinct(names).ToList();
+            string Type(string variable) => types.Types.TryGetValue(variable, out var t) && !types.Tables.Contains(variable)
+                ? t.Substring(t.IndexOf(' ') + 1) is var type && type != "?" ? type : "sql_variant" : "sql_variant";
+            var text = new StringBuilder();
+            text.Append("CREATE PROCEDURE ").Append(SqlCompletion.QuoteIfNeeded(schema)).Append('.').Append(SqlCompletion.QuoteIfNeeded(name)).Append(newline);
+            text.Append(string.Join("," + newline, parameters.Select(p => "    " + p + " " + Type(p) + (used.Assigned.Contains(p) ? " OUTPUT" : ""))));
+            if (parameters.Count > 0) text.Append(newline);
+            // ponytail: the selection is kept verbatim (not re-indented) so multi-line strings stay byte-identical.
+            text.Append("AS").Append(newline).Append("BEGIN").Append(newline).Append("    SET NOCOUNT ON;").Append(newline);
+            text.Append(body).Append(newline).Append("END;").Append(newline).Append("GO").Append(newline);
+            text.Append("-- EXEC ").Append(SqlCompletion.QuoteIfNeeded(schema)).Append('.').Append(SqlCompletion.QuoteIfNeeded(name));
+            text.Append(string.Join(",", parameters.Select(p => " " + p + " = " + p + (used.Assigned.Contains(p) ? " OUTPUT" : "")))).Append(';').Append(newline);
+            string result = text.ToString();
+            parser.Parse(new StringReader(result), out var finalErrors);
+            if (finalErrors.Count > 0) throw new InvalidOperationException("Encapsulating produced invalid SQL; select whole statements.");
+            return result;
+        }
+
         private static string Kind(TSqlStatement statement)
         {
             switch (statement)
@@ -485,6 +573,55 @@ namespace Querywright.Core
                 if (ids != null && ids.Count == 2) Uses.Add(ids[0]);
             }
             public override void Visit(SelectStarExpression node) { if (node.Qualifier?.Identifiers.Count == 1) Uses.Add(node.Qualifier.Identifiers[0]); }
+        }
+
+        private sealed class References : TSqlFragmentVisitor
+        {
+            private readonly string schema, name, moduleSchema;
+            internal readonly List<Identifier> Items = new List<Identifier>();
+            private static readonly StringComparer Names = StringComparer.OrdinalIgnoreCase;
+            internal References(string schema, string name, string moduleSchema) { this.schema = schema; this.name = name; this.moduleSchema = moduleSchema; }
+            // Unqualified names resolve in the module's own schema first; that is the only schema checked (ponytail: no dbo fallback).
+            private bool Matches(Identifier? schemaPart, Identifier basePart) =>
+                Names.Equals(basePart.Value, name) && Names.Equals(schemaPart?.Value ?? moduleSchema, schema);
+            public override void Visit(SchemaObjectName node)
+            {
+                if (node.DatabaseIdentifier == null && node.ServerIdentifier == null && node.BaseIdentifier != null && Matches(node.SchemaIdentifier, node.BaseIdentifier))
+                    Items.Add(node.BaseIdentifier);
+            }
+            // An alias spelled like the object makes Old.Column ambiguous; such qualifiers are then left alone.
+            public override void Visit(TableReferenceWithAlias node) { if (node.Alias != null && Names.Equals(node.Alias.Value, name)) Aliased = true; }
+            internal bool Aliased;
+            // Scalar UDF calls (dbo.Fn(x)) are FunctionCall nodes, not SchemaObjectName.
+            public override void Visit(FunctionCall node)
+            {
+                if (node.CallTarget is MultiPartIdentifierCallTarget target && target.MultiPartIdentifier.Identifiers.Count == 1 &&
+                    Matches(target.MultiPartIdentifier.Identifiers[0], node.FunctionName)) Items.Add(node.FunctionName);
+            }
+            internal readonly List<Identifier> Qualifiers = new List<Identifier>();
+            public override void Visit(ColumnReferenceExpression node)
+            {
+                var ids = node.MultiPartIdentifier?.Identifiers;
+                if (ids == null || ids.Count < 2 || ids.Count > 3) return;
+                if (Matches(ids.Count == 3 ? ids[0] : null, ids[ids.Count - 2])) Qualifiers.Add(ids[ids.Count - 2]);
+            }
+        }
+
+        private sealed class Parameters : TSqlFragmentVisitor
+        {
+            internal readonly List<string> Referenced = new List<string>();
+            internal readonly HashSet<string> Declared = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            internal readonly HashSet<string> Assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            internal readonly HashSet<string> Tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public override void Visit(VariableReference node) { Referenced.Add(node.Name); }
+            public override void Visit(VariableTableReference node) { Referenced.Add(node.Variable.Name); Tables.Add(node.Variable.Name); }
+            public override void Visit(DeclareVariableElement node) { Declared.Add(node.VariableName.Value); }
+            public override void Visit(DeclareTableVariableBody node) { Declared.Add(node.VariableName.Value); }
+            public override void Visit(SetVariableStatement node) { Assigned.Add(node.Variable.Name); }
+            public override void Visit(SelectSetVariable node) { Assigned.Add(node.Variable.Name); }
+            public override void Visit(ExecuteParameter node) { if (node.IsOutput && node.ParameterValue is VariableReference v) Assigned.Add(v.Name); }
+            public override void Visit(FetchCursorStatement node) { foreach (var v in node.IntoVariables) Assigned.Add(v.Name); }
+            public override void ExplicitVisit(ExecuteParameter node) { Visit(node); node.ParameterValue?.Accept(this); }
         }
 
         private sealed class Usage : TSqlFragmentVisitor

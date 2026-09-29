@@ -176,6 +176,7 @@ namespace Querywright.Ssms
             Add(0x011C, SplitTableAsync);
             Add(0x011D, EditFormattingStyleAsync);
             Add(0x011E, FormatFolderAsync);
+            Add(0x011F, CompareObjectAsync);
             Instance = this;
             ServerColorMenu.Start();
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
@@ -615,10 +616,7 @@ namespace Querywright.Ssms
                 if (connection == null) throw new InvalidOperationException("Connect the query window to a database first.");
                 var details = await Task.Run(() => LiveMetadata.Details(connection, schema, name));
                 if (details == null) throw new InvalidOperationException(schema + "." + name + " was not found in the connected database, or you lack VIEW DEFINITION permission.");
-                bool table = details.Type == "U";
-                string script = table && details.Columns.Count > 0
-                    ? ObjectScript.CreateTable(schema, name, details.Columns, details.Filegroup, details.Constraints)
-                    : details.Definition ?? "-- The definition is encrypted or not visible with your permissions.";
+                string script = ScriptOf(details, schema, name);
                 bool parameters = details.Columns.Count == 0 && details.Parameters.Count > 0;
                 var summary = parameters
                     ? details.Parameters.Select(p => (p.Name, p.Type, p.Output ? "OUTPUT" : "IN"))
@@ -631,6 +629,56 @@ namespace Querywright.Ssms
                 ShowWarning(error.Message);
             }
         }
+
+        private static string ScriptOf(LiveMetadata.ObjectDetails details, string schema, string name) =>
+            details.Type == "U" && details.Columns.Count > 0
+                ? ObjectScript.CreateTable(schema, name, details.Columns, details.Filegroup, details.Constraints)
+                : details.Definition ?? "-- The definition is encrypted or not visible with your permissions.";
+
+        /// <summary>Compare the object at the caret with the same object in another database on the server: equal, or a diff window. Read-only.</summary>
+        private Task CompareObjectAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            // A selection counts as the caret at its start, so a highlighted name works.
+            int position = view.Selection.IsEmpty ? view.Caret.Position.BufferPosition.Position : view.Selection.Start.Position.Position;
+            DefinitionTarget target;
+            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), position); }
+            catch (FormatException) { target = null; }
+            if (target == null || target.Offset >= 0 || target.Name == null)
+                throw new InvalidOperationException("Highlight a table, view, procedure or function name in a script without syntax errors.");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the object.");
+            string schema = target.Schema ?? "dbo", name = target.Name, full = schema + "." + name;
+            var databases = (await Task.Run(() => LiveMetadata.Databases(connection))).Where(d => !string.Equals(d, connection.Database, StringComparison.OrdinalIgnoreCase)).ToList();
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (databases.Count == 0) throw new InvalidOperationException("No other database on this server to compare with.");
+            // ponytail: same server only; another server would need its own credentials.
+            var prompt = new PromptDialog("Querywright: compare " + full, "_Compare with database:", databases[0], databases);
+            if (!await ShowDialogAsync(prompt)) return;
+            string other = prompt.Value;
+            var (left, right) = await Task.Run(() => (LiveMetadata.Details(connection, schema, name), LiveMetadata.Details(connection.WithDatabase(other), schema, name)));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (left == null) throw new InvalidOperationException(full + " was not found in " + connection.Database + ", or you lack VIEW DEFINITION permission.");
+            if (right == null) throw new InvalidOperationException(full + " does not exist in " + other + ".");
+            string a = ScriptOf(left, schema, name), b = ScriptOf(right, schema, name);
+            if (ObjectScript.SameScript(a, b))
+            {
+                VsShellUtilities.ShowMessageBox(this, full + " is identical in " + connection.Database + " and " + other + ".", "Querywright",
+                    OLEMSGICON.OLEMSGICON_INFO, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+                return;
+            }
+            var diff = await GetServiceAsync(typeof(SVsDifferenceService)) as IVsDifferenceService;
+            if (diff == null) throw new InvalidOperationException(full + " differs between " + connection.Database + " and " + other + " (diff window unavailable).");
+            // The diff window deletes both files when it closes (the Temporary flags).
+            string folder = Path.Combine(Path.GetTempPath(), "Querywright");
+            Directory.CreateDirectory(folder);
+            string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            string leftFile = Path.Combine(folder, "Compare-" + stamp + "-a.sql"), rightFile = Path.Combine(folder, "Compare-" + stamp + "-b.sql");
+            File.WriteAllText(leftFile, a); File.WriteAllText(rightFile, b);
+            diff.OpenComparisonWindow2(leftFile, rightFile, full + ": " + connection.Database + " vs " + other, null,
+                connection.Database + ": " + full, other + ": " + full, null, null, (uint)(__VSDIFFSERVICEOPTIONS.VSDIFFOPT_LeftFileIsTemporary | __VSDIFFSERVICEOPTIONS.VSDIFFOPT_RightFileIsTemporary));
+        });
 
         private async Task<bool> ShowDialogAsync(System.Windows.Window dialog)
         {

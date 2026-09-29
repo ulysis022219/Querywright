@@ -51,6 +51,8 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - A colored strip and a `server · database` label on every query window, so you always know
   where you are connected. Right-click a server in Object Explorer > **Querywright: server color...**
   to pick its color, or write rules like `prod=Red;test=Orange` in Tools > Options.
+- Highlight an object name, right-click > **Querywright: compare object with database...** to check it against
+  another database on the same server: a message if identical, otherwise a side-by-side diff.
 - Results grid right-click: copy as `IN (...)`, script rows as `INSERT`, open in Excel, save as CSV.
 
 All commands are in the **Tools** menu under "Querywright". Settings are under

@@ -195,6 +195,9 @@ if ($live) {
     Expect 'F12 table opens CREATE TABLE' $text { param($t) $t -match 'CREATE TABLE' -and $t -match 'FullName' }
     $text = Session 'exec-fill' "" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|type:EXEC dbo.GetPe|wait:3000|tab|wait:2000'
     Expect 'EXEC procedure suggestion fills parameters' $text { param($t) $t -match '^EXEC dbo\.GetPeople @Id = ' }
+    # A mistyped object name with Tab/Enter must just type (no error dialog blocks the session).
+    $text = Session 'mistyped' "" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|type:SELECT * FROM dbo.Peoplx|wait:3000|tab|wait:1000|type:x|wait:5000'
+    Expect 'mistyped object keeps typing' $text { param($t) $t -match '^SELECT \* FROM dbo\.Peoplx' -and $t.EndsWith('x') }
     # Results grid: run a read-only SELECT, focus the grid, then "Script as INSERT" (0x118) opens a new window.
     $text = Session 'grid-insert' "SELECT Id, FullName FROM dbo.People ORDER BY Id;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:5000|ready|focus|exec|wait:10000|grid|cmd:118|wait:5000|latest'
     Expect 'results grid script as INSERT' $text { param($t) $t -match 'DROP TABLE IF EXISTS #Results' -and $t -match 'CREATE TABLE #Results' -and $t -match 'DROP TABLE #Results;' -and $t -match "\(1, N'Ann O''Neil'\)" -and $t -match '\(2, NULL\)' }

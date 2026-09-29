@@ -14,8 +14,8 @@ namespace Querywright.Core
         public RuleSeverity SW002 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW003 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW004 { get; set; } = RuleSeverity.Warning;
-        public RuleSeverity SW005 { get; set; } = RuleSeverity.Warning;
-        public RuleSeverity SW006 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW005 { get; set; } = RuleSeverity.Disabled; // prompted on execute instead
+        public RuleSeverity SW006 { get; set; } = RuleSeverity.Disabled; // prompted on execute instead
         public RuleSeverity SW007 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW008 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW009 { get; set; } = RuleSeverity.Warning;

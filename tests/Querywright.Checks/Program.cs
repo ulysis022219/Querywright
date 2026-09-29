@@ -319,6 +319,11 @@ Console.WriteLine($"PASS: {checks} total checks including snippet shortcuts. SSM
 string[] Rules(string sql) => SqlAnalysis.Analyze(sql).Diagnostics.Select(d => d.Rule).Distinct().Order().ToArray();
 Check(Rules("DELETE FROM dbo.T;").SequenceEqual(new[] { "SW005" }) && Rules("DELETE FROM dbo.T WHERE Id = 1;").Length == 0, "DELETE without WHERE");
 Check(Rules("UPDATE dbo.T SET x = 1;").SequenceEqual(new[] { "SW006" }) && Rules("UPDATE dbo.T SET x = 1 WHERE Id = 1;").Length == 0, "UPDATE without WHERE");
+Check(new WorkbenchSettings().Severity("SW005") == RuleSeverity.Disabled && new WorkbenchSettings().Severity("SW006") == RuleSeverity.Disabled, "no-WHERE squiggles off by default");
+Check(SqlAnalysis.UnfilteredChanges("DELETE FROM LC.StatusHdr").SequenceEqual(new[] { "DELETE LC.StatusHdr" })
+    && SqlAnalysis.UnfilteredChanges("SELECT 1; UPDATE t SET x = 1 FROM dbo.T t JOIN dbo.U u ON u.Id = t.Id;").SequenceEqual(new[] { "UPDATE t" })
+    && SqlAnalysis.UnfilteredChanges("DELETE FROM dbo.T WHERE Id = 1; UPDATE dbo.T SET x = 1 WHERE Id = 2;").Count == 0
+    && SqlAnalysis.UnfilteredChanges("DELETE FROM").Count == 0, "unfiltered changes for execute prompt");
 Check(Rules("SELECT a FROM dbo.T ORDER BY 1;").SequenceEqual(new[] { "SW007" }) && Rules("SELECT a FROM dbo.T ORDER BY a;").Length == 0, "ORDER BY constant");
 Check(Rules("DECLARE @s varchar = 'x'; SELECT @s, CAST(1 AS nvarchar);").SequenceEqual(new[] { "SW008" }) &&
     Rules("DECLARE @s varchar(10) = 'x'; SELECT @s, CAST(1 AS nvarchar(max));").Length == 0, "string length");

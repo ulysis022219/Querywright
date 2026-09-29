@@ -165,7 +165,8 @@ try {
     $connection = New-Object System.Data.SqlClient.SqlConnection "Server=$server;Integrated Security=true;Initial Catalog=master"
     $connection.Open()
     foreach ($statement in "IF DB_ID('QwTest') IS NULL CREATE DATABASE QwTest;",
-        "USE QwTest; IF OBJECT_ID('dbo.People') IS NULL CREATE TABLE dbo.People (Id int NOT NULL, FullName nvarchar(100) NULL);") {
+        "USE QwTest; IF OBJECT_ID('dbo.People') IS NULL CREATE TABLE dbo.People (Id int NOT NULL, FullName nvarchar(100) NULL);",
+        "USE QwTest; IF NOT EXISTS (SELECT 1 FROM dbo.People) INSERT dbo.People VALUES (1, N'Ann O''Neil'), (2, NULL);") {
         $command = $connection.CreateCommand(); $command.CommandText = $statement; [void]$command.ExecuteNonQuery()
     }
     $connection.Close()
@@ -179,6 +180,9 @@ if ($live) {
     Expect 'column completion from live metadata' $text { param($t) $t -match 'SELECT p\.FullName ?FROM' }
     $text = Session 'insert-fill' "INSERT INTO dbo.People" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|end|tab|wait:3000'
     Expect 'INSERT + Tab fills columns from live metadata' $text { param($t) $t -match 'Id' -and $t -match 'FullName' -and $t -match 'VALUES' }
+    # Results grid: run a read-only SELECT, focus the grid, then "Script as INSERT" (0x118) opens a new window.
+    $text = Session 'grid-insert' "SELECT Id, FullName FROM dbo.People ORDER BY Id;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:30000|exec|wait:10000|grid|cmd:118|wait:5000|latest'
+    Expect 'results grid script as INSERT' $text { param($t) $t -match 'CREATE TABLE #Results' -and $t -match "\(1, N'Ann O''Neil'\)" -and $t -match '\(2, NULL\)' }
 }
 
 foreach ($log in Get-ChildItem $Out -Filter 'ActivityLog-*.xml') {

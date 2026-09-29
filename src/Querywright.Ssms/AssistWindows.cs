@@ -26,18 +26,18 @@ namespace Querywright.Ssms
         }
     }
 
-    /// <summary>Checkbox list of columns, all checked by default.</summary>
+    /// <summary>Checkbox list of columns, all checked unless <c>checkAll</c> is false.</summary>
     internal sealed class ColumnPickerDialog : Window
     {
         internal List<string> Selected { get; } = new List<string>();
 
-        internal ColumnPickerDialog(IReadOnlyList<string> columns)
+        internal ColumnPickerDialog(IReadOnlyList<string> columns, bool checkAll = true)
         {
             Title = "Querywright: pick columns";
             Width = 420; Height = 520; MinWidth = 300; MinHeight = 300;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             // TextBlock content so an underscore in a column name is not read as an access key.
-            var boxes = columns.Select(c => new CheckBox { Content = new TextBlock { Text = c }, IsChecked = true, Margin = new Thickness(2) }).ToList();
+            var boxes = columns.Select(c => new CheckBox { Content = new TextBlock { Text = c }, IsChecked = checkAll, Margin = new Thickness(2) }).ToList();
             var root = new DockPanel { Margin = new Thickness(12) };
             var top = new StackPanel { Orientation = Orientation.Horizontal };
             var all = new Button { Content = "Select _all", Margin = new Thickness(0, 0, 4, 8), Padding = new Thickness(8, 2, 8, 2) };

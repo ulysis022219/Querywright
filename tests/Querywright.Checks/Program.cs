@@ -702,6 +702,18 @@ Check(renameScript.Contains("EXEC sys.sp_rename N'[dbo].[People]', N'Person';\nG
     renameScript.Contains("ALTER PROCEDURE dbo.usp_P AS SELECT p.Id FROM dbo.Person AS p WHERE dbo.People_Count() > 0 AND 'People' <> ''") &&
     renameScript.Contains("-- sales.vS: no direct reference") && renameScript.Contains("-- dbo.bad: definition could not be parsed"), "rename object script: " + renameScript);
 Check(SqlRefactoring.RenameObjectScript("dbo", "fn", "fn2", new[] { ("dbo", "v", "CREATE VIEW v AS SELECT dbo.fn(1) AS x") }, "\n").Contains("ALTER VIEW v AS SELECT dbo.fn2(1) AS x"), "rename scalar function callers");
+var splitSource = new SchemaTable("dbo", "People", new[] { "Id", "FullName", "Bio", "Stamp" }, new string?[] { "int", "nvarchar(100)", "nvarchar(max)", "timestamp" }, null, new[] { true, false, false, true });
+var split = SqlRefactoring.SplitTableScript(splitSource, new[] { "Id" }, new[] { "Bio" }, "dbo", "PeopleBio", "\n");
+Check(split.Contains("CREATE TABLE [dbo].[PeopleBio]\n(\n    [Id] int NOT NULL,\n    [Bio] nvarchar(max) NULL,\n    CONSTRAINT [PK_PeopleBio] PRIMARY KEY ([Id]),"), "split table creates keyed table");
+Check(split.Contains("FOREIGN KEY ([Id]) REFERENCES [dbo].[People] ([Id])") && split.Contains("INSERT INTO [dbo].[PeopleBio] ([Id], [Bio])\nSELECT [Id], [Bio]\nFROM [dbo].[People];")
+    && split.Contains("ALTER TABLE [dbo].[People] DROP COLUMN [Bio];") && split.Contains("BEGIN TRANSACTION;") && split.Trim().EndsWith("COMMIT TRANSACTION;"), "split table copies then drops");
+Throws<ArgumentException>(() => SqlRefactoring.SplitTableScript(splitSource, new[] { "Id" }, new[] { "Id" }, "dbo", "X"), "split table rejects key column");
+Throws<ArgumentException>(() => SqlRefactoring.SplitTableScript(splitSource, new[] { "Id" }, new[] { "Stamp" }, "dbo", "X"), "split table rejects generated column");
+Throws<ArgumentException>(() => SqlRefactoring.SplitTableScript(splitSource, new[] { "Id" }, new[] { "Bio" }, "dbo", "people"), "split table rejects same name");
+Throws<ArgumentException>(() => SqlRefactoring.SplitTableScript(splitSource, new[] { "Id" }, new[] { "Nope" }, "dbo", "X"), "split table rejects unknown column");
+Throws<InvalidOperationException>(() => SqlRefactoring.SplitTableScript(splitSource, Array.Empty<string>(), new[] { "Bio" }, "dbo", "X"), "split table needs a key");
+Throws<InvalidOperationException>(() => SqlRefactoring.SplitTableScript(new SchemaTable("dbo", "T", "K", "V"), new[] { "K" }, new[] { "V" }, "dbo", "T2"), "split table needs known types");
+Check(SqlRefactoring.SplitTableScript(new SchemaTable("s]x", "T", new[] { "K", "V" }, new string?[] { "int", "int" }, null), new[] { "K" }, new[] { "V" }, "s]x", "T2", "\n").Contains("[s]]x].[T2]"), "split table escapes brackets");
 var invalidReport = SqlRefactoring.InvalidObjectsReport("Db", new[] { ("dbo", "vB", "Invalid column name 'x'.\r\nmore"), ("dbo", "pA", "gone"), ("dbo", "pA", "gone") }, "\n");
 Check(invalidReport.Contains("(2 issues)") && invalidReport.IndexOf("dbo.pA: gone") < invalidReport.IndexOf("dbo.vB: Invalid column name 'x'. more"), "invalid objects report sorted, distinct, one line each");
 Check(SqlRefactoring.InvalidObjectsReport(null, Array.Empty<(string, string, string)>(), "\n").Contains("No invalid objects found"), "invalid objects report empty");

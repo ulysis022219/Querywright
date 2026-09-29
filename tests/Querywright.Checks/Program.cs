@@ -239,6 +239,8 @@ Check(CompleteTwin("SELECT * FROM dbo.People WHERE Na|", false).Items[0].InsertT
 Check(CompleteTwin("SELECT * FROM dbo.People WHERE Na| = 1 AND", false).Items[0].InsertText == "Name", "single table column unqualified without parse");
 Check(CompleteTwin("SELECT * FROM dbo.People p JOIN dbo.Orders o ON o.Id = p.Id WHERE Na|", false).Items.Select(i => i.InsertText).SequenceEqual(new[] { "p.Name", "o.Name" }), "join columns keep aliases");
 Check(Complete("SELECT p.Na|me FROM dbo.People p;").Items.Single().InsertText == "Name", "partial identifier replacement");
+Check(Complete("SELECT FROM WHERE;\nGO\nSELECT p.| FROM dbo.People p;\nGO\nSELECT 1").Items.Count == 3 &&
+    Complete("SELECT 1\nGO\nSELECT p.| FROM dbo.People p;\nGO\nSELECT FROM WHERE;").Items.Count == 3, "a syntax error in another batch keeps column resolution");
 Check(Complete("SELECT p.| FROM dbo.People p;").Items.Any(i => i.InsertText == "[odd]]column]"), "escaped insertion");
 Check(Complete("SELECT 1 FROM dbo.Pe|;").Items.Single().InsertText == "People", "schema objects");
 Check(Complete("SELECT 1 FROM Pe|;").Items.Single().InsertText == "dbo.People", "qualified object insertion");

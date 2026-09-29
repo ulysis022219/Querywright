@@ -87,13 +87,21 @@ namespace Querywright.Ssms
         private static readonly string CatalogQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
     CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit),
-    CAST(CASE o.type WHEN 'V' THEN 1 ELSE 0 END AS bit)
+    CAST(CASE o.type WHEN 'U' THEN 0 ELSE 1 END AS bit), c.column_id
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = o.object_id
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
-WHERE o.type IN ('U', 'V') AND o.is_ms_shipped = 0
-ORDER BY c.object_id, c.column_id;
+WHERE o.type IN ('U', 'V', 'IF', 'TF') AND o.is_ms_shipped = 0
+UNION ALL
+SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
+    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit), CAST(1 AS bit), c.column_id
+FROM sys.synonyms AS o
+JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+JOIN sys.columns AS c ON c.object_id = OBJECT_ID(o.base_object_name)
+LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
+WHERE PARSENAME(o.base_object_name, 4) IS NULL AND ISNULL(PARSENAME(o.base_object_name, 3), DB_NAME()) = DB_NAME()
+ORDER BY 1, 2, 7;
 SELECT fk.object_id, ps.name, p.name, pc.name, rs.name, r.name, rc.name
 FROM sys.foreign_keys AS fk
 JOIN sys.foreign_key_columns AS k ON k.constraint_object_id = fk.object_id

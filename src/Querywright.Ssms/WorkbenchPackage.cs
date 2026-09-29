@@ -641,9 +641,10 @@ namespace Querywright.Ssms
             status?.Progress(ref cookie, 0, "", 0, 0);
             var tables = await load;
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            status?.SetText(tables == null ? "Querywright: metadata refresh failed; see the SSMS activity log."
+            var problem = LiveMetadata.LastProblem;
+            status?.SetText(tables == null ? "Querywright: metadata refresh failed (" + problem + "); the last good metadata stays in use. See the SSMS activity log."
                 : "Querywright: metadata refreshed (" + tables.Count + " tables and views, "
-                    + (LiveMetadata.Procedures(connection)?.Count ?? 0) + " procedures).");
+                    + (LiveMetadata.Procedures(connection)?.Count ?? 0) + " procedures)" + (problem.Length == 0 ? "." : "; " + problem + "."));
         }
 
         /// <summary>Shift+F5: selects the statement under the caret and runs SSMS's own Execute. Only on this explicit command.</summary>

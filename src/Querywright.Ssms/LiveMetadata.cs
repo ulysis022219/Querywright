@@ -154,6 +154,28 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
             return result;
         }
 
+        /// <summary>Primary-key columns of a table in key order; empty when it has none. Read-only, parameterized.</summary>
+        internal static IReadOnlyList<string> PrimaryKey(ActiveConnection connection, string schema, string name)
+        {
+            string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
+            var result = new List<string>();
+            using (var sql = connection.Open())
+            {
+                sql.Open();
+                using (var command = new SqlCommand(@"SET LOCK_TIMEOUT 3000;
+SELECT c.name FROM sys.indexes AS i
+JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+JOIN sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+WHERE i.object_id = OBJECT_ID(@name) AND i.is_primary_key = 1 ORDER BY ic.key_ordinal;", sql) { CommandTimeout = 15 })
+                {
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = Quote(schema) + "." + Quote(name);
+                    using (var reader = command.ExecuteReader())
+                        while (reader.Read()) result.Add(reader.GetString(0));
+                }
+            }
+            return result;
+        }
+
         // Read-only: sys.dm_sql_referenced_entities raises when a module no longer binds (missing table, column, etc.).
         // The table variable and cursor live in tempdb for this batch only; no user object is touched.
         private const string InvalidObjectsQuery = @"SET NOCOUNT ON; SET LOCK_TIMEOUT 3000;

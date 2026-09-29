@@ -252,6 +252,52 @@ namespace Querywright.Core
             return unused;
         }
 
+        /// <summary>
+        /// SQL Prompt's "Split table": a reviewable script that moves columns into a new table keyed (and foreign-keyed)
+        /// by the original primary key, copies the data, then drops the moved columns. Querywright never runs it.
+        /// </summary>
+        public static string SplitTableScript(SchemaTable table, IReadOnlyList<string> key, IReadOnlyList<string> moved, string newSchema, string newName, string newline = "\r\n")
+        {
+            if (table == null) throw new ArgumentNullException(nameof(table));
+            if (key == null || key.Count == 0) throw new InvalidOperationException(table.Schema + "." + table.Name + " has no primary key; add one before splitting it.");
+            if (moved == null || moved.Count == 0) throw new ArgumentException("Choose at least one column to move.", nameof(moved));
+            if (string.IsNullOrWhiteSpace(newSchema) || string.IsNullOrWhiteSpace(newName) || newName.Length > 128 || (newSchema + newName).IndexOfAny(new[] { '\r', '\n' }) >= 0)
+                throw new ArgumentException("Enter a new table name of at most 128 characters.", nameof(newName));
+            var names = StringComparer.OrdinalIgnoreCase;
+            if (names.Equals(newSchema, table.Schema) && names.Equals(newName, table.Name)) throw new ArgumentException("The new table needs a different name.", nameof(newName));
+            int Index(string column)
+            {
+                for (int i = 0; i < table.Columns.Count; i++) if (names.Equals(table.Columns[i], column)) return i;
+                throw new ArgumentException("Column " + column + " is not in " + table.Name + ".");
+            }
+            string Type(string column) => table.ColumnTypes?[Index(column)] ?? throw new InvalidOperationException("The type of column " + column + " is unknown; refresh metadata.");
+            if (moved.Any(m => key.Contains(m, names))) throw new ArgumentException("Key columns stay in both tables; do not move them.", nameof(moved));
+            if (moved.Any(m => table.Generated?[Index(m)] == true)) throw new ArgumentException("Identity, computed and rowversion columns cannot be moved by script; move them by hand.", nameof(moved));
+            string Bracket(string text) => "[" + text.Replace("]", "]]") + "]";
+            string List(IEnumerable<string> columns) => string.Join(", ", columns.Select(Bracket));
+            string oldFull = Bracket(table.Schema) + "." + Bracket(table.Name), newFull = Bracket(newSchema) + "." + Bracket(newName);
+            string keyName = newName.Length > 100 ? newName.Substring(0, 100) : newName;
+            var all = key.Concat(moved).ToList();
+            var script = new StringBuilder();
+            script.Append("-- Split ").Append(table.Schema).Append('.').Append(table.Name).Append(": move ").Append(string.Join(", ", moved))
+                .Append(" to ").Append(newSchema).Append('.').Append(newName).Append(". Review, then run it yourself.").Append(newline);
+            script.Append("-- Querywright does not execute this script. Moved columns are created NULL; review nullability, defaults, indexes,").Append(newline);
+            script.Append("-- constraints and triggers on them, and update code that reads them (views, procedures, applications).").Append(newline);
+            script.Append("SET XACT_ABORT ON;").Append(newline).Append("BEGIN TRANSACTION;").Append(newline).Append(newline);
+            script.Append("CREATE TABLE ").Append(newFull).Append(newline).Append('(').Append(newline);
+            foreach (var column in key) script.Append("    ").Append(Bracket(column)).Append(' ').Append(Type(column)).Append(" NOT NULL,").Append(newline);
+            foreach (var column in moved) script.Append("    ").Append(Bracket(column)).Append(' ').Append(Type(column)).Append(" NULL,").Append(newline);
+            script.Append("    CONSTRAINT ").Append(Bracket("PK_" + keyName)).Append(" PRIMARY KEY (").Append(List(key)).Append("),").Append(newline);
+            script.Append("    CONSTRAINT ").Append(Bracket("FK_" + keyName + "_" + (table.Name.Length > 20 ? table.Name.Substring(0, 20) : table.Name)))
+                .Append(" FOREIGN KEY (").Append(List(key)).Append(") REFERENCES ").Append(oldFull).Append(" (").Append(List(key)).Append(')').Append(newline);
+            script.Append(");").Append(newline).Append(newline);
+            script.Append("INSERT INTO ").Append(newFull).Append(" (").Append(List(all)).Append(')').Append(newline)
+                .Append("SELECT ").Append(List(all)).Append(newline).Append("FROM ").Append(oldFull).Append(';').Append(newline).Append(newline);
+            script.Append("ALTER TABLE ").Append(oldFull).Append(" DROP COLUMN ").Append(List(moved)).Append(';').Append(newline).Append(newline);
+            script.Append("COMMIT TRANSACTION;").Append(newline);
+            return script.ToString();
+        }
+
         /// <summary>"Find invalid objects": a comment-only report of modules that no longer bind, sorted and de-duplicated.</summary>
         public static string InvalidObjectsReport(string? database, IEnumerable<(string Schema, string Name, string Problem)> items, string newline = "\r\n")
         {

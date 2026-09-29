@@ -47,7 +47,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 |---|---|
 | Rename local variable / alias | host (variable and alias, with preview) |
 | Smart rename object (updates dependents) | host (sp_rename + ALTER for dependent modules, opened in a new window; never executed) |
-| Split table | missing |
+| Split table | host: pick columns to move; script creates the new table keyed and foreign-keyed on the primary key, copies data, drops moved columns in one transaction; opened in a new window, never executed |
 | Encapsulate as new stored procedure | host (CREATE PROCEDURE script from the selection, variables become parameters; new window) |
 | Find unused variables and parameters | host (Error List) |
 | Summarize script (outline of statements) | host (Error List, click to navigate) |
@@ -85,7 +85,7 @@ Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: host (fix
 
 ## Remaining
 
-Split table. Everything else above is at least host-wired; SSMS e2e covers the scenarios listed in features.md.
+Everything above is at least host-wired; SSMS e2e covers the scenarios listed in features.md.
 
 ## Sources
 

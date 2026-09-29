@@ -263,7 +263,23 @@ namespace Querywright.Core
             {
                 if (IsNull(node.FirstExpression) || IsNull(node.SecondExpression))
                     Add("SW003", "Use IS NULL or IS NOT NULL instead of comparing with NULL.", node);
+                if (IsCountSubquery(node.FirstExpression) && IsZero(node.SecondExpression) || IsZero(node.FirstExpression) && IsCountSubquery(node.SecondExpression))
+                    Add("SW028", "Comparing a COUNT subquery with 0 counts every row; use EXISTS or NOT EXISTS.", node);
+                if (node.ComparisonType == BooleanComparisonType.NotLessThan || node.ComparisonType == BooleanComparisonType.NotGreaterThan)
+                    Add("SW042", "!< and !> are nonstandard; use >= or <=.", node);
             }
+            private static ScalarExpression Strip(ScalarExpression expression)
+            {
+                while (expression is ParenthesisExpression parenthesis) expression = parenthesis.Expression;
+                return expression;
+            }
+            private static bool IsZero(ScalarExpression expression) => Strip(expression) is IntegerLiteral literal && literal.Value == "0";
+            private static bool IsAggregate(QueryExpression? query, params string[] names) =>
+                query is QuerySpecification spec && spec.GroupByClause == null && spec.HavingClause == null && spec.SelectElements.Count == 1
+                && spec.SelectElements[0] is SelectScalarExpression element && Strip(element.Expression) is FunctionCall call
+                && names.Contains(call.FunctionName.Value, StringComparer.OrdinalIgnoreCase);
+            private static bool IsCountSubquery(ScalarExpression expression) =>
+                Strip(expression) is ScalarSubquery subquery && IsAggregate(subquery.QueryExpression, "COUNT", "COUNT_BIG");
             private static bool IsNull(ScalarExpression expression)
             {
                 while (expression is ParenthesisExpression parenthesis) expression = parenthesis.Expression;
@@ -302,12 +318,26 @@ namespace Querywright.Core
                     case SqlDataTypeOption.Text: case SqlDataTypeOption.NText: case SqlDataTypeOption.Image:
                         Add("SW010", "TEXT, NTEXT and IMAGE are deprecated; use VARCHAR(MAX), NVARCHAR(MAX) or VARBINARY(MAX).", node);
                         break;
+                    case SqlDataTypeOption.Float: case SqlDataTypeOption.Real:
+                        Add("SW037", "FLOAT and REAL are approximate; use DECIMAL for exact values.", node);
+                        break;
+                    case SqlDataTypeOption.Money: case SqlDataTypeOption.SmallMoney:
+                        Add("SW038", "MONEY and SMALLMONEY round in division and multiplication; use DECIMAL.", node);
+                        break;
+                    case SqlDataTypeOption.Timestamp:
+                        Add("SW039", "The TIMESTAMP synonym is deprecated; use ROWVERSION.", node);
+                        break;
+                    case SqlDataTypeOption.Decimal: case SqlDataTypeOption.Numeric:
+                        if (node.Parameters.Count == 0) Add("SW045", "Specify precision and scale; the default DECIMAL(18, 0) drops fractions.", node);
+                        break;
                 }
             }
             public override void Visit(GlobalVariableExpression node)
             {
                 if (string.Equals(node.Name, "@@IDENTITY", StringComparison.OrdinalIgnoreCase))
                     Add("SW009", "@@IDENTITY can return a trigger's identity; use SCOPE_IDENTITY() or OUTPUT.", node);
+                if (string.Equals(node.Name, "@@ERROR", StringComparison.OrdinalIgnoreCase))
+                    Add("SW031", "@@ERROR resets after every statement; use TRY...CATCH.", node);
             }
             public override void Visit(FromClause node)
             {
@@ -318,6 +348,8 @@ namespace Querywright.Core
                 var name = node.ProcedureReference?.Name?.BaseIdentifier?.Value;
                 if (name != null && name.StartsWith("sp_", StringComparison.OrdinalIgnoreCase))
                     Add("SW012", "Procedure names starting with sp_ are looked up in master first.", node.ProcedureReference!);
+                if (node.ProcedureReference?.Number != null)
+                    Add("SW041", "Numbered procedures (name;n) are deprecated; give each procedure its own name.", node.ProcedureReference);
                 if (node.StatementList == null) return; // CLR procedure.
                 var body = new ProcedureBody();
                 node.StatementList.Accept(body);
@@ -330,7 +362,16 @@ namespace Querywright.Core
                 if (!node.Options.Any(o => o.OptionKind == CursorOptionKind.Local || o.OptionKind == CursorOptionKind.Global))
                     Add("SW018", "Declare the cursor LOCAL (or GLOBAL); the default scope depends on a database option.", node);
             }
-            public override void Visit(CreateTableStatement node) => CheckNullability(node.Definition);
+            public override void Visit(CreateTableStatement node)
+            {
+                CheckNullability(node.Definition);
+                if (node.Definition == null || node.SchemaObjectName?.BaseIdentifier?.Value.StartsWith("#", StringComparison.Ordinal) != true) return;
+                var constraints = node.Definition.TableConstraints.Cast<ConstraintDefinition>()
+                    .Concat(node.Definition.ColumnDefinitions.SelectMany(c => c.Constraints.Cast<ConstraintDefinition>()
+                        .Concat(c.DefaultConstraint == null ? Enumerable.Empty<ConstraintDefinition>() : new[] { c.DefaultConstraint })));
+                foreach (var constraint in constraints.Where(c => c.ConstraintIdentifier != null))
+                    Add("SW036", "Named constraints on temporary tables collide when two sessions run this; omit the name.", constraint);
+            }
             public override void Visit(DeclareTableVariableBody node) => CheckNullability(node.Definition);
             private void CheckNullability(TableDefinition? table)
             {
@@ -357,13 +398,23 @@ namespace Querywright.Core
             {
                 if (node.HintKind == TableHintKind.NoLock || node.HintKind == TableHintKind.ReadUncommitted)
                     Add("SW024", "NOLOCK/READUNCOMMITTED reads uncommitted data and can skip or double-count rows.", node);
+                if (node is IndexTableHint)
+                    Add("SW034", "Index hints override the optimizer and break when the index changes.", node);
             }
             private readonly HashSet<QueryExpression> existsQueries = new HashSet<QueryExpression>();
-            public override void Visit(ExistsPredicate node) { if (node.Subquery?.QueryExpression != null) existsQueries.Add(node.Subquery.QueryExpression); }
+            public override void Visit(ExistsPredicate node)
+            {
+                if (node.Subquery?.QueryExpression == null) return;
+                existsQueries.Add(node.Subquery.QueryExpression);
+                if (IsAggregate(node.Subquery.QueryExpression, "COUNT", "COUNT_BIG", "SUM", "MIN", "MAX", "AVG"))
+                    Add("SW044", "EXISTS over an aggregate without GROUP BY is always true; aggregates return one row even for no input.", node);
+            }
             public override void Visit(QuerySpecification node)
             {
                 if (node.TopRowFilter != null && node.OrderByClause == null && !existsQueries.Contains(node))
                     Add("SW026", "TOP without ORDER BY returns an arbitrary set of rows.", node.TopRowFilter);
+                if (node.TopRowFilter != null && node.TopRowFilter.Percent && Strip(node.TopRowFilter.Expression) is IntegerLiteral hundred && hundred.Value == "100")
+                    Add("SW043", "TOP 100 PERCENT does nothing; the optimizer ignores ORDER BY it was meant to keep.", node.TopRowFilter);
             }
             public override void Visit(ExecuteSpecification node)
             {
@@ -371,6 +422,54 @@ namespace Querywright.Core
                     Add("SW027", "EXECUTE(string) runs unparameterized SQL; use sp_executesql with parameters.", node);
             }
             public override void Visit(TSqlStatement node) => cancellation.ThrowIfCancellationRequested();
+            public override void Visit(GoToStatement node) => Add("SW029", "GOTO makes control flow hard to follow; use structured blocks or TRY...CATCH.", node);
+            public override void Visit(PredicateSetStatement node)
+            {
+                if (!node.IsOn && (node.Options & (SetOptions.AnsiNulls | SetOptions.AnsiPadding | SetOptions.ConcatNullYieldsNull)) != 0)
+                    Add("SW030", "ANSI_NULLS, ANSI_PADDING and CONCAT_NULL_YIELDS_NULL OFF are deprecated and will always be ON.", node);
+                if (node.IsOn && (node.Options & SetOptions.FmtOnly) != 0)
+                    Add("SW035", "SET FMTONLY is deprecated; use sp_describe_first_result_set.", node);
+            }
+            public override void Visit(SelectScalarExpression node)
+            {
+                if (node.ColumnName?.ValueExpression is StringLiteral)
+                    Add("SW040", "String literals as column aliases are deprecated; use AS [alias].", node.ColumnName);
+            }
+            public override void Visit(LikePredicate node)
+            {
+                if (Strip(node.FirstExpression) is ColumnReferenceExpression && Strip(node.SecondExpression) is StringLiteral pattern && pattern.Value.StartsWith("%", StringComparison.Ordinal))
+                    Add("SW033", "LIKE with a leading % cannot seek an index.", node);
+            }
+            private readonly HashSet<BooleanComparisonExpression> sargChecked = new HashSet<BooleanComparisonExpression>();
+            public override void Visit(WhereClause node) => CheckSargable(node.SearchCondition);
+            public override void Visit(QualifiedJoin node) => CheckSargable(node.SearchCondition);
+            private void CheckSargable(BooleanExpression? condition)
+            {
+                if (condition == null) return;
+                var comparisons = new Comparisons();
+                condition.Accept(comparisons);
+                foreach (var comparison in comparisons.Items.Where(sargChecked.Add))
+                    if (WrapsColumn(comparison.FirstExpression) && !HasColumn(comparison.SecondExpression) || WrapsColumn(comparison.SecondExpression) && !HasColumn(comparison.FirstExpression))
+                        Add("SW032", "A function around the column prevents an index seek; move the work to the other side.", comparison);
+            }
+            private static bool WrapsColumn(ScalarExpression expression) =>
+                Strip(expression) is FunctionCall call && call.CallTarget == null && call.Parameters.Any(p => Strip(p) is ColumnReferenceExpression c && c.ColumnType == ColumnType.Regular);
+            private static bool HasColumn(ScalarExpression expression)
+            {
+                var columns = new Columns();
+                expression.Accept(columns);
+                return columns.Found;
+            }
+            private sealed class Comparisons : TSqlFragmentVisitor
+            {
+                internal readonly List<BooleanComparisonExpression> Items = new List<BooleanComparisonExpression>();
+                public override void Visit(BooleanComparisonExpression node) => Items.Add(node);
+            }
+            private sealed class Columns : TSqlFragmentVisitor
+            {
+                internal bool Found;
+                public override void Visit(ColumnReferenceExpression node) => Found = true;
+            }
             public override void Visit(FunctionCall node)
             {
                 if (string.Equals(node.FunctionName.Value, "ISNUMERIC", StringComparison.OrdinalIgnoreCase))
@@ -384,6 +483,8 @@ namespace Querywright.Core
             public override void Visit(ExecutableProcedureReference node)
             {
                 var name = node.ProcedureReference?.ProcedureReference?.Name;
+                if (name != null && string.Equals(name.BaseIdentifier.Value, "xp_cmdshell", StringComparison.OrdinalIgnoreCase))
+                    Add("SW046", "xp_cmdshell runs operating-system commands with the service account; avoid it.", name);
                 if (name != null && name.SchemaIdentifier == null && !name.BaseIdentifier.Value.StartsWith("sp_", StringComparison.OrdinalIgnoreCase) &&
                     !name.BaseIdentifier.Value.StartsWith("#", StringComparison.Ordinal))
                     Add("SW017", "Schema-qualify the procedure name to avoid extra name resolution.", name);

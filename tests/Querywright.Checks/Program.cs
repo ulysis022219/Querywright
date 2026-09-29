@@ -349,7 +349,7 @@ Check(Rules("ALTER TABLE dbo.T ADD c int NOT NULL;").SequenceEqual(new[] { "SW02
     Rules("ALTER TABLE dbo.T ADD c int NOT NULL DEFAULT 0, d int NULL, e AS 1;").Length == 0, "ALTER ADD NOT NULL without DEFAULT");
 Check(Rules("SET ROWCOUNT 10;").SequenceEqual(new[] { "SW023" }) && Rules("SET NOCOUNT ON;").Length == 0, "SET ROWCOUNT");
 Check(Rules("SELECT a FROM dbo.T WITH (NOLOCK) JOIN dbo.U u WITH (READUNCOMMITTED) ON u.a = T.a;").SequenceEqual(new[] { "SW024" }) &&
-    Rules("SELECT a FROM dbo.T WITH (READCOMMITTEDLOCK, INDEX(ix));").Length == 0, "NOLOCK hint");
+    Rules("SELECT a FROM dbo.T WITH (READCOMMITTEDLOCK, INDEX(ix));").SequenceEqual(new[] { "SW034" }), "NOLOCK hint");
 Check(Rules("CREATE PROCEDURE dbo.p AS BEGIN SET NOCOUNT ON; WAITFOR DELAY '00:00:01'; RETURN 0; END").SequenceEqual(new[] { "SW025" }) &&
     Rules("WAITFOR DELAY '00:00:01';").Length == 0, "WAITFOR DELAY in procedure");
 Check(Rules("SELECT TOP (5) a FROM dbo.T;").SequenceEqual(new[] { "SW026" }) &&
@@ -357,6 +357,38 @@ Check(Rules("SELECT TOP (5) a FROM dbo.T;").SequenceEqual(new[] { "SW026" }) &&
 Check(Rules("DECLARE @s nvarchar(100) = N'SELECT 1'; EXEC (@s);").SequenceEqual(new[] { "SW027" }) &&
     Rules("DECLARE @s nvarchar(100) = N'SELECT 1'; EXEC sys.sp_executesql @s;").Length == 0, "EXECUTE(string)");
 Console.WriteLine($"PASS: {checks} total checks including analysis batch 3. SSMS integration not tested.");
+Check(Rules("IF (SELECT COUNT(*) FROM dbo.T) > 0 SELECT 1;").SequenceEqual(new[] { "SW028" }) &&
+    Rules("IF 0 = (SELECT COUNT(*) FROM dbo.T) SELECT 1;").SequenceEqual(new[] { "SW028" }) &&
+    Rules("IF (SELECT COUNT(*) FROM dbo.T) > 5 SELECT 1; IF EXISTS (SELECT 1 FROM dbo.T) SELECT 1;").Length == 0, "COUNT compared with 0");
+Check(Rules("GOTO done; done: SELECT 1;").SequenceEqual(new[] { "SW029" }), "GOTO");
+Check(Rules("SET ANSI_NULLS OFF;").SequenceEqual(new[] { "SW030" }) && Rules("SET CONCAT_NULL_YIELDS_NULL OFF;").SequenceEqual(new[] { "SW030" }) &&
+    Rules("SET ANSI_NULLS ON; SET ANSI_PADDING ON; SET QUOTED_IDENTIFIER ON;").Length == 0, "ANSI settings OFF");
+Check(Rules("SELECT @@ERROR;").SequenceEqual(new[] { "SW031" }) && Rules("SELECT @@ROWCOUNT;").Length == 0, "@@ERROR");
+Check(Rules("SELECT a FROM dbo.T WHERE YEAR(d) = 2020;").SequenceEqual(new[] { "SW032" }) &&
+    Rules("SELECT a FROM dbo.T t JOIN dbo.U u ON UPPER(t.a) = N'X';").SequenceEqual(new[] { "SW032" }) &&
+    Rules("SELECT a FROM dbo.T t JOIN dbo.U u ON UPPER(t.a) = u.a;").Length == 0 &&
+    Rules("SELECT a FROM dbo.T WHERE d >= DATEFROMPARTS(2020, 1, 1) AND a = @x;").Length == 0 &&
+    Rules("SELECT UPPER(a) FROM dbo.T;").Length == 0, "non-sargable function");
+Check(Rules("SELECT a FROM dbo.T WHERE a LIKE '%x';").SequenceEqual(new[] { "SW033" }) &&
+    Rules("SELECT a FROM dbo.T WHERE a LIKE 'x%';").Length == 0, "leading wildcard LIKE");
+Check(Rules("SET FMTONLY ON;").SequenceEqual(new[] { "SW035" }) && Rules("SET FMTONLY OFF;").Length == 0, "SET FMTONLY");
+Check(Rules("CREATE TABLE #t (a int NOT NULL, CONSTRAINT PK_t PRIMARY KEY (a));").SequenceEqual(new[] { "SW036" }) &&
+    Rules("CREATE TABLE #t (a int NOT NULL PRIMARY KEY); CREATE TABLE dbo.T (a int NOT NULL, CONSTRAINT PK_T PRIMARY KEY (a));").Length == 0, "named temp constraint");
+Check(Rules("DECLARE @f float, @r real; SELECT @f, @r;").SequenceEqual(new[] { "SW037" }) && Rules("DECLARE @m money; SELECT @m;").SequenceEqual(new[] { "SW038" }) &&
+    Rules("CREATE TABLE dbo.T (v timestamp NULL);").SequenceEqual(new[] { "SW039" }) && Rules("CREATE TABLE dbo.T (v rowversion NULL);").Length == 0 &&
+    Rules("DECLARE @d decimal; SELECT @d;").SequenceEqual(new[] { "SW045" }) && Rules("DECLARE @d decimal(9, 2), @n numeric(5); SELECT @d, @n;").Length == 0, "data type rules");
+Check(Rules("SELECT 'x' = 1;").SequenceEqual(new[] { "SW040" }) && Rules("SELECT 1 AS 'x';").SequenceEqual(new[] { "SW040" }) &&
+    Rules("SELECT 1 AS x, 2 AS [y], z = 3;").Length == 0, "string alias");
+Check(Rules("CREATE PROCEDURE dbo.p;2 AS SET NOCOUNT ON;").SequenceEqual(new[] { "SW041" }) && Rules("CREATE PROCEDURE dbo.p AS SET NOCOUNT ON;").Length == 0, "numbered procedure");
+Check(Rules("SELECT a FROM dbo.T WHERE a !< 1;").SequenceEqual(new[] { "SW042" }) && Rules("SELECT a FROM dbo.T WHERE a !> 1 OR a <> 2;").SequenceEqual(new[] { "SW042" }), "!< !>");
+Check(Rules("SELECT TOP 100 PERCENT a FROM dbo.T ORDER BY a;").SequenceEqual(new[] { "SW043" }) &&
+    Rules("SELECT TOP 50 PERCENT a FROM dbo.T ORDER BY a;").Length == 0, "TOP 100 PERCENT");
+Check(Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T WHERE a = 1) SELECT 1;").SequenceEqual(new[] { "SW044" }) &&
+    Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T GROUP BY a) SELECT 1; IF EXISTS (SELECT MAX(a) FROM dbo.T HAVING MAX(a) > 1) SELECT 1;").Length == 0, "EXISTS aggregate");
+Check(Rules("EXEC master.dbo.xp_cmdshell 'dir';").SequenceEqual(new[] { "SW046" }) && Rules("EXEC xp_cmdshell 'dir';").SequenceEqual(new[] { "SW017", "SW046" }) &&
+    Rules("EXEC dbo.xp_other;").Length == 0, "xp_cmdshell");
+Check(Rules("-- querywright-disable SW029\nGOTO done; done: SELECT 1;").Length == 0, "new rule suppression");
+Console.WriteLine($"PASS: {checks} total checks including analysis batch 4. SSMS integration not tested.");
 
 Check(Rules("-- querywright-disable SW005\nDELETE FROM dbo.T;\nGO\nDELETE FROM dbo.T;").Length == 0 && Rules("-- querywright-disable SW005, SW006\nDELETE FROM dbo.T;\nUPDATE dbo.T SET x = 1;\n-- querywright-enable SW005\nDELETE FROM dbo.T;\nUPDATE dbo.T SET x = 1;")
     .SequenceEqual(new[] { "SW005" }), "disable until enable");

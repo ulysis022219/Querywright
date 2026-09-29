@@ -77,5 +77,19 @@ namespace Querywright.Core
                 return settings;
             }
         }
+
+        public void Save(string path)
+        {
+            string? folder = Path.GetDirectoryName(Path.GetFullPath(path));
+            if (folder != null) Directory.CreateDirectory(folder);
+            string temp = path + ".qwtmp";
+            try
+            {
+                using (var writer = XmlWriter.Create(temp, new XmlWriterSettings { Indent = true }))
+                    new XmlSerializer(typeof(WorkbenchSettings)).Serialize(writer, this);
+                if (File.Exists(path)) File.Replace(temp, path, null); else File.Move(temp, path);
+            }
+            finally { if (File.Exists(temp)) File.Delete(temp); }
+        }
     }
 }

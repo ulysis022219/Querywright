@@ -26,13 +26,13 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 | Feature | Querywright |
 |---|---|
 | Format document / selection | done + verified in SSMS |
-| Style editor, shared styles | partial (5 options, XML file) |
+| Style editor, shared styles | host (13 options, dialog with live preview, shared XML settings file) |
 | Apply casing (keywords, types, functions) | host |
 | Add/remove square brackets | host |
 | Qualify object names | host (dbo default) |
 | Insert semicolons | host |
 | Expand wildcards | host |
-| Format on bulk files / folders | missing |
+| Format on bulk files / folders | host (folder of .sql files; preview count + confirmation; encoding and line endings kept; failures left untouched and reported) |
 
 ## 3. Snippets
 

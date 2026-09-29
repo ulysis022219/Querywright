@@ -54,7 +54,7 @@ namespace Querywright.Core
         /// Returns null when the caret is not directly after such a name or the statement already continues.
         /// </summary>
         public static TextEdit? FillStatement(string sql, int position, IReadOnlyList<SchemaTable>? tables, IReadOnlyList<SchemaProcedure>? procedures,
-            string defaultSchema = "dbo")
+            string defaultSchema = "dbo", DateTimeOffset? now = null)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
@@ -112,7 +112,7 @@ namespace Querywright.Core
             if (procedure == null || procedure.Parameters.Count == 0) return null;
             // Continuation lines line up under the first argument; tabs in the line prefix are kept so the column matches.
             string hang = new string(sql.Substring(lineStart, position - lineStart).Select(c => c == '\t' ? '\t' : ' ').ToArray()) + " ";
-            var arguments = procedure.Parameters.Select(p => (p.Name + " = " + (p.IsOutput ? p.Name + " OUTPUT" : p.HasDefault ? "DEFAULT" : Placeholder(p.Type)),
+            var arguments = procedure.Parameters.Select(p => (p.Name + " = " + (p.IsOutput ? p.Name + " OUTPUT" : p.HasDefault ? "DEFAULT" : ExecPlaceholder(p.Type, now ?? DateTimeOffset.Now)),
                 p.Type ?? "")).ToList();
             string lines = Aligned(arguments, hang, newline);
             return new TextEdit(position, caret - position, " " + lines.Substring(hang.Length));
@@ -127,6 +127,21 @@ namespace Querywright.Core
                 string value = (r.Value + (n < rows.Count - 1 ? "," : "")).PadRight(width);
                 return (indent + value + (r.Comment.Length == 0 ? "" : " -- " + r.Comment)).TrimEnd();
             }));
+        }
+
+        // EXEC arguments must be constants or variables, so dates are the current time as literals (SQL Prompt style), not GETDATE().
+        private static string ExecPlaceholder(string? type, DateTimeOffset now)
+        {
+            var c = System.Globalization.CultureInfo.InvariantCulture;
+            switch ((type ?? "").Split('(')[0].Trim().ToLowerInvariant())
+            {
+                case "date": return now.ToString("\\'yyyy-MM-dd\\'", c);
+                case "time": return now.ToString("\\'HH:mm:ss\\'", c);
+                case "datetime": case "datetime2": case "smalldatetime": return now.ToString("\\'yyyy-MM-dd HH:mm:ss\\'", c);
+                case "datetimeoffset": return now.ToString("\\'yyyy-MM-dd HH:mm:ss zzz\\'", c);
+                case "uniqueidentifier": return "'" + Guid.NewGuid().ToString().ToUpperInvariant() + "'";
+                default: return Placeholder(type);
+            }
         }
 
         internal static string Placeholder(string? type)

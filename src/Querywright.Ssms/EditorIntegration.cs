@@ -124,9 +124,13 @@ namespace Querywright.Ssms
                 if (IsGoToDefinition(group, id) && package.TryGoToDefinition(view)) return VSConstants.S_OK;
             }
             // Tab/Enter that commits a table or procedure after INSERT INTO / EXEC fills the statement in the same keystroke.
-            bool committing = package != null && (IsTab(group, id) || IsReturn(group, id)) && completion.IsCompletionActive(view);
+            // SSMS's own IntelliSense list commits inside Next.Exec too; a changed buffer after Tab/Enter gets the same fill.
+            bool key = package != null && (IsTab(group, id) || IsReturn(group, id));
+            bool committing = key && completion.IsCompletionActive(view);
+            var before = view.TextSnapshot;
             int result = Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
-            if (committing && ErrorHandler.Succeeded(result) && !completion.IsCompletionActive(view)) package!.TryFillAfterCommit(view);
+            if (key && ErrorHandler.Succeeded(result) && !completion.IsCompletionActive(view) && (committing || view.TextSnapshot != before))
+                package!.TryFillAfterCommit(view);
             return result;
         }
 
@@ -160,6 +164,7 @@ namespace Querywright.Ssms
         private static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
         private volatile IReadOnlyList<SchemaTable>? tables;
         private volatile IReadOnlyList<string>? databases;
+        private volatile IReadOnlyList<SchemaProcedure>? procedures;
 
         public CompletionStartData InitializeCompletion(CompletionTrigger trigger, SnapshotPoint location, CancellationToken token)
         {
@@ -170,6 +175,7 @@ namespace Querywright.Ssms
             {
                 tables = WorkbenchPackage.Instance.CurrentTables();
                 databases = WorkbenchPackage.Instance.CurrentDatabases();
+                procedures = WorkbenchPackage.Instance.CurrentProcedures(""); // live only; the script is parsed off the UI thread
             }
             if (trigger.Reason == CompletionTriggerReason.Insertion &&
                 !(char.IsLetter(trigger.Character) || trigger.Character == '_' || trigger.Character == '.' || trigger.Character == ' '))
@@ -190,11 +196,30 @@ namespace Querywright.Ssms
             int position = location.Position;
             var tables = this.tables;
             var databases = this.databases;
+            var live = this.procedures;
+            // Mouse clicks commit too; any committed procedure gets its parameters.
+            if (!session.Properties.ContainsProperty(typeof(CompletionSource)))
+            {
+                session.Properties.AddProperty(typeof(CompletionSource), true);
+                session.ItemCommitted += (s, e) => { _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                {
+                    await Task.Yield(); // after the commit edit and the key that caused it
+                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    if (session.TextView is IWpfTextView view) WorkbenchPackage.Instance?.TryFillAfterCommit(view);
+                }); };
+            }
             var result = await Task.Run(() =>
             {
                 try
                 {
-                    return SqlCompletion.Complete(sql, position, tables, databases: databases); // null tables: keywords, functions, variables
+                    var procedures = live;
+                    try
+                    {
+                        if (sql.Length <= 1_000_000 && sql.IndexOf("CREATE", StringComparison.OrdinalIgnoreCase) >= 0)
+                            procedures = SqlAssist.ProceduresFromScript(sql).Concat(live ?? Array.Empty<SchemaProcedure>()).ToArray();
+                    }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { }
+                    return SqlCompletion.Complete(sql, position, tables, databases: databases, procedures: procedures); // null tables: keywords, functions, variables
                 }
                 // ponytail: typing must never raise dialogs; explicit commands report schema errors.
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }

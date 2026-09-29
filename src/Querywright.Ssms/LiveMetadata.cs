@@ -176,7 +176,7 @@ SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER 
 
         private static readonly string DetailsQuery = @"SET LOCK_TIMEOUT 3000;
 DECLARE @id int = OBJECT_ID(@name);
-SELECT RTRIM(o.type), OBJECT_DEFINITION(o.object_id), ds.name
+SELECT RTRIM(o.type), OBJECT_DEFINITION(o.object_id), ds.name, SCHEMA_NAME(o.schema_id)
 FROM sys.objects AS o
 LEFT JOIN sys.indexes AS i ON i.object_id = o.object_id AND i.index_id < 2
 LEFT JOIN sys.data_spaces AS ds ON ds.data_space_id = i.data_space_id
@@ -213,6 +213,7 @@ FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY
             internal string Type = "";
             internal string Definition;
             internal string Filegroup;
+            internal string Schema;
             internal readonly List<ScriptColumn> Columns = new List<ScriptColumn>();
             internal readonly List<string> Constraints = new List<string>();
             internal readonly List<(string Name, string Type, bool Output)> Parameters = new List<(string, string, bool)>();
@@ -229,11 +230,11 @@ FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY
                 sql.Open();
                 using (var command = new SqlCommand(DetailsQuery, sql) { CommandTimeout = 15 })
                 {
-                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = Quote(schema) + "." + Quote(name);
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : Quote(schema) + ".") + Quote(name);
                     using (var reader = command.ExecuteReader())
                     {
                         if (!reader.Read()) return null;
-                        details.Type = reader.GetString(0); details.Definition = Text(reader, 1); details.Filegroup = Text(reader, 2);
+                        details.Type = reader.GetString(0); details.Definition = Text(reader, 1); details.Filegroup = Text(reader, 2); details.Schema = Text(reader, 3);
                         reader.NextResult();
                         while (reader.Read())
                             details.Columns.Add(new ScriptColumn(reader.GetString(0), reader.GetString(1), Text(reader, 2), reader.GetBoolean(3))

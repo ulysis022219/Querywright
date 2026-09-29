@@ -300,13 +300,15 @@ namespace Querywright.Ssms
             }
         }
 
-        /// <summary>F12 on variables, aliases and CTEs jumps in the script; database objects fall through to SSMS's own definition.</summary>
+        /// <summary>F12 on variables, aliases and CTEs jumps in the script; database objects open as a script in a new query.</summary>
         internal bool TryGoToDefinition(IWpfTextView view)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             if (view.IsClosed) return false;
+            // A highlighted name counts as the caret at its start.
+            int position = view.Selection.IsEmpty ? view.Caret.Position.BufferPosition.Position : view.Selection.Start.Position.Position;
             DefinitionTarget target;
-            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), view.Caret.Position.BufferPosition.Position); }
+            try { target = SqlNavigation.FindDefinition(view.TextSnapshot.GetText(), position); }
             catch (FormatException) { return false; }
             if (target == null) return false;
             if (target.Offset < 0)
@@ -328,37 +330,38 @@ namespace Querywright.Ssms
 
         private bool bypassDefinition;
 
-        /// <summary>SQL Prompt's F12: procedure/view/function/trigger opens as an ALTER script in a new query; tables go to SSMS's own F12.</summary>
+        /// <summary>SQL Prompt's F12: a table opens as CREATE TABLE, a procedure/view/function/trigger as ALTER, in a new query. Never executed.</summary>
         private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name)
         {
             try
             {
-                string definition = await Task.Run(() =>
+                var details = await Task.Run(() =>
                 {
-                    try { return LiveMetadata.Definition(connection, schema, name); }
-                    // Unreachable server or no VIEW DEFINITION permission: SSMS's own F12 still works.
+                    try { return LiveMetadata.Details(connection, schema, name); }
+                    // Unreachable server or no VIEW DEFINITION permission: SSMS's own F12 may still work.
                     catch (Exception error) when (error is System.Data.SqlClient.SqlException || error is InvalidOperationException) { return null; }
                 });
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 var dte = await GetServiceAsync(typeof(SDTE));
                 if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
                 void Run(string command) => dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { command, "" });
-                if (definition == null)
+                bool table = details?.Type == "U" && details.Columns.Count > 0;
+                if (details == null || (!table && details.Definition == null))
                 {
+                    (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: " + name + " was not found in " + connection.Database
+                        + ", or its definition is encrypted or not visible with your permissions.");
                     bypassDefinition = true;
                     try { Run("Edit.GoToDefinition"); }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { } // Native F12 unavailable here; the status bar says why.
                     finally { bypassDefinition = false; }
                     return;
                 }
-                var source = GetSqlView();
-                Run("File.NewQuery");
-                var view = GetSqlView();
-                if (view == source) throw new InvalidOperationException("Could not open a new query window.");
-                string text = SqlRefactoring.CreateToAlter(definition);
-                // The new window connects to the source window's database; switch it so the ALTER targets the object's own database.
+                string owner = details.Schema ?? schema ?? "dbo";
+                string text = table ? ScriptOf(details, owner, name) : SqlRefactoring.CreateToAlter(details.Definition);
+                // The new window connects to the source window's database; switch it so the script targets the object's own database.
                 if (connection.Database != null && !string.Equals(connection.Database, LiveMetadata.Capture()?.Database, StringComparison.OrdinalIgnoreCase))
                     text = "USE [" + connection.Database.Replace("]", "]]") + "];\r\nGO\r\n" + text;
-                ReplaceText(view, new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length), text, 0, 0, 0, "Script " + name);
+                await OpenInNewQueryAsync(text, "Script " + name);
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {

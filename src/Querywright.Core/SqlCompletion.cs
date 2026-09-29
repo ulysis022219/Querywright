@@ -183,7 +183,8 @@ namespace Querywright.Core
         }
 
         public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable>? tables,
-            string defaultSchema = "dbo", bool caseSensitive = false, IReadOnlyList<string>? databases = null)
+            string defaultSchema = "dbo", bool caseSensitive = false, IReadOnlyList<string>? databases = null,
+            IReadOnlyList<SchemaProcedure>? procedures = null)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
@@ -229,7 +230,17 @@ namespace Querywright.Core
                     if (i == 0 || segment[i - 1].Type != TSqlTokenType.Dot) break;
                 }
             }
-            if (qualifier != null)
+            // EXEC | , EXEC @rc = | and EXEC schema.| list procedures; committing one fills its parameters.
+            int keywordAt = at - 1 - (qualifier == null ? 0 : 2 * qualifier.Count);
+            if (keywordAt >= 2 && segment[keywordAt].Type == TSqlTokenType.EqualsSign && segment[keywordAt - 1].Type == TSqlTokenType.Variable) keywordAt -= 2;
+            if (procedures != null && procedures.Count > 0 && keywordAt >= 0 && (segment[keywordAt].Is("EXEC") || segment[keywordAt].Is("EXECUTE")) &&
+                (qualifier == null || qualifier.Count == 1))
+            {
+                context = Context.Table;
+                foreach (var p in procedures.Where(p => qualifier == null || names.Equals(p.Schema, qualifier[0])))
+                    Add(Kind.Table, p.Name, (qualifier == null ? QuoteIfNeeded(p.Schema) + "." : "") + QuoteIfNeeded(p.Name), "procedure " + p.Schema + "." + p.Name);
+            }
+            else if (qualifier != null)
             {
                 bool alias = qualifier.Count == 1 && scan.Sources.Any(s => names.Equals(s.Alias, qualifier[0]));
                 if (resolver != null && resolver.Handled && (alias || resolver.TableMarker || resolver.Items.Count > 0))

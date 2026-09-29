@@ -35,7 +35,8 @@ namespace Querywright.Core
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
             if (sql.Length > 1_000_000) throw new ArgumentException("Navigation input exceeds 1,000,000 characters.");
             var script = (TSqlScript)new TSql170Parser(true).Parse(new StringReader(sql), out var errors);
-            if (errors.Count != 0) throw new FormatException("Fix SQL syntax errors before navigating.");
+            // Scripts being edited rarely parse; object names still resolve from the tokens around the caret.
+            if (errors.Count != 0) return NameAt(sql, position);
             var batch = script.Batches.FirstOrDefault(b => Contains(b, position));
             if (batch == null) return null;
             var visitor = new Finder(position);
@@ -59,8 +60,36 @@ namespace Querywright.Core
                     }
                 return null;
             }
+            if (visitor.Function != null) return visitor.Function;
             return visitor.Object == null ? null : Object(visitor.Object, visitor, position);
         }
+
+        /// <summary>The dotted object name at the caret from tokens alone (db.schema.name, schema.name, name); null on variables and keywords.</summary>
+        private static DefinitionTarget? NameAt(string sql, int position)
+        {
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql), out _);
+            bool IsName(TSqlParserToken t) => t.TokenType == TSqlTokenType.Identifier || t.TokenType == TSqlTokenType.QuotedIdentifier;
+            int at = -1;
+            for (int i = 0; i < tokens.Count; i++)
+                if (IsName(tokens[i]) && tokens[i].Offset <= position && position <= tokens[i].Offset + tokens[i].Text.Length) { at = i; break; }
+            if (at < 0) return null;
+            bool Part(TSqlParserToken t) => IsName(t) || t.TokenType == TSqlTokenType.Dot;
+            int first = at, last = at;
+            while (first > 0 && Part(tokens[first - 1])) first--;
+            while (last + 1 < tokens.Count && Part(tokens[last + 1])) last++;
+            var parts = new List<string?>();
+            string? part = null;
+            for (int i = first; i <= last; i++)
+                if (tokens[i].TokenType == TSqlTokenType.Dot) { parts.Add(part); part = null; }
+                else part = Unquote(tokens[i].Text);
+            parts.Add(part);
+            if (parts.Count > 3 || parts[parts.Count - 1] == null) return null; // linked server or dangling dot
+            return new DefinitionTarget(parts.Count > 1 ? parts[parts.Count - 2] : null, parts[parts.Count - 1]!, parts.Count > 2 ? parts[0] : null);
+        }
+
+        private static string Unquote(string text) =>
+            text.Length > 1 && text[0] == '[' ? text.Substring(1, text.Length - 2).Replace("]]", "]")
+            : text.Length > 1 && text[0] == '"' ? text.Substring(1, text.Length - 2).Replace("\"\"", "\"") : text;
 
         private static DefinitionTarget? Object(SchemaObjectName name, Finder visitor, int position)
         {
@@ -163,6 +192,7 @@ namespace Querywright.Core
             private readonly int position;
             internal string? Variable, Qualifier;
             internal SchemaObjectName? Object;
+            internal DefinitionTarget? Function;
             internal readonly List<Identifier> Declarations = new List<Identifier>();
             internal readonly List<Sources> Sources = new List<Sources>();
             internal readonly List<Scope<CommonTableExpression>> Ctes = new List<Scope<CommonTableExpression>>();
@@ -188,6 +218,14 @@ namespace Querywright.Core
             {
                 var ids = node.Qualifier?.Identifiers;
                 if (ids != null && Contains(node, position)) Qualifier = ids[ids.Count - 1].Value;
+            }
+            // dbo.fn(x) and db.dbo.fn(x) parse as calls, not object names.
+            public override void Visit(FunctionCall node)
+            {
+                if (!Contains(node.FunctionName, position) || !(node.CallTarget is MultiPartIdentifierCallTarget target)) return;
+                var ids = target.MultiPartIdentifier.Identifiers;
+                if (ids.Count > 2) return;
+                Function = new DefinitionTarget(ids[ids.Count - 1].Value, node.FunctionName.Value, ids.Count == 2 ? ids[0].Value : null);
             }
             public override void Visit(SchemaObjectName node)
             {

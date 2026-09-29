@@ -27,6 +27,26 @@ namespace Querywright.Ssms
         [Description("Insert Table.Column even when the statement reads one table. Off inserts just Column; joins always use the alias.")]
         public bool QualifySingleTable { get; set; }
 
+        [Category("Completion")]
+        [DisplayName("Suggest while typing")]
+        [Description("Open the suggestion list as you type a name, '.' or space. Off shows it only on Ctrl+Space (Edit > IntelliSense > List Members).")]
+        public bool SuggestWhileTyping { get; set; } = true;
+
+        [Category("Analysis")]
+        [DisplayName("Show analysis squiggles")]
+        [Description("Underline code-analysis findings (SW rules) as you type. Rule severities come from the shared settings file. Off hides them after the next edit; Analyze document still works.")]
+        public bool LiveAnalysis { get; set; } = true;
+
+        [Category("Editor")]
+        [DisplayName("F12 goes to definition")]
+        [Description("F12 on a table, view, procedure or function scripts its definition into a new window (never executed). Off leaves F12 to SSMS.")]
+        public bool GoToDefinition { get; set; } = true;
+
+        [Category("Editor")]
+        [DisplayName("Ctrl+] jumps between BEGIN/END")]
+        [Description("Ctrl+] moves the caret between BEGIN and END, CASE and END, TRY and CATCH. Off leaves Ctrl+] to SSMS (brackets only).")]
+        public bool JumpToBlockPartner { get; set; } = true;
+
         [Category("Editor")]
         [DisplayName("Color BEGIN/END pairs")]
         [Description("Give each BEGIN/END, CASE/END and TRY/CATCH pair a color by nesting level. Colors are under Fonts and Colors, \"Querywright BEGIN/END level\". The pair at the caret is always highlighted; Ctrl+] jumps to its partner.")]
@@ -57,6 +77,21 @@ namespace Querywright.Ssms
         [Description("When you execute a DELETE or UPDATE that has no WHERE clause, ask before SSMS runs it.")]
         public bool WarnUnfilteredChanges { get; set; } = true;
 
+        [Category("Environment")]
+        [DisplayName("Warn before DROP TABLE/TRUNCATE TABLE")]
+        [Description("When you execute DROP TABLE or TRUNCATE TABLE, ask before SSMS runs it.")]
+        public bool WarnDropTruncate { get; set; }
+
+        [Category("Results grid")]
+        [DisplayName("CSV delimiter")]
+        [Description("Separator used by Save as CSV. Semicolon suits Excel in locales that use a decimal comma.")]
+        public CsvDelimiter CsvDelimiter { get; set; } = CsvDelimiter.Comma;
+
+        [Category("Results grid")]
+        [DisplayName("CSV column headers")]
+        [Description("Write the column names as the first line of Save as CSV.")]
+        public bool CsvHeaders { get; set; } = true;
+
         [Category("Updates")]
         [DisplayName("Check for updates")]
         [Description("Once a day, ask github.com for the latest Querywright release and show a notice when it is newer. Sends no query text, connection or user data.")]
@@ -67,5 +102,18 @@ namespace Querywright.Ssms
         [Description("Folder of editable .sql templates. Use a shared folder for team snippets.")]
         public string SnippetFolder { get; set; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "Snippets");
+
+        [Category("Snippets")]
+        [DisplayName("Tab expands snippets")]
+        [Description("Tab after a snippet shortcut (e.g. ssf) or after * expands it. Off leaves Tab to insert a tab.")]
+        public bool TabExpandSnippets { get; set; } = true;
+    }
+
+    public enum CsvDelimiter
+    {
+        Comma,
+        Semicolon,
+        Tab,
+        Pipe,
     }
 }

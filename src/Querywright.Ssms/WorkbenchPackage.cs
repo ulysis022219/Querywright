@@ -1034,9 +1034,14 @@ namespace Querywright.Ssms
             var dialog = new Microsoft.Win32.SaveFileDialog { Title = "Querywright: save results as CSV", Filter = "CSV (comma delimited)|*.csv|All files|*.*", FileName = ResultGrid.FileName(QueryTextOrNull(), DateTime.Now) + ".csv", OverwritePrompt = true };
             if (dialog.ShowDialog() != true) return;
             string file = dialog.FileName;
-            await Task.Run(() => File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, ','), new UTF8Encoding(true)));
+            char separator = CsvSeparator(options?.CsvDelimiter);
+            bool headers = options?.CsvHeaders != false;
+            await Task.Run(() => File.WriteAllText(file, ResultGrid.Delimited(cells.Headers, cells.Rows, separator, includeHeaders: headers), new UTF8Encoding(true)));
             await GridStatusAsync($"saved {cells.Rows.Count} rows.", cells);
         });
+
+        private static char CsvSeparator(CsvDelimiter? delimiter) =>
+            delimiter == CsvDelimiter.Semicolon ? ';' : delimiter == CsvDelimiter.Tab ? '\t' : delimiter == CsvDelimiter.Pipe ? '|' : ',';
 
         private Task EditFormattingStyleAsync() => RunCommandAsync(async () =>
         {

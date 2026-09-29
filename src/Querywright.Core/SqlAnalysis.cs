@@ -55,6 +55,154 @@ namespace Querywright.Core
                 (settings == null || settings.Severity(d.Rule) != RuleSeverity.Disabled) && !suppression.Suppressed(d)));
         }
 
+        /// <summary>Rules with a mechanical fix.</summary>
+        public static readonly IReadOnlyCollection<string> FixableRules = new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };
+
+        /// <summary>The edit that resolves one diagnostic, or null when the rule has no safe fix here. The result must still parse.</summary>
+        public static TextEdit? Fix(string sql, SqlDiagnostic diagnostic, IReadOnlyList<SchemaTable>? tables = null, string defaultSchema = "dbo")
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (diagnostic == null) throw new ArgumentNullException(nameof(diagnostic));
+            if (sql.Length > 1_000_000 || diagnostic.Offset < 0 || diagnostic.Offset + diagnostic.Length > sql.Length) return null;
+            var parser = new TSql170Parser(true);
+            var script = parser.Parse(new StringReader(sql), out var errors);
+            if (errors.Count > 0) return null;
+            var nodes = new Spans(diagnostic.Offset, diagnostic.Length);
+            script.Accept(nodes);
+            string span = sql.Substring(diagnostic.Offset, diagnostic.Length);
+            TextEdit? edit = null;
+            switch (diagnostic.Rule)
+            {
+                case "SW001":
+                    if (tables == null) return null;
+                    try { edit = SqlCompletion.ExpandWildcard(sql, diagnostic.Offset + diagnostic.Length, tables, defaultSchema); }
+                    catch (Exception e) when (e is ArgumentException || e is InvalidOperationException || e is FormatException) { return null; }
+                    break;
+                case "SW003":
+                    if (!(nodes.Comparison is BooleanComparisonExpression comparison)) return null;
+                    string? test = comparison.ComparisonType == BooleanComparisonType.Equals ? " IS NULL"
+                        : comparison.ComparisonType == BooleanComparisonType.NotEqualToBrackets || comparison.ComparisonType == BooleanComparisonType.NotEqualToExclamation ? " IS NOT NULL" : null;
+                    var operand = Unwrap(comparison.FirstExpression) is NullLiteral ? comparison.SecondExpression : comparison.FirstExpression;
+                    if (test == null || Unwrap(operand) is NullLiteral) return null;
+                    edit = new TextEdit(diagnostic.Offset, diagnostic.Length, sql.Substring(operand.StartOffset, operand.FragmentLength) + test);
+                    break;
+                case "SW009":
+                    edit = new TextEdit(diagnostic.Offset, diagnostic.Length, "SCOPE_IDENTITY()");
+                    break;
+                case "SW010":
+                    string bare = span.Trim('[', ']', '"').ToLowerInvariant();
+                    string? replacement = bare == "text" ? "varchar(max)" : bare == "ntext" ? "nvarchar(max)" : bare == "image" ? "varbinary(max)" : null;
+                    if (replacement == null) return null;
+                    edit = new TextEdit(diagnostic.Offset, diagnostic.Length, char.IsUpper(span.TrimStart('[', '"')[0]) ? replacement.ToUpperInvariant() : replacement);
+                    break;
+                case "SW015":
+                    var statements = nodes.Procedure?.StatementList?.Statements;
+                    if (statements != null && statements.Count > 0 && statements[0] is BeginEndBlockStatement block && block.StatementList.Statements.Count > 0)
+                        statements = block.StatementList.Statements;
+                    if (statements == null || statements.Count == 0) return null;
+                    int first = statements[0].StartOffset, lineStart = sql.LastIndexOf('\n', Math.Max(0, first - 1)) + 1;
+                    string lead = sql.Substring(lineStart, first - lineStart);
+                    string indent = lead.Trim().Length == 0 ? lead : "";
+                    string newline = sql.Contains("\r\n") ? "\r\n" : "\n";
+                    edit = new TextEdit(first, 0, "SET NOCOUNT ON;" + (indent.Length > 0 || lead.Length == 0 ? newline + indent : " "));
+                    break;
+                case "SW016":
+                    edit = RemoveDeclaration(sql, nodes);
+                    break;
+                case "SW017":
+                    string schema = string.IsNullOrWhiteSpace(defaultSchema) ? "dbo" : defaultSchema;
+                    edit = new TextEdit(diagnostic.Offset, 0, SqlCompletion.QuoteIfNeeded(schema) + ".");
+                    break;
+            }
+            if (edit == null) return null;
+            parser.Parse(new StringReader(Apply(sql, edit)), out var after);
+            return after.Count == 0 ? edit : null;
+        }
+
+        /// <summary>Applies every available fix, re-analyzing between rounds; returns the new text and how many fixes were applied.</summary>
+        public static (string Text, int Fixed) FixAll(string sql, IReadOnlyList<SchemaTable>? tables = null, string defaultSchema = "dbo", WorkbenchSettings? settings = null)
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            int count = 0;
+            for (int round = 0; round < 10; round++)
+            {
+                var result = Analyze(sql, default, settings);
+                if (!result.Parsed) break;
+                int applied = 0, limit = int.MaxValue;
+                // Back to front so earlier offsets stay valid; overlapping fixes wait for the next round.
+                foreach (var diagnostic in result.Diagnostics.Where(d => FixableRules.Contains(d.Rule)).OrderByDescending(d => d.Offset))
+                {
+                    if (diagnostic.Offset + diagnostic.Length > limit) continue;
+                    var edit = Fix(sql, diagnostic, tables, defaultSchema);
+                    if (edit == null || edit.Start + edit.Length > limit) continue;
+                    string next = Apply(sql, edit);
+                    new TSql170Parser(true).Parse(new StringReader(next), out var errors);
+                    if (errors.Count > 0) continue;
+                    sql = next; limit = edit.Start; applied++;
+                }
+                if (applied == 0) break;
+                count += applied;
+            }
+            return (sql, count);
+        }
+
+        private static string Apply(string sql, TextEdit edit) => sql.Substring(0, edit.Start) + edit.Text + sql.Substring(edit.Start + edit.Length);
+
+        private static ScalarExpression Unwrap(ScalarExpression expression)
+        {
+            while (expression is ParenthesisExpression parenthesis) expression = parenthesis.Expression;
+            return expression;
+        }
+
+        // Drops the whole DECLARE (and its line when nothing else is on it) or one element and its comma.
+        private static TextEdit? RemoveDeclaration(string sql, Spans nodes)
+        {
+            if (nodes.Declaration == null) return null;
+            if (nodes.Declaration is DeclareVariableStatement multi && multi.Declarations.Count > 1)
+            {
+                int index = multi.Declarations.IndexOf((DeclareVariableElement)nodes.Element!);
+                if (index < 0) return null;
+                var element = multi.Declarations[index];
+                int from = index == 0 ? element.StartOffset : multi.Declarations[index - 1].StartOffset + multi.Declarations[index - 1].FragmentLength;
+                int to = index == 0 ? multi.Declarations[1].StartOffset : element.StartOffset + element.FragmentLength;
+                return new TextEdit(from, to - from, "");
+            }
+            var (start, length) = SqlNavigation.Span(nodes.Declaration);
+            int end = start + length, lineStart = sql.LastIndexOf('\n', Math.Max(0, start - 1)) + 1, lineEnd = sql.IndexOf('\n', end);
+            if (start > 0 && sql[start - 1] == '\n') lineStart = start;
+            if (lineEnd < 0) lineEnd = sql.Length; else lineEnd++;
+            if (sql.Substring(lineStart, start - lineStart).Trim().Length == 0 && sql.Substring(end, lineEnd - end).Trim().Length == 0)
+                return new TextEdit(lineStart, lineEnd - lineStart, "");
+            return new TextEdit(start, length, "");
+        }
+
+        private sealed class Spans : TSqlFragmentVisitor
+        {
+            private readonly int offset, length;
+            internal BooleanComparisonExpression? Comparison;
+            internal ProcedureStatementBody? Procedure;
+            internal TSqlStatement? Declaration;
+            internal TSqlFragment? Element;
+            private TSqlStatement? current;
+            internal Spans(int offset, int length) { this.offset = offset; this.length = length; }
+            private bool At(TSqlFragment node) => node.StartOffset == offset && node.FragmentLength == length;
+            public override void Visit(BooleanComparisonExpression node) { if (At(node)) Comparison = node; }
+            public override void Visit(ProcedureStatementBody node)
+            {
+                if (node.ProcedureReference != null && At(node.ProcedureReference) || At(node)) Procedure = node;
+            }
+            public override void Visit(DeclareVariableStatement node) => current = node;
+            public override void Visit(DeclareTableVariableStatement node) => current = node;
+            public override void Visit(DeclareVariableElement node)
+            {
+                if (!(node is ProcedureParameter) && At(node.VariableName) && current != null && SqlNavigation.Contains(current, offset)) { Declaration = current; Element = node; }
+            }
+            public override void Visit(DeclareTableVariableBody node)
+            {
+                if (At(node.VariableName) && current != null && SqlNavigation.Contains(current, offset)) { Declaration = current; Element = node; }
+            }
+        }
+
         // Inline directives in comments: querywright-disable [IDs], querywright-enable [IDs], querywright-disable-next-line [IDs].
         // No IDs means every rule. Only rule diagnostics pass through here; parse errors return earlier.
         private sealed class Suppression

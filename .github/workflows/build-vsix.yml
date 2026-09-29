@@ -111,4 +111,4 @@ jobs:
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release tag must look like v1.2.3"; exit 1; }
           gh release create "$TAG" Querywright-ssms22.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Querywright $TAG" \
-            --notes "Install or update: close SSMS 22, unzip, double-click Install.cmd (see INSTALL.txt). Development release; no affiliation with Redgate."
+            --notes "Install or update: close SSMS 22, unzip, double-click Install.cmd (see INSTALL.txt). Free and open source (MIT)."

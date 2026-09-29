@@ -154,6 +154,56 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
             return result;
         }
 
+        // Read-only: sys.dm_sql_referenced_entities raises when a module no longer binds (missing table, column, etc.).
+        // The table variable and cursor live in tempdb for this batch only; no user object is touched.
+        private const string InvalidObjectsQuery = @"SET NOCOUNT ON; SET LOCK_TIMEOUT 3000;
+DECLARE @issues TABLE (s sysname, n sysname, problem nvarchar(2048));
+DECLARE @id int, @s sysname, @n sysname, @name nvarchar(600), @count int;
+DECLARE modules CURSOR LOCAL FAST_FORWARD FOR
+    SELECT TOP (2000) o.object_id, SCHEMA_NAME(o.schema_id), o.name
+    FROM sys.objects AS o JOIN sys.sql_modules AS m ON m.object_id = o.object_id
+    WHERE o.is_ms_shipped = 0 AND o.type IN ('P', 'V', 'FN', 'IF', 'TF', 'TR') ORDER BY 2, 3;
+OPEN modules;
+FETCH NEXT FROM modules INTO @id, @s, @n;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @name = QUOTENAME(@s) + '.' + QUOTENAME(@n);
+    BEGIN TRY
+        SELECT @count = COUNT(*) FROM sys.dm_sql_referenced_entities(@name, 'OBJECT');
+    END TRY
+    BEGIN CATCH
+        INSERT @issues VALUES (@s, @n, ERROR_MESSAGE());
+    END CATCH;
+    FETCH NEXT FROM modules INTO @id, @s, @n;
+END;
+CLOSE modules; DEALLOCATE modules;
+SELECT s, n, problem FROM @issues
+UNION
+SELECT SCHEMA_NAME(o.schema_id), o.name, N'References missing object ' + ISNULL(d.referenced_schema_name + N'.', N'') + d.referenced_entity_name
+FROM sys.sql_expression_dependencies AS d
+JOIN sys.objects AS o ON o.object_id = d.referencing_id
+WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS NULL
+    AND d.is_caller_dependent = 0 AND d.is_ambiguous = 0
+    AND d.referenced_server_name IS NULL AND d.referenced_database_name IS NULL
+    AND d.referenced_entity_name NOT LIKE N'#%' AND o.is_ms_shipped = 0
+    AND OBJECT_ID(QUOTENAME(ISNULL(d.referenced_schema_name, SCHEMA_NAME(o.schema_id))) + N'.' + QUOTENAME(d.referenced_entity_name)) IS NULL
+    AND (d.referenced_schema_name IS NOT NULL OR OBJECT_ID(N'[dbo].' + QUOTENAME(d.referenced_entity_name)) IS NULL);";
+
+        /// <summary>Modules in the connected database that no longer bind. Read-only; nothing is compiled, altered or executed.</summary>
+        internal static IReadOnlyList<(string Schema, string Name, string Problem)> InvalidObjects(ActiveConnection connection)
+        {
+            var result = new List<(string, string, string)>();
+            using (var sql = connection.Open())
+            {
+                sql.Open();
+                using (var command = new SqlCommand(InvalidObjectsQuery, sql) { CommandTimeout = 120 })
+                using (var reader = command.ExecuteReader())
+                    while (reader.Read())
+                        result.Add((reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? "" : reader.GetString(2)));
+            }
+            return result;
+        }
+
         private static IReadOnlyList<SchemaTable> Load(ActiveConnection connection, int attempt = 0)
         {
             try

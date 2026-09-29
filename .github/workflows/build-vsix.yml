@@ -18,12 +18,25 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch makes the older run pointless; releases are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 jobs:
   build:
+    # One job: SSMS 22 installs (about 5 minutes) while the checks and the build run, then the end-to-end test uses it.
     runs-on: windows-latest
+    timeout-minutes: 60
     permissions:
       contents: write # dev prerelease
     steps:
+      - name: Start SSMS 22 install
+        shell: powershell
+        run: |
+          $boot = Join-Path $env:RUNNER_TEMP 'vs_SSMS.exe'
+          Invoke-WebRequest 'https://aka.ms/ssms/22/release/vs_SSMS.exe' -OutFile $boot
+          Start-Process $boot -ArgumentList '--quiet', '--wait', '--norestart', '--nocache'
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
@@ -75,21 +88,11 @@ jobs:
           gh release create "$tag" dist/Querywright-ssms22.zip --prerelease --target "$GITHUB_SHA" \
             --title "Querywright dev build ($GITHUB_REF_NAME)" \
             --notes "Untested development build from ${GITHUB_SHA}. See INSTALL.txt inside the zip."
-
-  e2e:
-    needs: build
-    runs-on: windows-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: Querywright-ssms22
       - name: SSMS 22 end-to-end
         shell: powershell
         run: |
-          Expand-Archive Querywright-ssms22.zip -DestinationPath pkg
-          scripts/Test-Ssms.ps1 -Package (Resolve-Path pkg/Querywright.Ssms.vsix)
+          Get-Process vs_SSMS -ErrorAction SilentlyContinue | Wait-Process
+          scripts/Test-Ssms.ps1 -Package (Resolve-Path src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -98,7 +101,7 @@ jobs:
 
   release:
     # A v* tag push, or Run workflow with a release tag, publishes a release after the SSMS end-to-end tests pass.
-    needs: [build, e2e]
+    needs: build
     permissions:
       contents: write
     if: github.ref_type == 'tag' || inputs.release != ''

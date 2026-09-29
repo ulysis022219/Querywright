@@ -82,6 +82,14 @@ namespace Querywright.Ssms
             return options?.LiveMetadata != false ? LiveMetadata.DatabaseNames(LiveMetadata.Capture()) : null;
         }
 
+        /// <summary>Catalog lookup for other databases on the connection, for OtherDb. completion. Never blocks (typing path).</summary>
+        internal Func<string, IReadOnlyList<SchemaTable>> CurrentOtherDatabase()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            return connection == null ? null : name => LiveMetadata.TryGet(connection.WithDatabase(name));
+        }
+
         /// <summary>Live procedures plus those created in the script itself. Never blocks (typing path).</summary>
         internal IReadOnlyList<SchemaProcedure> CurrentProcedures(string sql)
         {

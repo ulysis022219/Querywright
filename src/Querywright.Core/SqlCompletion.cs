@@ -33,16 +33,21 @@ namespace Querywright.Core
         public IReadOnlyList<SchemaForeignKey> ForeignKeys { get; }
         public SchemaTable(string schema, string name, params string[] columns) : this(schema, name, columns, null, null) { }
         public SchemaTable(string schema, string name, string[] columns, SchemaForeignKey[]? foreignKeys) : this(schema, name, columns, null, foreignKeys) { }
-        public SchemaTable(string schema, string name, string[] columns, string?[]? columnTypes, SchemaForeignKey[]? foreignKeys)
+        /// <summary>Identity, computed and rowversion columns parallel to <see cref="Columns"/>; INSERT fill skips them.</summary>
+        public IReadOnlyList<bool>? Generated { get; }
+        public SchemaTable(string schema, string name, string[] columns, string?[]? columnTypes, SchemaForeignKey[]? foreignKeys, bool[]? generated = null)
         {
             if (string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(name) || columns == null || columns.Any(string.IsNullOrWhiteSpace))
                 throw new ArgumentException("Schema, table and column names must be nonempty.");
             if (columnTypes != null && columnTypes.Length != columns.Length)
                 throw new ArgumentException("Column types must parallel the column names.");
+            if (generated != null && generated.Length != columns.Length)
+                throw new ArgumentException("Generated flags must parallel the column names.");
             if (foreignKeys != null && foreignKeys.Any(k => k == null || k.Columns.Any(c => !columns.Contains(c, StringComparer.OrdinalIgnoreCase))))
                 throw new ArgumentException("Foreign key columns must belong to the table.");
             Schema = schema; Name = name; Columns = Array.AsReadOnly((string[])columns.Clone());
             ColumnTypes = columnTypes == null ? null : Array.AsReadOnly((string?[])columnTypes.Clone());
+            Generated = generated == null ? null : Array.AsReadOnly((bool[])generated.Clone());
             ForeignKeys = Array.AsReadOnly(foreignKeys == null ? Array.Empty<SchemaForeignKey>() : (SchemaForeignKey[])foreignKeys.Clone());
         }
         internal string? TypeOf(string column)
@@ -151,7 +156,7 @@ namespace Querywright.Core
         private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '@' || c == '#' || c == '$';
 
         // Bracket only names the lexer would not read back as one plain identifier (reserved words, spaces, symbols).
-        private static string QuoteIfNeeded(string name)
+        internal static string QuoteIfNeeded(string name)
         {
             if (name.Length == 0 || !(char.IsLetter(name[0]) || name[0] == '_') || !name.All(c => char.IsLetterOrDigit(c) || c == '_')) return Quote(name);
             var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(name), out var errors).Where(t => t.TokenType != TSqlTokenType.EndOfFile).ToList();
@@ -508,7 +513,18 @@ namespace Querywright.Core
         }
 
         public static TextEdit ExpandWildcard(string sql, int position, IReadOnlyList<SchemaTable> tables,
+            string defaultSchema = "dbo", bool caseSensitive = false) => Expand(sql, position, tables, defaultSchema, caseSensitive).Expansion!;
+
+        /// <summary>The span of * (or alias.*) at the caret and the column references it stands for, for a column picker.</summary>
+        public static (TextEdit Wildcard, IReadOnlyList<string> Columns) WildcardColumns(string sql, int position, IReadOnlyList<SchemaTable> tables,
             string defaultSchema = "dbo", bool caseSensitive = false)
+        {
+            var visitor = Expand(sql, position, tables, defaultSchema, caseSensitive);
+            var star = visitor.Expansion!;
+            return (new TextEdit(star.Start, star.Length, sql.Substring(star.Start, star.Length)), visitor.Parts.ToArray());
+        }
+
+        private static Resolver Expand(string sql, int position, IReadOnlyList<SchemaTable> tables, string defaultSchema, bool caseSensitive)
         {
             if (sql == null || tables == null) throw new ArgumentNullException(sql == null ? nameof(sql) : nameof(tables));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
@@ -523,13 +539,14 @@ namespace Querywright.Core
                 sql.Substring(visitor.Expansion.Start + visitor.Expansion.Length);
             parser.Parse(new StringReader(result), out var finalErrors);
             if (finalErrors.Count > 0) throw new InvalidOperationException("Expansion produced invalid SQL; original text retained.");
-            return visitor.Expansion;
+            return visitor;
         }
 
         private sealed class Resolver : TSqlFragmentVisitor
         {
             internal readonly List<CompletionItem> Items = new List<CompletionItem>();
             internal TextEdit? Expansion;
+            internal readonly List<string> Parts = new List<string>();
             internal bool Handled, TableMarker;
             private readonly int wildcardPosition = -1;
             private readonly IReadOnlyList<SchemaTable> tables;
@@ -551,7 +568,7 @@ namespace Querywright.Core
                 var from = scopes.Count == 0 ? null : scopes[scopes.Count - 1].FromClause;
                 if (from == null) throw new InvalidOperationException("Wildcard has no FROM clause to expand.");
                 var references = from.TableReferences.SelectMany(Tables).ToArray();
-                var parts = new List<string>();
+                var parts = Parts;
                 bool qualify = ids != null || references.Length > 1;
                 foreach (var reference in references)
                 {

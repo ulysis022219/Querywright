@@ -95,11 +95,15 @@ ORDER BY 1, 2, p.parameter_id;";
         internal static IReadOnlyList<SchemaProcedure> Procedures(ActiveConnection connection) =>
             connection != null && procedureCache.TryGetValue(connection.Key, out var procedures) ? procedures : null;
 
+        /// <summary>The (possibly running) catalog load for a connection; null result when unavailable.</summary>
+        internal static Task<IReadOnlyList<SchemaTable>> LoadAsync(ActiveConnection connection) =>
+            cache.GetOrAdd(connection.Key, _ => Task.Run(() => Load(connection)));
+
         /// <summary>Loaded tables, or null while loading / unavailable. Starts a background load on first request.</summary>
         internal static IReadOnlyList<SchemaTable> TryGet(ActiveConnection connection)
         {
             if (connection == null) return null;
-            var task = cache.GetOrAdd(connection.Key, _ => Task.Run(() => Load(connection)));
+            var task = LoadAsync(connection);
             #pragma warning disable VSTHRD002 // completed task: no wait
             return task.Status == TaskStatus.RanToCompletion ? task.Result : null;
 #pragma warning restore VSTHRD002
@@ -109,7 +113,7 @@ ORDER BY 1, 2, p.parameter_id;";
         internal static async Task<IReadOnlyList<SchemaTable>> GetAsync(ActiveConnection connection, TimeSpan timeout)
         {
             if (connection == null) return null;
-            var task = cache.GetOrAdd(connection.Key, _ => Task.Run(() => Load(connection)));
+            var task = LoadAsync(connection);
             return await Task.WhenAny(task, Task.Delay(timeout)) == task ? await task : null;
         }
 

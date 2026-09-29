@@ -259,11 +259,12 @@ void RejectExpand(string text)
     catch (InvalidOperationException) { checks++; return; }
     throw new Exception("Expected wildcard rejection for " + text);
 }
-Check(Expand("SELECT *| FROM dbo.People;").Text == "Id, Name, [odd]]column]", "single-table wildcard");
-Check(Expand("SELECT o.*|, 1 FROM dbo.People p JOIN dbo.Orders o ON p.Id = o.PersonId;") is var q && q.Text == "o.OrderId, o.PersonId" && q.Start == 7 && q.Length == 3, "qualified wildcard span");
-Check(Expand("SELECT |* FROM People p, dbo.Orders o;").Text.StartsWith("p.Id, p.Name, p.[odd]]column], o.OrderId"), "multi-table wildcard order");
+Check(Expand("SELECT *| FROM dbo.People;").Text == "Id,\r\n       Name,\r\n       [odd]]column]", "single-table wildcard vertical");
+Check(Expand("SELECT o.*|, 1 FROM dbo.People p JOIN dbo.Orders o ON p.Id = o.PersonId;") is var q && q.Text == "o.OrderId,\r\n       o.PersonId" && q.Start == 7 && q.Length == 3, "qualified wildcard span");
+Check(Expand("SELECT |* FROM People p, dbo.Orders o;").Text.StartsWith("p.Id,\r\n       p.Name,\r\n       p.[odd]]column],\r\n       o.OrderId"), "multi-table wildcard order");
 Check(Expand("WITH c AS (SELECT OrderId FROM dbo.Orders) SELECT *| FROM c;").Text == "OrderId", "CTE wildcard");
-Check(Expand("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT *| FROM dbo.Orders);").Text == "OrderId, PersonId", "inner scope wildcard");
+Check(Expand("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT *| FROM dbo.Orders);").Text == "OrderId,\r\n                                                PersonId", "inner scope wildcard");
+Check(SqlCompletion.ColumnList("SELECT a\n\tFROM x;\n\tSELECT ", 26, new[] { "a", "b" }) == "a,\n\t       b", "column list keeps LF and tabs");
 RejectExpand("SELECT *| FROM dbo.Missing;");
 RejectExpand("SELECT *| FROM dbo.People p CROSS APPLY OPENJSON(p.Name) j;");
 RejectExpand("SELECT x.*| FROM dbo.People p;");
@@ -760,7 +761,7 @@ Check(FixOne("CREATE PROCEDURE dbo.p\nAS\nBEGIN\n    SELECT 1;\nEND", "SW015") =
 Check(FixOne("DECLARE @a int;\nDECLARE @b int = 1;\nSELECT @a;", "SW016") == "DECLARE @a int;\nSELECT @a;" &&
     FixOne("DECLARE @a int, @b int;\nSELECT @b;", "SW016") == "DECLARE @b int;\nSELECT @b;" && FixOne("DECLARE @a int, @b int;\nSELECT @a;", "SW016") == "DECLARE @a int;\nSELECT @a;" &&
     FixOne("SELECT 1; DECLARE @t TABLE (a int);", "SW016") == "SELECT 1; ", "fix unused declaration");
-Check(FixOne("SELECT * FROM dbo.People;", "SW001", assistTables) == "SELECT Id, FullName, Born, Code, Stamp, Twice FROM dbo.People;" &&
+Check(FixOne("SELECT * FROM dbo.People;", "SW001", assistTables) == "SELECT Id,\r\n       FullName,\r\n       Born,\r\n       Code,\r\n       Stamp,\r\n       Twice FROM dbo.People;" &&
     FixOne("SELECT * FROM dbo.Missing;", "SW001", assistTables) == "<null>" && FixOne("SELECT * FROM dbo.People;", "SW001") == "<null>", "fix wildcard needs metadata");
 var fixedAll = SqlAnalysis.FixAll("DECLARE @unused int, @x int = 1;\nSELECT @@IDENTITY WHERE @x = NULL;\nEXEC usp_Load;\n-- querywright-disable-next-line SW009\nSELECT @@IDENTITY;");
 Check(fixedAll.Fixed == 4 && fixedAll.Text == "DECLARE @x int = 1;\nSELECT SCOPE_IDENTITY() WHERE @x IS NULL;\nEXEC dbo.usp_Load;\n-- querywright-disable-next-line SW009\nSELECT @@IDENTITY;", "fix all respects suppression: " + fixedAll.Text);

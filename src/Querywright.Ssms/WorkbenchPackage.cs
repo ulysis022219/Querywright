@@ -186,6 +186,7 @@ namespace Querywright.Ssms
             Add(0x011E, FormatFolderAsync);
             Add(0x011F, CompareObjectAsync);
             Add(0x0120, GoToDefinitionAsync);
+            Add(0x0122, ScriptForDatabasesAsync);
             Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             Instance = this;
             ServerColorMenu.Start();
@@ -891,6 +892,24 @@ namespace Querywright.Ssms
             await OpenInNewQueryAsync(SqlRefactoring.InvalidObjectsReport(connection.Database, items), "Invalid objects");
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             status?.SetText("Querywright: " + items.Count + " invalid object issue(s) found.");
+        });
+
+        private Task ScriptForDatabasesAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            string sql = QueryTextOrNull();
+            if (string.IsNullOrWhiteSpace(sql)) throw new InvalidOperationException("Open a query window with the script to run in each database.");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server whose databases you want, and turn on Read live metadata under Tools > Options > Querywright.");
+            var databases = await Task.Run(() => LiveMetadata.Databases(connection));
+            bool hasUse = await Task.Run(() => SqlRefactoring.ContainsUse(sql));
+            var previous = new HashSet<string>((options.MultiDatabaseSelection ?? "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
+            var picker = new DatabasePickerDialog(connection.Server, databases, previous, hasUse);
+            if (!await ShowDialogAsync(picker)) return;
+            options.MultiDatabaseSelection = string.Join("\n", picker.Selected);
+            options.SaveSettingsToStorage();
+            string script = await Task.Run(() => SqlRefactoring.ForDatabases(sql, picker.Selected, picker.StopOnError, picker.PrintName));
+            await OpenInNewQueryAsync(script, "Script for " + picker.Selected.Count + " databases");
         });
 
         private Task EncapsulateAsync() => RunCommandAsync(async () =>

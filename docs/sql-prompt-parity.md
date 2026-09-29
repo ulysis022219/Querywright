@@ -49,6 +49,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Smart rename object (updates dependents) | host (sp_rename + ALTER for dependent modules, opened in a new window; never executed) |
 | Split table | host: pick columns to move; script creates the new table keyed and foreign-keyed on the primary key, copies data, drops moved columns in one transaction; opened in a new window, never executed |
 | Encapsulate as new stored procedure | host (CREATE PROCEDURE script from the selection, variables become parameters; new window) |
+| Script for multiple databases | host (tick databases on the connected server; USE/GO block per database in a new window, never executed; optional SQLCMD stop on first error) |
 | Find unused variables and parameters | host (Error List) |
 | Summarize script (outline of statements) | host (Error List, click to navigate) |
 | Find invalid objects | host: read-only binding check of up to 2000 modules (sys.dm_sql_referenced_entities in TRY/CATCH + unresolved sys.sql_expression_dependencies); report opens in a new window |

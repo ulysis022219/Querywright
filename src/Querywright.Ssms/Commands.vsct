@@ -137,6 +137,10 @@
         <Parent guid="CommandsGuid" id="RefactorGroup" />
         <Strings><ButtonText>Encapsulate as stored procedure...</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="ScriptForDatabases" priority="0x0060" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Script for multiple databases...</ButtonText></Strings>
+      </Button>
       <Button guid="CommandsGuid" id="FixAtCaret" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="AnalyzeGroup" />
         <Strings><ButtonText>Fix issue at caret</ButtonText></Strings>
@@ -210,6 +214,9 @@
     <CommandPlacement guid="CommandsGuid" id="TabHistory" priority="0x0100">
       <Parent guid="CommandsGuid" id="ToolbarGroup" />
     </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="ScriptForDatabases" priority="0x0110">
+      <Parent guid="CommandsGuid" id="EditorGroup" />
+    </CommandPlacement>
   </CommandPlacements>
   <KeyBindings>
     <KeyBinding guid="CommandsGuid" id="ExecuteStatement" editor="guidVSStd97" key1="VK_F5" mod1="Shift" />
@@ -265,6 +272,7 @@
       <IDSymbol name="CompareObject" value="0x011F" />
       <IDSymbol name="GoToDefinition" value="0x0120" />
       <IDSymbol name="Options" value="0x0121" />
+      <IDSymbol name="ScriptForDatabases" value="0x0122" />
       <IDSymbol name="EditorGroup" value="0x1050" />
     </GuidSymbol>
     <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">

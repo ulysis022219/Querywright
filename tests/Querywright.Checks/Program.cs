@@ -895,6 +895,13 @@ Check(csv == "a,b\n'=1+1,\"x,y\"\n-5,\"say \"\"hi\"\"\nthere\"\n,'@SUM(A1)\n'-x,
 Check(ResultGrid.Delimited(new[] { "a" }, new List<string?[]> { new[] { "x\ty" } }, '\t', "\n") == "a\n\"x\ty\"\n", "tab-delimited quoting");
 Check(ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[] { "1", "x;y" } }, ';', "\n", includeHeaders: false) == "1;\"x;y\"\n", "csv without headers, semicolon");
 Check(SqlAnalysis.UnfilteredChanges("TRUNCATE TABLE dbo.T; DROP TABLE dbo.A, #b; DELETE FROM dbo.T", unfiltered: false, dropTruncate: true).SequenceEqual(new[] { "TRUNCATE TABLE dbo.T", "DROP TABLE dbo.A", "DROP TABLE #b" }), "drop/truncate warning targets");
+string multi = SqlRefactoring.ForDatabases("CREATE OR ALTER PROC dbo.p AS SELECT 1;\n", new[] { "Sales", "O'Brien]x" }, newline: "\n");
+Check(multi == "-- Querywright: script for 2 databases. Review, then execute. Nothing has been run.\n\nUSE [Sales];\nPRINT N'Sales';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n\nUSE [O'Brien]]x];\nPRINT N'O''Brien]x';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n", "script for databases: " + multi);
+string multiStop = SqlRefactoring.ForDatabases("SELECT 1\ngo", new[] { "A" }, stopOnError: true, printName: false, newline: "\n");
+Check(multiStop.Contains(":on error exit\n") && multiStop.EndsWith("USE [A];\nGO\nSELECT 1\ngo\n") && !multiStop.Contains("PRINT"), "script for databases: stop on error, trailing GO kept once: " + multiStop);
+try { SqlRefactoring.ForDatabases("SELECT 1", new string[0]); Check(false, "script for databases needs a database"); }
+catch (ArgumentException) { checks++; }
+Check(SqlRefactoring.ContainsUse("USE Sales;\nSELECT 1") && !SqlRefactoring.ContainsUse("SELECT 'USE x' -- USE y\nSELECT [use] FROM t"), "detects USE outside strings and comments");
 Check(SqlAnalysis.UnfilteredChanges("TRUNCATE TABLE dbo.T; DELETE FROM dbo.T").SequenceEqual(new[] { "DELETE dbo.T" }), "drop/truncate off by default");
 string colorRules = ColorRules.Set("prod=Red; test=Orange", ColorRules.ServerPattern(@"10.0.0.1\SQL"), "#FF8800");
 Check(colorRules == @"10.0.0.1\SQL/=#FF8800;prod=Red;test=Orange" && ColorRules.Get(colorRules, @"10.0.0.1\sql/") == "#FF8800", "server color rule added first: " + colorRules);

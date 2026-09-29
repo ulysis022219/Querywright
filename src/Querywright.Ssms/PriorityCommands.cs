@@ -72,17 +72,23 @@ namespace Querywright.Ssms
                     if (OnF12(standard)) { ActivityLog.TryLogInformation("Querywright", "F12 bound to: Edit.GoToDefinition"); return; }
                 }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { }
-                foreach (object command in (System.Collections.IEnumerable)commandList)
+                // ponytail: Count/Item(i) rather than foreach; the COM enumerator can throw part way on some SSMS builds.
+                int count = (int)Get(commandList, "Count");
+                for (int i = 1; i <= count; i++)
                 {
                     // Whatever owns plain F12 is handled; TryGoToDefinition passes it on when there is nothing to go to.
-                    try { if (OnF12(command)) F12Commands.Add((new Guid((string)Get(command, "Guid")), (uint)(int)Get(command, "ID"), Get(command, "Name") as string ?? "")); }
+                    try
+                    {
+                        var command = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { i, -1 });
+                        if (OnF12(command)) F12Commands.Add((new Guid((string)Get(command, "Guid")), (uint)(int)Get(command, "ID"), Get(command, "Name") as string ?? ""));
+                    }
                     catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 }
                 ActivityLog.TryLogInformation("Querywright", "F12 bound to: " + string.Join(", ", F12Commands.Select(c => c.Name)));
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                ActivityLog.TryLogWarning("Querywright", "F12 binding lookup failed: " + error.GetType().Name);
+                ActivityLog.TryLogWarning("Querywright", "F12 binding lookup failed: " + ((error as System.Reflection.TargetInvocationException)?.InnerException ?? error).GetType().Name);
             }
         }
 
@@ -114,7 +120,13 @@ namespace Querywright.Ssms
             if (IsDefinition(pguidCmdGroup, nCmdID))
             {
                 SelfTest.Note = "f12 priority";
-                try { return package.TryGoToDefinition(package.GetSqlView()) ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
+                try
+                {
+                    bool handled = package.TryGoToDefinition(package.GetSqlView());
+                    // No query text: just which path F12 took, so a user's ActivityLog shows why nothing opened.
+                    ActivityLog.TryLogInformation("Querywright", "F12 (" + pguidCmdGroup + ":" + nCmdID + "): " + SelfTest.Note);
+                    return handled ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+                }
                 catch (InvalidOperationException) { SelfTest.Note = "f12 no view"; return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return VSConstants.S_OK; }
             }

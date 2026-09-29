@@ -439,7 +439,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
 
         private static Type serviceCacheType;
 
-        private static object ActiveConnectionInfo()
+        internal static object ActiveConnectionInfo()
         {
             var serviceCache = serviceCacheType ?? (serviceCacheType = AppDomain.CurrentDomain.GetAssemblies()
                 .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache", false))

@@ -59,7 +59,12 @@ namespace Querywright.Ssms
                             }
                             break;
                         case "tab": Exec(target, VSConstants.VSStd2K, (uint)VSConstants.VSStd2KCmdID.TAB); break;
-                        case "f12": await RunDteCommandAsync(package, "Edit.GoToDefinition"); break;
+                        case "f12": // through the shell's command routing, as the key is, so priority targets see it
+                            Exec((IOleCommandTarget)await package.GetServiceAsync(typeof(SUIHostCommandDispatcher)), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn);
+                            break;
+                        case "ready": // wait until the window is connected and live metadata has loaded
+                            for (int i = 0; i < 150 && !(package.CurrentTables()?.Count > 0); i++) { await Task.Delay(1000); await package.JoinableTaskFactory.SwitchToMainThreadAsync(); }
+                            break;
                         case "exec": await RunDteCommandAsync(package, "Query.Execute"); break;
                         case "grid": FocusGrid(); break;
                         case "cmd":

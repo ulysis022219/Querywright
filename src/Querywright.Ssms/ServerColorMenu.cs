@@ -16,6 +16,7 @@ namespace Querywright.Ssms
     {
         private const string ItemName = "QuerywrightServerColor";
         private static TreeView tree;
+        private static object explorer;
 
         internal static string Status = "not attached";
 
@@ -36,7 +37,7 @@ namespace Querywright.Ssms
                 var cache = AppDomain.CurrentDomain.GetAssemblies()
                     .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache", false)).FirstOrDefault(t => t != null);
                 if (cache == null) { Status = "no ServiceCache type"; return false; }
-                var explorer = cache.GetMethod("GetObjectExplorer", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.Invoke(null, null);
+                explorer = cache.GetMethod("GetObjectExplorer", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.Invoke(null, null);
                 // SSMS 22: the explorer is only reachable as a service.
                 var service = AppDomain.CurrentDomain.GetAssemblies()
                     .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ObjectExplorer.IObjectExplorerService", false)).FirstOrDefault(t => t != null);
@@ -81,6 +82,14 @@ namespace Querywright.Ssms
         /// <summary>Self-test: opens the first server node's menu as a right-click would and reports what it holds.</summary>
         internal static async System.Threading.Tasks.Task<string> ProbeAsync(WorkbenchPackage package)
         {
+            if (tree != null && tree.Nodes.Count == 0)
+            {
+                // Object Explorer starts empty when SSMS opens with a query connection; connect it to the same server.
+                var info = LiveMetadata.ActiveConnectionInfo();
+                var connect = explorer?.GetType().GetMethods().FirstOrDefault(m => m.Name == "ConnectToServer" && m.GetParameters().Length == 1 && info != null && m.GetParameters()[0].ParameterType.IsInstanceOfType(info));
+                if (connect == null) return Status + ", no server nodes, " + (info == null ? "no connection info" : "no ConnectToServer");
+                connect.Invoke(explorer, new[] { info });
+            }
             for (int i = 0; i < 30 && (tree == null || tree.Nodes.Count == 0); i++) { await System.Threading.Tasks.Task.Delay(1000); await package.JoinableTaskFactory.SwitchToMainThreadAsync(); }
             if (tree == null || tree.Nodes.Count == 0) return Status + (tree == null ? "" : ", no server nodes");
             tree.SelectedNode = tree.Nodes[0];

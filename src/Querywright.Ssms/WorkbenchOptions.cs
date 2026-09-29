@@ -17,6 +17,11 @@ namespace Querywright.Ssms
         [Description("Read table and column names from the query window's connection with one fixed catalog query (sys.objects, sys.columns). Never runs your SQL.")]
         public bool LiveMetadata { get; set; } = true;
 
+        [Category("Tab history")]
+        [DisplayName("Keep tab history")]
+        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only, newest 200 kept) so closed tabs can be reopened. Turn off to save nothing.")]
+        public bool TabHistory { get; set; } = true;
+
         [Category("Shared settings")]
         [DisplayName("Settings file")]
         [Description("Optional team XML file containing formatting style and rule severities. Empty uses defaults.")]

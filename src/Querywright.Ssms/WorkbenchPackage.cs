@@ -580,8 +580,19 @@ namespace Querywright.Ssms
                 status?.SetText("Querywright: no live connection; the offline schema file is re-read whenever it changes.");
                 return;
             }
-            status?.SetText("Querywright: refreshing database metadata...");
-            var tables = await LiveMetadata.LoadAsync(connection);
+            var load = LiveMetadata.LoadAsync(connection);
+            uint cookie = 0;
+            while (!load.IsCompleted && status != null)
+            {
+                var (percent, step) = LiveMetadata.Progress;
+                string text = $"Querywright: refreshing metadata {percent}% ({step})...";
+                status.Progress(ref cookie, 1, text, (uint)percent, 100);
+                status.SetText(text);
+                await Task.WhenAny(load, Task.Delay(250));
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+            }
+            status?.Progress(ref cookie, 0, "", 0, 0);
+            var tables = await load;
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             status?.SetText(tables == null ? "Querywright: metadata refresh failed; see the SSMS activity log."
                 : "Querywright: metadata refreshed (" + tables.Count + " tables and views, "

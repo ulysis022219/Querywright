@@ -984,4 +984,40 @@ Check(ObjectScript.Header("NOAH_BALCOR", "P", "FC", "nsp_BalanceSheet", true, tr
     "SET ANSI_NULLS ON\nGO\nSET QUOTED_IDENTIFIER ON\nGO\n", "SSMS script header");
 Check(ObjectScript.Header(null, "IF", "dbo", "f", false, false, "d", "\n").StartsWith("/****** Object:  UserDefinedFunction [dbo].[f]") &&
     ObjectScript.Header(null, "IF", "dbo", "f", false, false, "d", "\n").Contains("SET ANSI_NULLS OFF\nGO\nSET QUOTED_IDENTIFIER OFF"), "script header options");
+// Catalog assembly edge cases: nothing may throw, bad rows are dropped one by one.
+var asm_catEmpty = CatalogAssembler.Tables(new (string?, string?, string?, string?, bool, bool)[0], new (int, string?, string?, string?, string?, string?, string?)[0]);
+Check(asm_catEmpty.Tables.Length == 0 && asm_catEmpty.Skipped == 0, "catalog empty");
+var asm_catNull = CatalogAssembler.Tables(null!, null!);
+Check(asm_catNull.Tables.Length == 0, "catalog null input");
+var asm_catCols = new (string?, string?, string?, string?, bool, bool)[]
+{
+    ("dbo", "B", "Id", "int", true, false), ("dbo", "B", null, "int", false, false), ("dbo", "B", "  ", null, false, false), ("dbo", "B", "Id", "int", false, false),
+    ("dbo", "B", "Note", null, false, false), ("dbo", "a", "x", "int", false, true), (null, "Orphan", "c", "int", false, false), ("dbo", " ", "c", "int", false, false),
+    ("dbo", "OnlyBlank", null, null, false, false), ("Sales", "C", "a", "int", false, false), ("Sales", "C", "A", "int", false, false),
+    ("dbo", "we]ird'\"[name", "c\u00e9", "nvarchar(5)", false, false),
+};
+var asm_catKeys = new (int, string?, string?, string?, string?, string?, string?)[]
+{
+    (1, "dbo", "B", "Id", "dbo", "a", "x"),
+    (2, "dbo", "B", "Missing", "dbo", "a", "x"),
+    (3, "dbo", "B", "Id", null, null, null),
+    (4, "dbo", "B", null, "dbo", "a", "x"),
+    (5, "gone", "T", "c", "dbo", "a", "x"),
+    (6, "dbo", "B", "Id", "dbo", "a", "x"), (6, "dbo", "B", "Note", "dbo", "a", "x"),
+};
+var asm_catBuilt = CatalogAssembler.Tables(asm_catCols, asm_catKeys);
+Check(asm_catBuilt.Tables.Length == 4 && asm_catBuilt.Skipped == 1, "catalog keeps usable tables: " + asm_catBuilt.Tables.Length + "/" + asm_catBuilt.Skipped);
+Check(asm_catBuilt.Tables[0].Name == "a" && asm_catBuilt.Tables[1].Name == "B" && asm_catBuilt.Tables[0].IsView, "catalog sorted case-insensitively");
+var asm_catB = asm_catBuilt.Tables.First(t => t.Name == "B");
+Check(asm_catB.Columns.SequenceEqual(new[] { "Id", "Note" }) && asm_catB.Generated![0], "catalog drops blank and duplicate columns");
+Check(asm_catB.ForeignKeys.Count == 2 && asm_catB.ForeignKeys.Any(k => k.Columns.Count == 2), "catalog drops orphan, blank and mismatched foreign keys");
+Check(asm_catBuilt.Tables.First(t => t.Name == "C").Columns.Count == 2, "catalog keeps case-distinct columns");
+Check(asm_catBuilt.Tables.Any(t => t.Name.Contains("]")), "catalog keeps odd characters");
+var asm_procs = CatalogAssembler.Procedures(new (string?, string?, string?, string?, bool, bool)[]
+{
+    ("dbo", "p2", "@a", "int", false, false), ("dbo", "p2", "bad", "int", false, false), ("dbo", "p2", null, null, false, false),
+    ("dbo", "p1", null, null, false, false), (null, "x", "@a", null, false, false), ("dbo", " ", "@a", null, false, false),
+});
+Check(asm_procs.Length == 2 && asm_procs[0].Name == "p1" && asm_procs[0].Parameters.Count == 0 && asm_procs[1].Parameters.Count == 1, "catalog procedures tolerate bad rows");
+Check(CatalogAssembler.Procedures(null!).Length == 0, "catalog procedures null input");
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes and object refactors. SSMS integration not tested.");

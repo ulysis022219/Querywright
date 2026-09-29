@@ -69,6 +69,9 @@ jobs:
           Write-Output "Version $base.$env:GITHUB_RUN_NUMBER"
       - name: Build VSIX
         run: dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj
+      - name: Dialog layout and interaction checks
+        shell: powershell
+        run: scripts/Test-Dialogs.ps1
       - name: Verify package
         shell: powershell
         run: scripts/Test-Package.ps1

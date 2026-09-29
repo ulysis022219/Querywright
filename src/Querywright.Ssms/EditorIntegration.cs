@@ -188,7 +188,15 @@ namespace Querywright.Ssms
             bool key = package != null && (IsTab(group, id) || IsReturn(group, id));
             bool committing = key && completion.IsCompletionActive(view);
             var before = view.TextSnapshot;
-            int result = Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            int result;
+            // ponytail: SSMS's own IntelliSense can throw while typing an unknown name, and the shell turns that into a
+            // modal "Object reference not set" box. Log it instead; the red squiggle already marks the name.
+            try { result = Next?.Exec(ref group, id, options, input, output) ?? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
+            catch (Exception error) when (error is NullReferenceException || error is InvalidOperationException || error is ArgumentException)
+            {
+                Swallowed(error);
+                return VSConstants.S_OK;
+            }
             if (key && ErrorHandler.Succeeded(result) && !completion.IsCompletionActive(view) && (committing || view.TextSnapshot != before))
             {
                 try { package!.TryFillAfterCommit(view); }
@@ -198,7 +206,7 @@ namespace Querywright.Ssms
         }
 
         internal static void Swallowed(Exception error) =>
-            Microsoft.VisualStudio.Shell.ActivityLog.TryLogWarning("Querywright", "Editor command failed: " + error.GetType().Name + " at " + error.TargetSite?.Name);
+            Microsoft.VisualStudio.Shell.ActivityLog.TryLogWarning("Querywright", "Editor command failed: " + error.GetType().Name + " at " + error.TargetSite?.DeclaringType?.FullName + "." + error.TargetSite?.Name);
 
         public int QueryStatus(ref Guid group, uint count, OLECMD[] commands, IntPtr text)
         {

@@ -59,6 +59,10 @@ namespace Querywright.Core
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
             if (sql.Length > MaxInput || position == 0 || position < sql.Length && IsWordChar(sql[position])) return null;
+            // EXEC p<space> or a Tab already typed after the procedure name: fill from the name and replace the trailing blanks.
+            int caret = position;
+            while (position > 0 && (sql[position - 1] == ' ' || sql[position - 1] == '\t')) position--;
+            if (position == 0) return null;
             var parser = new TSql170Parser(true);
             var before = parser.GetTokenStream(new StringReader(sql.Substring(0, position)), out var errors).Where(t => t.TokenType != TSqlTokenType.EndOfFile).ToList();
             if (errors.Count > 0 || before.Count == 0 || !IsName(before[before.Count - 1])) return null;
@@ -72,6 +76,7 @@ namespace Querywright.Core
             else if (i >= 3 && code[i - 1].TokenType == TSqlTokenType.EqualsSign && code[i - 2].TokenType == TSqlTokenType.Variable) keyword = code[i - 3];
             if (keyword == null) return null;
             bool insert = Is(keyword, "INSERT");
+            if (insert && caret != position) return null; // ponytail: blanks after an INSERT target stay an ordinary Tab.
             if (!insert && !Is(keyword, "EXEC") && !Is(keyword, "EXECUTE")) return null;
 
             var after = parser.GetTokenStream(new StringReader(sql.Substring(position)), out _).FirstOrDefault(t => !Trivia(t));
@@ -93,7 +98,7 @@ namespace Querywright.Core
                 if (table == null) return null;
                 var columns = Enumerable.Range(0, table.Columns.Count).Where(c => table.Generated == null || !table.Generated[c])
                     .Select(c => (Name: table.Columns[c], Type: table.ColumnTypes?[c])).ToList();
-                if (columns.Count == 0) return new TextEdit(position, 0, " DEFAULT VALUES");
+                if (columns.Count == 0) return new TextEdit(position, caret - position, " DEFAULT VALUES");
                 string inner = indent + "    ";
                 var text = new StringBuilder();
                 text.Append(newline).Append(indent).Append('(').Append(newline);
@@ -101,7 +106,7 @@ namespace Querywright.Core
                 text.Append(newline).Append(indent).Append(')').Append(newline).Append(indent).Append("VALUES").Append(newline).Append(indent).Append('(').Append(newline);
                 text.Append(Aligned(columns.Select(c => (Placeholder(c.Type), OneLine(c.Name) + (c.Type == null ? "" : " - " + c.Type))).ToList(), inner, newline));
                 text.Append(newline).Append(indent).Append(')');
-                return new TextEdit(position, 0, text.ToString());
+                return new TextEdit(position, caret - position, text.ToString());
             }
             var procedure = Find(procedures ?? Array.Empty<SchemaProcedure>(), p => p.Schema, p => p.Name, parts, defaultSchema);
             if (procedure == null || procedure.Parameters.Count == 0) return null;
@@ -110,7 +115,7 @@ namespace Querywright.Core
             var arguments = procedure.Parameters.Select(p => (p.Name + " = " + (p.IsOutput ? p.Name + " OUTPUT" : p.HasDefault ? "DEFAULT" : Placeholder(p.Type)),
                 p.Type ?? "")).ToList();
             string lines = Aligned(arguments, hang, newline);
-            return new TextEdit(position, 0, " " + lines.Substring(hang.Length));
+            return new TextEdit(position, caret - position, " " + lines.Substring(hang.Length));
         }
 
         // value, -- comment lines with the comments aligned; the last value has no comma.

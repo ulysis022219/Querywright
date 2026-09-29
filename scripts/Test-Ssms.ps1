@@ -166,7 +166,8 @@ try {
     $connection.Open()
     foreach ($statement in "IF DB_ID('QwTest') IS NULL CREATE DATABASE QwTest;",
         "USE QwTest; IF OBJECT_ID('dbo.People') IS NULL CREATE TABLE dbo.People (Id int NOT NULL, FullName nvarchar(100) NULL);",
-        "USE QwTest; IF NOT EXISTS (SELECT 1 FROM dbo.People) INSERT dbo.People VALUES (1, N'Ann O''Neil'), (2, NULL);") {
+        "USE QwTest; IF NOT EXISTS (SELECT 1 FROM dbo.People) INSERT dbo.People VALUES (1, N'Ann O''Neil'), (2, NULL);",
+        "USE QwTest; IF OBJECT_ID('dbo.GetPeople') IS NULL EXEC('CREATE PROCEDURE dbo.GetPeople @Id int AS SELECT FullName FROM dbo.People WHERE Id = @Id;');") {
         $command = $connection.CreateCommand(); $command.CommandText = $statement; [void]$command.ExecuteNonQuery()
     }
     $connection.Close()
@@ -183,6 +184,13 @@ if ($live) {
     $text = Session 'connection-label' "SELECT 1;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:30000|caption|oe'
     Expect 'connection label shows server and database' $text { param($t) $t -match '-- \S*MSSQLLocalDB \u00B7 QwTest\r?\n' }
     Expect 'Object Explorer server menu has color item' $text { param($t) $t -match '-- oe menu item added' }
+    # F12 on an object opens its script in a new window: ALTER for modules, CREATE TABLE for tables.
+    $text = Session 'f12-procedure' "EXEC dbo.GetPeople;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|home|right:10|f12|wait:5000|latest'
+    Expect 'F12 procedure opens ALTER' $text { param($t) $t -match 'ALTER PROCEDURE dbo\.GetPeople' }
+    $text = Session 'f12-table' "SELECT * FROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|home|right:19|f12|wait:5000|latest'
+    Expect 'F12 table opens CREATE TABLE' $text { param($t) $t -match 'CREATE TABLE' -and $t -match 'FullName' }
+    $text = Session 'exec-fill' "" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|type:EXEC dbo.GetPe|wait:3000|tab|wait:2000'
+    Expect 'EXEC procedure suggestion fills parameters' $text { param($t) $t -match '^EXEC dbo\.GetPeople @Id = ' }
     # Results grid: run a read-only SELECT, focus the grid, then "Script as INSERT" (0x118) opens a new window.
     $text = Session 'grid-insert' "SELECT Id, FullName FROM dbo.People ORDER BY Id;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:30000|exec|wait:10000|grid|cmd:118|wait:5000|latest'
     Expect 'results grid script as INSERT' $text { param($t) $t -match 'DROP TABLE IF EXISTS #Results' -and $t -match 'CREATE TABLE #Results' -and $t -match 'DROP TABLE #Results;' -and $t -match "\(1, N'Ann O''Neil'\)" -and $t -match '\(2, NULL\)' }

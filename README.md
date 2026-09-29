@@ -28,7 +28,7 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`.
   56 built in; add your own `.sql` files or share a team folder.
 - Expand `*` into a column list, or pick the columns you want.
-- **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view or function it opens an ALTER script in a new query, including three-part names in another database on the same server (`OtherDb.dbo.Proc`).
+- **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view, function or trigger it opens an ALTER script in a new query and on a table a CREATE TABLE script (also in scripts with syntax errors elsewhere), including three-part names in another database on the same server (`OtherDb.dbo.Proc`).
 - **Shift+F5** runs only the statement under the caret (only when you press it).
 
 **Formatting**

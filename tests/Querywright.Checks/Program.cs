@@ -296,6 +296,11 @@ Check(Go("EXEC dbo.Get|People;") is { Name: "GetPeople" }, "procedure definition
 Check(Go("WITH c AS (SELECT 1 AS x) SELECT x FROM |c;") is { Offset: 5, Length: 1 }, "CTE definition");
 Check(Go("UPDATE p SET Name = N'' FROM dbo.People p WHERE p|.Id = 1;") is { Offset: 40 }, "UPDATE alias definition");
 Check(Go("SELECT Pe|ople.Name FROM dbo.People;") is { Schema: "dbo", Name: "People" }, "unaliased table qualifier");
+Check(Go("SELECT dbo.fn_Ta|x(1);") is { Offset: -1, Schema: "dbo", Name: "fn_Tax" }, "scalar function definition");
+Check(Go("SELECT Other.dbo.fn_Ta|x(1);") is { Database: "Other", Schema: "dbo", Name: "fn_Tax" }, "cross-database scalar function");
+Check(Go("SELECT FROM\nEXEC dbo.usp_Lo|ad;") is { Offset: -1, Schema: "dbo", Name: "usp_Load" }, "object name in a script with syntax errors");
+Check(Go("SELECT FROM\nEXEC [Other]..[usp Lo|ad];") is { Database: "Other", Schema: null, Name: "usp Load" }, "db..name in a script with syntax errors");
+Check(Go("SELECT FROM\nEXEC srv.db.dbo.p|;") == null && Go("SELECT FROM @x|") == null, "linked server and variables skipped on syntax errors");
 Console.WriteLine($"PASS: {checks} total checks including navigation. SSMS integration not tested.");
 
 Check(SnippetFiles.ShortcutBefore("SELECT 1;\nssf", 13) == "ssf", "shortcut word");
@@ -714,6 +719,13 @@ var orders = Fill("insert sales.[Orders]|;");
 Check(orders != null && orders.Text.Contains("    0,                   -- OrderId - int") && orders.Text.Contains("NEWID(),") && orders.Text.Contains("SYSDATETIMEOFFSET(),") &&
     orders.Text.Contains("0x,") && orders.Text.Contains("N'',") && orders.Text.Contains("    NULL                 -- Odd - sql_variant"), "INSERT fill placeholders by type");
 Check(Fill("INSERT OnlyId|")!.Text == " DEFAULT VALUES", "all generated uses DEFAULT VALUES");
+var spaced = Fill("EXEC dbo.usp_Add \t|");
+Check(spaced is { Start: 16, Length: 2 } && spaced.Text.StartsWith(" @Name = "), "fill after trailing blanks replaces them");
+Check(Fill("EXEC dbo.usp_Add\n|") == null, "no fill on the next line");
+string[] ProcNames(string text) { int at = text.IndexOf('|'); return SqlCompletion.Complete(text.Remove(at, 1), at, null, procedures: procs).Items.Select(i => i.InsertText).ToArray(); }
+Check(ProcNames("EXEC usp|").SequenceEqual(new[] { "dbo.usp_Add" }) && ProcNames("EXEC @rc = N|").SequenceEqual(new[] { "dbo.NoArgs" }) &&
+    ProcNames("EXECUTE dbo.|").SequenceEqual(new[] { "NoArgs", "usp_Add" }) && ProcNames("EXEC sales.|").Length == 0, "procedure suggestions after EXEC");
+Check(!ProcNames("SELECT usp|").Contains("dbo.usp_Add"), "procedures only after EXEC");
 Check(Fill("INSERT INTO dbo.People| (Id) VALUES (1)") == null && Fill("INSERT INTO dbo.People|\nSELECT 1") == null && Fill("INSERT INTO dbo.People| x") == null,
     "INSERT fill skips continued statements");
 Check(Fill("INSERT INTO dbo.People|\nSELECT 2;") == null && Fill("INSERT INTO dbo.Peo|ple") == null && Fill("INSERT INTO dbo.Missing|") == null &&

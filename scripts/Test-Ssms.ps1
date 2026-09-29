@@ -180,6 +180,8 @@ if ($live) {
     Expect 'column completion from live metadata' $text { param($t) $t -match 'SELECT p\.FullName ?FROM' }
     $text = Session 'insert-fill' "INSERT INTO dbo.People" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|end|tab|wait:3000'
     Expect 'INSERT + Tab fills columns from live metadata' $text { param($t) $t -match 'Id' -and $t -match 'FullName' -and $t -match 'VALUES' }
+    $text = Session 'connection-label' "SELECT 1;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:30000|caption'
+    Expect 'connection label shows server and database' $text { param($t) $t -match '-- \S*MSSQLLocalDB \u00B7 QwTest$' }
     # Results grid: run a read-only SELECT, focus the grid, then "Script as INSERT" (0x118) opens a new window.
     $text = Session 'grid-insert' "SELECT Id, FullName FROM dbo.People ORDER BY Id;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:30000|exec|wait:10000|grid|cmd:118|wait:5000|latest'
     Expect 'results grid script as INSERT' $text { param($t) $t -match 'CREATE TABLE #Results' -and $t -match "\(1, N'Ann O''Neil'\)" -and $t -match '\(2, NULL\)' }

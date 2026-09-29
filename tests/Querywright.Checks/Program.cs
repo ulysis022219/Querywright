@@ -893,6 +893,9 @@ try { ResultGrid.InsertScript(new[] { "a", "b" }, null, new List<string?[]> { ne
 string csv = ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[] { "=1+1", "x,y" }, new[] { "-5", "say \"hi\"\nthere" }, new[] { null, "@SUM(A1)" }, new[] { "-x", "+1" } }, ',', "\n");
 Check(csv == "a,b\n'=1+1,\"x,y\"\n-5,\"say \"\"hi\"\"\nthere\"\n,'@SUM(A1)\n'-x,'+1\n", "csv quoting and injection guard: " + csv);
 Check(ResultGrid.Delimited(new[] { "a" }, new List<string?[]> { new[] { "x\ty" } }, '\t', "\n") == "a\n\"x\ty\"\n", "tab-delimited quoting");
+Check(ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[] { "1", "x;y" } }, ';', "\n", includeHeaders: false) == "1;\"x;y\"\n", "csv without headers, semicolon");
+Check(SqlAnalysis.UnfilteredChanges("TRUNCATE TABLE dbo.T; DROP TABLE dbo.A, #b; DELETE FROM dbo.T", unfiltered: false, dropTruncate: true).SequenceEqual(new[] { "TRUNCATE TABLE dbo.T", "DROP TABLE dbo.A", "DROP TABLE #b" }), "drop/truncate warning targets");
+Check(SqlAnalysis.UnfilteredChanges("TRUNCATE TABLE dbo.T; DELETE FROM dbo.T").SequenceEqual(new[] { "DELETE dbo.T" }), "drop/truncate off by default");
 string colorRules = ColorRules.Set("prod=Red; test=Orange", ColorRules.ServerPattern(@"10.0.0.1\SQL"), "#FF8800");
 Check(colorRules == @"10.0.0.1\SQL/=#FF8800;prod=Red;test=Orange" && ColorRules.Get(colorRules, @"10.0.0.1\sql/") == "#FF8800", "server color rule added first: " + colorRules);
 Check(ColorRules.Set(ColorRules.Set(colorRules, @"10.0.0.1\SQL/", "Blue"), @"10.0.0.1\SQL/", null) == "prod=Red;test=Orange" && ColorRules.Get("", "x/") == null, "server color rule replaced and cleared");

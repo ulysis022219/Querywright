@@ -158,7 +158,7 @@ namespace Querywright.Core
             baseType ?? (rows.All(r => r[column] == null || IsNumber(r[column])) ? null : "nvarchar");
 
         /// <summary>Delimited text (CSV or tab) with RFC 4180 quoting and a spreadsheet formula-injection guard. NULL is an empty field.</summary>
-        public static string Delimited(IReadOnlyList<string?> headers, IReadOnlyList<string?[]> rows, char separator, string newline = "\r\n")
+        public static string Delimited(IReadOnlyList<string?> headers, IReadOnlyList<string?[]> rows, char separator, string newline = "\r\n", bool includeHeaders = true)
         {
             var builder = new StringBuilder();
             void Line(IReadOnlyList<string?> cells)
@@ -175,7 +175,7 @@ namespace Querywright.Core
                 }
                 builder.Append(newline);
             }
-            Line(ColumnNames(headers));
+            if (includeHeaders) Line(ColumnNames(headers));
             foreach (var row in rows) Line(row);
             return builder.ToString();
         }

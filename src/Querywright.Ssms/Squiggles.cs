@@ -70,6 +70,12 @@ namespace Querywright.Ssms
                 {
                     await Task.Delay(700, cancellation.Token);
                     if (snapshot.Length > 2_000_000) return;
+                    if (WorkbenchPackage.Instance?.Options?.LiveAnalysis == false)
+                    {
+                        // Clears squiggles already shown when the option is turned off.
+                        if (latest != null) { latest = null; TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length))); }
+                        return;
+                    }
                     string settingsFile = WorkbenchPackage.Instance?.SettingsFile ?? "";
                     var settings = Settings(settingsFile);
                     var result = SqlAnalysis.Analyze(snapshot.GetText(), cancellation.Token, settings);

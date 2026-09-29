@@ -10,16 +10,16 @@ using Querywright.Core;
 namespace Querywright.Ssms
 {
     /// <summary>
-    /// Sees SSMS's Query.Execute before it runs and asks first when the SQL about to run holds a DELETE or UPDATE without
+    /// Sees F12 and SSMS's Query.Execute before it runs and asks first when the SQL about to run holds a DELETE or UPDATE without
     /// WHERE. Never executes anything itself: "Execute anyway" just lets SSMS's own command continue.
     /// </summary>
-    internal sealed class ExecuteGuard : IOleCommandTarget
+    internal sealed class PriorityCommands : IOleCommandTarget
     {
         private readonly WorkbenchPackage package;
         private Guid group;
         private uint id;
 
-        private ExecuteGuard(WorkbenchPackage package) => this.package = package;
+        private PriorityCommands(WorkbenchPackage package) => this.package = package;
 
         internal static void Start(WorkbenchPackage package)
         {
@@ -30,7 +30,7 @@ namespace Querywright.Ssms
                 var dte = Package.GetGlobalService(typeof(SDTE));
                 var commandList = dte.GetType().InvokeMember("Commands", System.Reflection.BindingFlags.GetProperty, null, dte, null);
                 var command = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Query.Execute", -1 });
-                var guard = new ExecuteGuard(package)
+                var guard = new PriorityCommands(package)
                 {
                     group = new Guid((string)command.GetType().InvokeMember("Guid", System.Reflection.BindingFlags.GetProperty, null, command, null)),
                     id = (uint)(int)command.GetType().InvokeMember("ID", System.Reflection.BindingFlags.GetProperty, null, command, null),
@@ -50,6 +50,12 @@ namespace Querywright.Ssms
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             // NOTSUPPORTED passes the command on to SSMS; S_OK swallows it.
+            // F12 comes here too: SSMS's language service claims GotoDefn before editor filters see it once connected.
+            if (pguidCmdGroup == VSConstants.GUID_VSStandardCommandSet97 && nCmdID == (uint)VSConstants.VSStd97CmdID.GotoDefn)
+            {
+                try { return package.TryGoToDefinition(package.GetSqlView()) ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
+                catch (InvalidOperationException) { return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
+            }
             if (pguidCmdGroup != group || nCmdID != id || package.Options?.WarnUnfilteredChanges != true) return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
             try
             {

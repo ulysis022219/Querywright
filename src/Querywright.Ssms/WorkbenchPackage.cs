@@ -186,7 +186,7 @@ namespace Querywright.Ssms
             Add(0x011F, CompareObjectAsync);
             Instance = this;
             ServerColorMenu.Start();
-            ExecuteGuard.Start(this);
+            PriorityCommands.Start(this);
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
             if (options.CheckForUpdates && Environment.GetEnvironmentVariable("QUERYWRIGHT_SELFTEST") == null)

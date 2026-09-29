@@ -66,6 +66,29 @@ namespace Querywright.Core
             return found.Targets;
         }
 
+        /// <summary>"USE [Db]" statements in a script that also changes data or drops tables, so the changes land in another database than the window's. Empty when none or the SQL does not parse.</summary>
+        public static IReadOnlyList<string> DatabaseSwitchChanges(string sql)
+        {
+            var fragment = new TSql170Parser(true).Parse(new StringReader(sql ?? ""), out var errors);
+            if (errors.Count > 0) return Array.Empty<string>();
+            var found = new Switches();
+            fragment.Accept(found);
+            return found.Changes ? found.Uses : (IReadOnlyList<string>)Array.Empty<string>();
+        }
+
+        private sealed class Switches : TSqlFragmentVisitor
+        {
+            internal readonly List<string> Uses = new List<string>();
+            internal bool Changes;
+            public override void Visit(UseStatement node) => Uses.Add("USE " + node.DatabaseName.Value);
+            public override void Visit(InsertStatement node) => Changes = true;
+            public override void Visit(UpdateStatement node) => Changes = true;
+            public override void Visit(DeleteStatement node) => Changes = true;
+            public override void Visit(MergeStatement node) => Changes = true;
+            public override void Visit(TruncateTableStatement node) => Changes = true;
+            public override void Visit(DropTableStatement node) => Changes = true;
+        }
+
         private sealed class Unfiltered : TSqlFragmentVisitor
         {
             private readonly string sql;
@@ -497,6 +520,11 @@ namespace Querywright.Core
             {
                 if (string.Equals(node.FunctionName.Value, "ISNUMERIC", StringComparison.OrdinalIgnoreCase))
                     Add("SW013", "ISNUMERIC accepts values like '$' and '1e5'; use TRY_CONVERT.", node);
+            }
+            public override void Visit(ExecutableStringList node)
+            {
+                if (node.Strings.Count > 1 && node.Strings.Any(part => !(part is StringLiteral)))
+                    Add("SW047", "EXEC of a concatenated string; use sp_executesql with parameters and QUOTENAME for object names to avoid injection and quoting bugs.", node);
             }
             public override void Visit(InPredicate node)
             {

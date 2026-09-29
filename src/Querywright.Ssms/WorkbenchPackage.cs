@@ -82,6 +82,14 @@ namespace Querywright.Ssms
             return options?.LiveMetadata != false ? LiveMetadata.DatabaseNames(LiveMetadata.Capture()) : null;
         }
 
+        /// <summary>Catalog lookup for other databases on the connection, for OtherDb. completion. Never blocks (typing path).</summary>
+        internal Func<string, IReadOnlyList<SchemaTable>> CurrentOtherDatabase()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            return connection == null ? null : name => LiveMetadata.TryGet(connection.WithDatabase(name));
+        }
+
         /// <summary>Live procedures plus those created in the script itself. Never blocks (typing path).</summary>
         internal IReadOnlyList<SchemaProcedure> CurrentProcedures(string sql)
         {
@@ -161,6 +169,13 @@ namespace Querywright.Ssms
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0107)));
             void Add(int id, Func<Task> handler) => commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id)));
+            void AddGrid(int id, Func<bool> shown, Func<Task> handler)
+            {
+                var command = new OleMenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
+                    new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id));
+                command.BeforeQueryStatus += (sender, args) => ((OleMenuCommand)sender).Visible = shown();
+                commands.AddCommand(command);
+            }
             Add(0x0108, () => TransformAsync(sql => SqlRefactoring.ApplyCasing(sql), "Apply casing"));
             Add(0x0109, () => TransformAsync(SqlRefactoring.AddBrackets, "Add square brackets"));
             Add(0x010A, () => TransformAsync(SqlRefactoring.RemoveBrackets, "Remove square brackets"));
@@ -176,10 +191,10 @@ namespace Querywright.Ssms
             Add(0x0114, EncapsulateAsync);
             Add(0x0115, FixAtCaretAsync);
             Add(0x0116, FixAllAsync);
-            Add(0x0117, CopyAsInAsync);
-            Add(0x0118, ScriptAsInsertAsync);
-            Add(0x0119, OpenInExcelAsync);
-            Add(0x011A, SaveAsCsvAsync);
+            AddGrid(0x0117, () => options?.ShowCopyAsIn != false, CopyAsInAsync);
+            AddGrid(0x0118, () => options?.ShowScriptAsInsert != false, ScriptAsInsertAsync);
+            AddGrid(0x0119, () => options?.ShowOpenInExcel != false, OpenInExcelAsync);
+            AddGrid(0x011A, () => options?.ShowSaveAsCsv != false, SaveAsCsvAsync);
             Add(0x011B, FindInvalidObjectsAsync);
             Add(0x011C, SplitTableAsync);
             Add(0x011D, EditFormattingStyleAsync);
@@ -187,11 +202,15 @@ namespace Querywright.Ssms
             Add(0x011F, CompareObjectAsync);
             Add(0x0120, GoToDefinitionAsync);
             Add(0x0122, ScriptForDatabasesAsync);
-            Add(0x0123, () => CopyGridAsync(c => ResultGrid.Markdown(c.Headers, c.Rows), "Markdown"));
-            Add(0x0124, () => CopyGridAsync(c => ResultGrid.Json(c.Headers, c.Types, c.Rows), "JSON"));
-            Add(0x0125, () => ScriptGridAsync((c, t) => ResultGrid.UpdateScript(c.Headers, c.Types, c.Rows, t), "UPDATE"));
-            Add(0x0126, () => ScriptGridAsync((c, t) => ResultGrid.MergeScript(c.Headers, c.Types, c.Rows, t), "MERGE"));
-            Add(0x0127, () => ScriptGridAsync((c, t) => ResultGrid.CreateTableScript(c.Headers, c.Types, c.Rows), "CREATE TABLE"));
+            AddGrid(0x0123, () => options?.ShowCopyAsMarkdown != false, () => CopyGridAsync(c => ResultGrid.Markdown(c.Headers, c.Rows), "Markdown"));
+            AddGrid(0x0124, () => options?.ShowCopyAsJson != false, () => CopyGridAsync(c => ResultGrid.Json(c.Headers, c.Types, c.Rows), "JSON"));
+            AddGrid(0x0125, () => options?.ShowScriptAsUpdate != false, () => ScriptGridAsync((c, t) => ResultGrid.UpdateScript(c.Headers, c.Types, c.Rows, t), "UPDATE"));
+            AddGrid(0x0126, () => options?.ShowScriptAsMerge != false, () => ScriptGridAsync((c, t) => ResultGrid.MergeScript(c.Headers, c.Types, c.Rows, t), "MERGE"));
+            AddGrid(0x0127, () => options?.ShowScriptAsCreateTable != false, () => ScriptGridAsync((c, t) => ResultGrid.CreateTableScript(c.Headers, c.Types, c.Rows), "CREATE TABLE"));
+            Add(0x0128, RunInDatabasesAsync);
+            Add(0x0129, SearchDatabasesAsync);
+            Add(0x012A, () => TransformSelectionAsync(sql => SqlRefactoring.WrapAsDynamicSql(sql), "Wrap in dynamic SQL"));
+            Add(0x012B, () => TransformSelectionAsync(SqlRefactoring.UnwrapDynamicSql, "Unwrap dynamic SQL"));
             Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             Instance = this;
             ServerColorMenu.Start();
@@ -916,6 +935,57 @@ namespace Querywright.Ssms
             options.SaveSettingsToStorage();
             string script = await Task.Run(() => SqlRefactoring.ForDatabases(sql, picker.Selected, picker.StopOnError, picker.PrintName));
             await OpenInNewQueryAsync(script, "Script for " + picker.Selected.Count + " databases");
+        });
+
+        /// <summary>Rewrites the selection (the whole window when nothing is selected) as one undo step.</summary>
+        private Task TransformSelectionAsync(Func<string, string> transform, string name) => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            var snapshot = view.TextSnapshot;
+            var span = view.Selection.IsEmpty ? new SnapshotSpan(snapshot, 0, snapshot.Length) : view.Selection.SelectedSpans[0];
+            string result = transform(span.GetText());
+            ReplaceText(view, span, result, span.Start.Position + result.Length, 0, 0, name);
+        });
+
+        /// <summary>Runs the script in each ticked database and shows the first result set of each, merged, in a window.</summary>
+        private Task RunInDatabasesAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            string sql = QueryTextOrNull();
+            if (string.IsNullOrWhiteSpace(sql)) throw new InvalidOperationException("Open a query window with the script to run in each database.");
+            if (DatabaseTools.HasGo(sql)) throw new InvalidOperationException("Remove the GO separators first; the script runs as one batch in each database.");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server whose databases you want, and turn on Read live metadata under Tools > Options > Querywright.");
+            var databases = await Task.Run(() => LiveMetadata.Databases(connection));
+            var previous = new HashSet<string>((options.MultiDatabaseSelection ?? "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
+            var picker = new DatabasePickerDialog(connection.Server, databases, previous, await Task.Run(() => SqlRefactoring.ContainsUse(sql)), "run in multiple databases");
+            if (!await ShowDialogAsync(picker)) return;
+            options.MultiDatabaseSelection = string.Join("\n", picker.Selected);
+            options.SaveSettingsToStorage();
+            var risky = await Task.Run(() => SqlAnalysis.UnfilteredChanges(sql, true, true));
+            if (risky.Count > 0 && VsShellUtilities.ShowMessageBox(this,
+                    "This script can change or remove every row (" + string.Join(", ", risky.Take(3)) + ") and will run in " + picker.Selected.Count + " databases. Run it?",
+                    "Querywright", OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) != (int)VSConstants.MessageBoxResult.IDYES) return;
+            var errors = new List<string>();
+            var table = await Task.Run(() => DatabaseTools.Run(connection, picker.Selected, sql, null, true, errors));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            DatabaseTools.Show("Querywright: results from " + picker.Selected.Count + " databases", table, errors);
+        });
+
+        /// <summary>Finds tables, views, procedures, functions, triggers and columns whose name contains the text, across the ticked databases.</summary>
+        private Task SearchDatabasesAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server to search, and turn on Read live metadata under Tools > Options > Querywright.");
+            string text = DatabaseTools.Ask("Querywright: find in all databases", "Object or column name contains:");
+            if (text == null) return;
+            var databases = await Task.Run(() => LiveMetadata.Databases(connection));
+            var errors = new List<string>();
+            var table = await Task.Run(() => DatabaseTools.Search(connection, databases, text, errors));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            DatabaseTools.Show("Querywright: \"" + text + "\" in " + databases.Count + " databases", table, errors);
         });
 
         private Task EncapsulateAsync() => RunCommandAsync(async () =>

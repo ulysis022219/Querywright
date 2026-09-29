@@ -210,7 +210,8 @@ namespace Querywright.Core
 
         public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable>? tables,
             string defaultSchema = "dbo", bool caseSensitive = false, IReadOnlyList<string>? databases = null,
-            IReadOnlyList<SchemaProcedure>? procedures = null, bool qualifySingleTable = true)
+            IReadOnlyList<SchemaProcedure>? procedures = null, bool qualifySingleTable = true,
+            Func<string, IReadOnlyList<SchemaTable>?>? otherDatabase = null)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
@@ -272,6 +273,7 @@ namespace Querywright.Core
                 foreach (var p in procedures.Where(p => qualifier == null || names.Equals(p.Schema, qualifier[0])))
                     Add(Kind.Table, p.Name, (qualifier == null ? QuoteIfNeeded(p.Schema) + "." : "") + QuoteIfNeeded(p.Name), "procedure " + p.Schema + "." + p.Name);
             }
+            else if (qualifier != null && CrossDatabase(qualifier)) { }
             else if (qualifier != null)
             {
                 bool alias = qualifier.Count == 1 && scan.Sources.Any(s => names.Equals(s.Alias, qualifier[0]));
@@ -335,6 +337,24 @@ namespace Querywright.Core
                             }
                     }
                 }
+            }
+
+            // OtherDb. lists schemas, OtherDb.sch. tables, OtherDb.sch.tbl. columns; null catalog (still loading) offers nothing.
+            bool CrossDatabase(List<string> parts)
+            {
+                if (otherDatabase == null || databases == null || parts.Count == 0 || parts.Count > 3) return false;
+                var db = databases.FirstOrDefault(d => names.Equals(d, parts[0]));
+                if (db == null) return false;
+                if (parts.Count == 1 && (scan.Sources.Any(s => names.Equals(s.Alias, parts[0])) || catalog.Any(t => names.Equals(t.Schema, parts[0])))) return false;
+                var other = otherDatabase(db) ?? Array.Empty<SchemaTable>();
+                if (parts.Count == 1)
+                    foreach (var schema in other.Select(t => t.Schema).Distinct(names)) Add(Kind.Table, schema, QuoteIfNeeded(schema), "schema in " + db);
+                else if (parts.Count == 2)
+                    foreach (var t in other.Where(t => names.Equals(t.Schema, parts[1]))) Add(Kind.Table, t.Name, QuoteIfNeeded(t.Name), "table " + db + "." + t.Schema + "." + t.Name);
+                else
+                    foreach (var t in other.Where(t => names.Equals(t.Schema, parts[1]) && names.Equals(t.Name, parts[2])))
+                        foreach (var column in t.Columns) Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(t.TypeOf(column), db + "." + t.Schema + "." + t.Name + "." + column));
+                return true;
             }
 
             void Qualified(List<string> parts)

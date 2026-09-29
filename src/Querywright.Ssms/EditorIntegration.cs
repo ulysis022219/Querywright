@@ -7,6 +7,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio;
+using Microsoft.VisualStudio.Core.Imaging;
+using Microsoft.VisualStudio.Imaging;
 using Microsoft.VisualStudio.Editor;
 using Microsoft.VisualStudio.Language.Intellisense;
 using Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion;
@@ -232,22 +234,44 @@ namespace Querywright.Ssms
             var tables = package.CurrentTables();
             var live = package.CurrentProcedures(""); // live only; the script is parsed off the UI thread below
             string sql = snapshot.GetText();
-            var text = await Task.Run(() =>
+            var found = await Task.Run<(string? Text, IReadOnlyList<SchemaProcedure>? Procedures)>(() =>
             {
                 try
                 {
                     var procedures = sql.Length > 1_000_000 ? live : SqlAssist.ProceduresFromScript(sql).Concat(live).ToArray();
-                    return SqlAssist.Describe(sql, position, tables, procedures);
+                    return (SqlAssist.Describe(sql, position, tables, procedures), procedures);
                 }
-                catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { return (null, null); }
             }, token).ConfigureAwait(false);
+            string? text = found.Text;
             if (string.IsNullOrEmpty(text)) return null;
             int start = position, end = position;
             while (start > 0 && IsWord(snapshot[start - 1])) start--;
             while (end < snapshot.Length && IsWord(snapshot[end])) end++;
             var span = snapshot.CreateTrackingSpan(start, end - start, SpanTrackingMode.EdgeInclusive);
+
+            // Tables, views and procedures: a link that opens the Script/Summary popup (queried only on click).
+            string first = text!.Split('\n')[0].TrimEnd('\r');
+            var table = tables?.FirstOrDefault(t => first == "table " + t.Schema + "." + t.Name);
+            var procedure = table == null ? found.Procedures?.FirstOrDefault(p => first == "procedure " + p.Schema + "." + p.Name) : null;
+            if (table != null || procedure != null)
+            {
+                string schema = table?.Schema ?? procedure!.Schema, name = table?.Name ?? procedure!.Name;
+                string kind = table == null ? "Procedure" : table.IsView ? "View" : "Table";
+                int image = table == null ? KnownImageIds.StoredProcedure : table.IsView ? KnownImageIds.View : KnownImageIds.Table;
+                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+                var link = new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run(schema + "." + name + " (" + kind + ")"));
+                link.Click += (s, e) =>
+                {
+                    _ = session.DismissAsync();
+                    _ = package.JoinableTaskFactory.RunAsync(() => package.ShowObjectAsync(schema, name));
+                };
+                return new QuickInfoItem(span, new ContainerElement(ContainerElementStyle.Wrapped,
+                    new ImageElement(new ImageId(KnownImageIds.ImageCatalogGuid, image)),
+                    new System.Windows.Controls.TextBlock(link) { Margin = new System.Windows.Thickness(4, 0, 0, 0) }));
+            }
             return new QuickInfoItem(span, new ContainerElement(ContainerElementStyle.Stacked,
-                text!.Split('\n').Select(line => (object)new ClassifiedTextElement(new ClassifiedTextRun("text", line.TrimEnd('\r'))))));
+                text.Split('\n').Select(line => (object)new ClassifiedTextElement(new ClassifiedTextRun("text", line.TrimEnd('\r'))))));
         }
 
         public void Dispose() { }

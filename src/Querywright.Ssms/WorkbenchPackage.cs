@@ -597,6 +597,33 @@ namespace Querywright.Ssms
             }
         }
 
+        /// <summary>Hover link click: Script and Summary of one object from the connected database. Read-only; nothing is executed.</summary>
+        internal async Task ShowObjectAsync(string schema, string name)
+        {
+            try
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var connection = LiveMetadata.Capture();
+                if (connection == null) throw new InvalidOperationException("Connect the query window to a database first.");
+                var details = await Task.Run(() => LiveMetadata.Details(connection, schema, name));
+                if (details == null) throw new InvalidOperationException(schema + "." + name + " was not found in the connected database, or you lack VIEW DEFINITION permission.");
+                bool table = details.Type == "U";
+                string script = table && details.Columns.Count > 0
+                    ? ObjectScript.CreateTable(schema, name, details.Columns, details.Filegroup, details.Constraints)
+                    : details.Definition ?? "-- The definition is encrypted or not visible with your permissions.";
+                bool parameters = details.Columns.Count == 0 && details.Parameters.Count > 0;
+                var summary = parameters
+                    ? details.Parameters.Select(p => (p.Name, p.Type, p.Output ? "OUTPUT" : "IN"))
+                    : details.Columns.Select(c => (c.Name, c.DataType, c.Nullable ? "NULL" : "NOT NULL"));
+                await ShowDialogAsync(new ObjectInfoWindow(schema + "." + name, script, summary.ToList(), parameters));
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning(error.Message);
+            }
+        }
+
         private async Task<bool> ShowDialogAsync(System.Windows.Window dialog)
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();

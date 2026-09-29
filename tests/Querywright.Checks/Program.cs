@@ -845,4 +845,24 @@ Check(!Updates.IsNewer("v0.3.0", "0.3.0.57") && !Updates.IsNewer("v0.2.9", "0.3.
 Check(Updates.ErrorLine("0.3.0.42", "SplitTableAsync", typeof(FormatException)) == "Querywright 0.3.0.42 \u00B7 SplitTable \u00B7 FormatException"
     && Updates.ErrorLine(null, "Format", typeof(IOException)) == "Querywright unknown \u00B7 Format \u00B7 IOException", "error report line");
 Check(Updates.IssueUrl("Querywright 0.3.0 \u00B7 Format \u00B7 IOException") == "https://github.com/ulysis022219/SqlWorkbench/issues/new?template=bug_report.yml&error=Querywright%200.3.0%20%C2%B7%20Format%20%C2%B7%20IOException", "issue link escapes the line");
-Console.WriteLine($"PASS: {checks} total checks including fill, quick info, fixes and object refactors. SSMS integration not tested.");
+var scriptColumns = new[]
+{
+    new ScriptColumn("Id", "int", null, false) { Identity = "1, 1" },
+    new ScriptColumn("Code", "varchar", "50", true) { Collation = "SQL_Latin1_General_CP1_CI_AS" },
+    new ScriptColumn("Amt", "decimal", "18,2", false) { DefaultName = "DF_T_Amt", Default = "((0))" },
+    new ScriptColumn("Twice", "int", null, true) { Computed = "([Id]*(2))", Persisted = true },
+};
+string create = ObjectScript.CreateTable("FC", "Acct]Hdr", scriptColumns, "PRIMARY", new[]
+{
+    ObjectScript.Key("PK_T", true, true, new[] { ("Id", false) }, "PRIMARY"),
+    ObjectScript.ForeignKey("FK_T", new[] { "Code" }, "dbo", "Codes", new[] { "Code" }, "CASCADE", "NO_ACTION"),
+    ObjectScript.Check("CK_T", "([Amt]>=(0))"),
+}, "\n");
+Check(create == "CREATE TABLE [FC].[Acct]]Hdr]\n(\n[Id] [int] NOT NULL IDENTITY(1, 1),\n[Code] [varchar] (50) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,\n" +
+    "[Amt] [decimal] (18,2) NOT NULL CONSTRAINT [DF_T_Amt] DEFAULT ((0)),\n[Twice] AS ([Id]*(2)) PERSISTED\n) ON [PRIMARY]\nGO\n" +
+    "ALTER TABLE [FC].[Acct]]Hdr] ADD CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED ([Id]) ON [PRIMARY]\nGO\n" +
+    "ALTER TABLE [FC].[Acct]]Hdr] ADD CONSTRAINT [FK_T] FOREIGN KEY ([Code]) REFERENCES [dbo].[Codes] ([Code]) ON DELETE CASCADE\nGO\n" +
+    "ALTER TABLE [FC].[Acct]]Hdr] ADD CONSTRAINT [CK_T] CHECK ([Amt]>=(0))\nGO\n", "object script: " + create);
+Check(scriptColumns[1].DataType == "varchar(50)" && scriptColumns[0].DataType == "int" && scriptColumns[3].DataType == "computed", "summary data types");
+try { ObjectScript.CreateTable("dbo", "t", Array.Empty<ScriptColumn>(), null); throw new Exception("Expected empty table rejection"); } catch (ArgumentException) { checks++; }
+Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes and object refactors. SSMS integration not tested.");

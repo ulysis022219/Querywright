@@ -68,6 +68,7 @@ jobs:
           Copy-Item scripts/Install-Development.ps1 (Join-Path $out 'Install-Querywright.ps1')
           Copy-Item scripts/Test-Package.ps1 $out
           Copy-Item scripts/Install.cmd $out
+          Copy-Item scripts/Uninstall.cmd $out
           Copy-Item examples/offline-schema.sql $out
           Copy-Item docs/INSTALL.txt $out
           Compress-Archive -Path "$out/*" -DestinationPath dist/Querywright-ssms22.zip -Force
@@ -125,6 +126,6 @@ jobs:
             previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA^" 2>/dev/null || true)
             NOTES=$(git log --no-merges --format='- %s' ${previous:+"$previous.."}"$GITHUB_SHA")
           fi
-          printf '## What changed\n\n%s\n\n## Install or update\n\nClose SSMS 22, unzip, double-click Install.cmd (see INSTALL.txt). Free and open source (MIT).\n' "$NOTES" > notes.md
+          printf '## What changed\n\n%s\n\n## Install or update\n\nClose SSMS 22, unzip, double-click Install.cmd (see INSTALL.txt). To remove it, double-click Uninstall.cmd. Free and open source (MIT).\n' "$NOTES" > notes.md
           gh release create "$TAG" Querywright-ssms22.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Querywright $TAG" --notes-file notes.md

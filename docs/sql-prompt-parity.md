@@ -64,6 +64,9 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Script as INSERT (temp table + values) | host (`#Results` with reported column types, 1000-row batches, new window, never executed) |
 | Open in Excel | host (.xlsx in %TEMP%, removed after a day; cells are Text so dates and codes match the grid exactly, numeric columns stay numbers with the grid's decimals; no formulas) |
 | Save as CSV | host (RFC 4180, UTF-8, formula-injection guard) |
+| Copy as Markdown / JSON | host (Markdown table with '|' escaped; JSON array with numbers for numeric columns, NULL as null) |
+| Script as UPDATE / MERGE | host (keyed on the first column; target is the query's first table; MERGE updates and inserts, never deletes; rowversion skipped; opens in a new window, never executed) |
+| Script as CREATE TABLE | host (grid's column types; NOT NULL where no row is NULL; opens in a new window, never executed) |
 
 In the results grid's right-click menu and the Querywright menu. SSMS has no public grid API, so the
 host reflects over the focused `GridControl` and its `IGridStorage` (the approach used by

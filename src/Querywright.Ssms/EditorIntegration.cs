@@ -54,21 +54,26 @@ namespace Querywright.Ssms
             poll.Tick += (s, e) => { if (view.HasAggregateFocus && WorkbenchPackage.Instance?.LiveMetadataEnabled == true) LiveMetadata.TryGet(LiveMetadata.Capture()); };
             view.Closed += (s, e) => poll.Stop();
             poll.Start();
-            // Tab history: one file per window, saved every minute when changed and on close. Local only; opt out in options.
+            // Tab history: a timestamped version per window a few seconds after each edit, on execute, and on close.
+            // Local only; opt out in options.
             var historyId = Guid.NewGuid();
             ITextSnapshot? saved = null;
-            void SaveHistory()
+            void SaveHistory(bool executed)
             {
                 var snapshot = view.TextBuffer.CurrentSnapshot;
-                if (snapshot == saved || WorkbenchPackage.Instance?.TabHistoryEnabled != true) return;
+                if ((!executed && snapshot == saved) || WorkbenchPackage.Instance?.TabHistoryEnabled != true) return;
                 saved = snapshot;
                 string text = snapshot.GetText();
-                _ = System.Threading.Tasks.Task.Run(() => TabHistory.Save(historyId, text));
+                string name = view.TextBuffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument document)
+                    ? System.IO.Path.GetFileName(document.FilePath) : "";
+                string connection = view.Properties.TryGetProperty("QuerywrightConnection", out string label) ? label : "";
+                _ = System.Threading.Tasks.Task.Run(() => TabHistory.Save(historyId, name, connection, text, executed));
             }
-            var history = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
-            history.Tick += (s, e) => SaveHistory();
-            view.Closed += (s, e) => { history.Stop(); SaveHistory(); };
-            history.Start();
+            view.Properties["QuerywrightHistory"] = (Action<bool>)SaveHistory;
+            var history = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            history.Tick += (s, e) => { history.Stop(); SaveHistory(false); };
+            view.TextBuffer.Changed += (s, e) => { history.Stop(); history.Start(); };
+            view.Closed += (s, e) => { history.Stop(); SaveHistory(false); };
             var filter = new EditorCommandFilter(view, Completion);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
             SelfTest.Adapter = adapter;

@@ -48,7 +48,7 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - Split a table, or wrap a selection as a stored procedure.
 
 **Everyday helpers**
-- Tab history: find and reopen queries you closed, even after a restart (toolbar button next to New Query).
+- Tab history: every SQL window keeps timestamped versions (a few seconds after each edit, and on execute), grouped per tab with a preview; reopen any version, even after a restart (toolbar button next to New Query).
 - A colored strip and a `server · database` label on every query window, so you always know
   where you are connected. Right-click a server in Object Explorer > **Querywright: server color...**
   to pick its color, or write rules like `prod=Red;test=Orange` in Tools > Options.

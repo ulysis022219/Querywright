@@ -72,22 +72,24 @@ namespace Querywright.Ssms
                 try { return package.TryGoToDefinition(package.GetSqlView()) ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
                 catch (InvalidOperationException) { SelfTest.Note = "f12 no view"; return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
             }
-            if (pguidCmdGroup != group || nCmdID != id || package.Options?.WarnUnfilteredChanges != true) return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            const int pass = (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            if (pguidCmdGroup != group || nCmdID != id) return pass;
             try
             {
                 var view = package.GetSqlView();
-                // SSMS runs the selection when there is one, otherwise the whole window.
-                string sql = view.Selection.IsEmpty ? view.TextSnapshot.GetText()
-                    : string.Join("\n", view.Selection.SelectedSpans.Select(s => s.GetText()));
-                if (sql.Length > 1_000_000) return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
-                var targets = SqlAnalysis.UnfilteredChanges(sql);
-                if (targets.Count == 0) return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
-                return Ask(targets) ? (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED : VSConstants.S_OK;
+                if (package.Options?.WarnUnfilteredChanges == true)
+                {
+                    // SSMS runs the selection when there is one, otherwise the whole window.
+                    string sql = view.Selection.IsEmpty ? view.TextSnapshot.GetText()
+                        : string.Join("\n", view.Selection.SelectedSpans.Select(s => s.GetText()));
+                    var targets = sql.Length > 1_000_000 ? System.Array.Empty<string>() : SqlAnalysis.UnfilteredChanges(sql);
+                    if (targets.Count > 0 && !Ask(targets)) return VSConstants.S_OK;
+                }
+                // Tab history keeps an executed version, like SQL Prompt's ▶ entries.
+                if (view.Properties.TryGetProperty("QuerywrightHistory", out Action<bool> save)) save(true);
             }
-            catch (InvalidOperationException)
-            {
-                return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
-            }
+            catch (InvalidOperationException) { }
+            return pass;
         }
 
         private bool Ask(System.Collections.Generic.IReadOnlyList<string> targets)

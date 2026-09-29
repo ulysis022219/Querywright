@@ -40,7 +40,22 @@ namespace Querywright.Ssms
             return copy;
         }
 
+        /// <summary>An open connection to the server.</summary>
         internal SqlConnection Open()
+        {
+            var sql = Create();
+            try { sql.Open(); return sql; }
+            catch (SqlException error) when (error.Number == 20 && Encrypt && IsLocal)
+            {
+                // ponytail: SqlClient can't encrypt to LocalDB/shared memory (error 20); local-only traffic, so retry plain.
+                sql.Dispose();
+                Encrypt = false;
+                return Open();
+            }
+            catch { sql.Dispose(); throw; }
+        }
+
+        private SqlConnection Create()
         {
             var builder = new SqlConnectionStringBuilder
             {
@@ -142,7 +157,6 @@ SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER 
             var names = new List<string>();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand("SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;", sql) { CommandTimeout = 10 })
                 using (var reader = command.ExecuteReader())
                     while (reader.Read()) names.Add(reader.GetString(0));
@@ -156,7 +170,6 @@ SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER 
             string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand("SELECT OBJECT_DEFINITION(OBJECT_ID(@name));", sql) { CommandTimeout = 10 })
                 {
                     command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : Quote(schema) + ".") + Quote(name);
@@ -227,7 +240,6 @@ FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY
             var details = new ObjectDetails();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand(DetailsQuery, sql) { CommandTimeout = 15 })
                 {
                     command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : Quote(schema) + ".") + Quote(name);
@@ -276,7 +288,6 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
             var result = new List<(string, string, string)>();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand(DependentsQuery, sql) { CommandTimeout = 15 })
                 {
                     command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = Quote(schema) + "." + Quote(name);
@@ -295,7 +306,6 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
             var result = new List<string>();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand(@"SET LOCK_TIMEOUT 3000;
 SELECT c.name FROM sys.indexes AS i
 JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
@@ -351,7 +361,6 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             var result = new List<(string, string, string)>();
             using (var sql = connection.Open())
             {
-                sql.Open();
                 using (var command = new SqlCommand(InvalidObjectsQuery, sql) { CommandTimeout = 120 })
                 using (var reader = command.ExecuteReader())
                     while (reader.Read())
@@ -371,7 +380,6 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 Progress = (0, "connecting");
                 using (var sql = connection.Open())
                 {
-                    sql.Open();
                     Progress = (10, "reading columns");
                     using (var command = new SqlCommand(CatalogQuery, sql) { CommandTimeout = 15 })
                     using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
@@ -410,12 +418,6 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                         .Select(p => new SchemaParameter(p.Name, p.Type, p.Output, p.Default)).ToArray())).ToArray();
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + tables.Length + " tables");
                 return tables;
-            }
-            catch (SqlException error) when (error.Number == 20 && connection.Encrypt && connection.IsLocal)
-            {
-                // ponytail: SqlClient can't encrypt to LocalDB/shared memory (error 20); local-only traffic, so retry plain.
-                connection.Encrypt = false;
-                return Load(connection, attempt);
             }
             // Pipe/network not ready yet (cold LocalDB, server starting): retry shortly instead of backing off 30 s.
             catch (SqlException error) when (attempt < 3 && (error.Number == 233 || error.Number == 53 || error.Number == 2 || error.Number == -2 || error.Number == 10054))

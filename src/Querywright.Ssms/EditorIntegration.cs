@@ -51,7 +51,11 @@ namespace Querywright.Ssms
             // ponytail: SSMS raises no public connect event; a cheap poll starts the load once the window connects.
             // TryGet only starts a background load when the connection key is new, so repeats are no-ops.
             var poll = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-            poll.Tick += (s, e) => { if (view.HasAggregateFocus && WorkbenchPackage.Instance?.LiveMetadataEnabled == true) LiveMetadata.TryGet(LiveMetadata.Capture()); };
+            poll.Tick += (s, e) =>
+            {
+                try { if (view.HasAggregateFocus && WorkbenchPackage.Instance?.LiveMetadataEnabled == true) LiveMetadata.TryGet(LiveMetadata.Capture()); }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
+            };
             view.Closed += (s, e) => poll.Stop();
             poll.Start();
             // Tab history: a timestamped version per window a few seconds after each edit, on execute, and on close.
@@ -71,7 +75,12 @@ namespace Querywright.Ssms
             }
             view.Properties["QuerywrightHistory"] = (Action<bool>)SaveHistory;
             var history = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-            history.Tick += (s, e) => { history.Stop(); SaveHistory(false); };
+            history.Tick += (s, e) =>
+            {
+                history.Stop();
+                try { SaveHistory(false); }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
+            };
             view.TextBuffer.Changed += (s, e) => { history.Stop(); history.Start(); };
             view.Closed += (s, e) => { history.Stop(); SaveHistory(false); };
             var filter = new EditorCommandFilter(view, Completion);

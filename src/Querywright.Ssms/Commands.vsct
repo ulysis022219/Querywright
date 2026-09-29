@@ -141,6 +141,22 @@
         <Parent guid="CommandsGuid" id="RefactorGroup" />
         <Strings><ButtonText>Script for multiple databases...</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="RunInDatabases" priority="0x0070" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Run in multiple databases (merged results)...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="SearchDatabases" priority="0x0080" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Find object or column in all databases...</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="WrapDynamicSql" priority="0x0090" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Wrap in dynamic SQL</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="UnwrapDynamicSql" priority="0x00A0" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Unwrap dynamic SQL</ButtonText></Strings>
+      </Button>
       <Button guid="CommandsGuid" id="FixAtCaret" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="AnalyzeGroup" />
         <Strings><ButtonText>Fix issue at caret</ButtonText></Strings>
@@ -175,38 +191,47 @@
       </Button>
       <Button guid="CommandsGuid" id="CopyAsIn" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: copy as IN clause</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsInsert" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: script as INSERT</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="OpenInExcel" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: open in Excel</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SaveAsCsv" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: save as CSV...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsMarkdown" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: copy as Markdown table</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsJson" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: copy as JSON</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsUpdate" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: script as UPDATE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsMerge" priority="0x0080" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: script as MERGE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsCreateTable" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
         <Strings><ButtonText>Querywright: script as CREATE TABLE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="Options" priority="0x0020" type="Button">
@@ -313,6 +338,10 @@
       <IDSymbol name="ScriptAsUpdate" value="0x0125" />
       <IDSymbol name="ScriptAsMerge" value="0x0126" />
       <IDSymbol name="ScriptAsCreateTable" value="0x0127" />
+      <IDSymbol name="RunInDatabases" value="0x0128" />
+      <IDSymbol name="SearchDatabases" value="0x0129" />
+      <IDSymbol name="WrapDynamicSql" value="0x012A" />
+      <IDSymbol name="UnwrapDynamicSql" value="0x012B" />
       <IDSymbol name="EditorGroup" value="0x1050" />
     </GuidSymbol>
     <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">

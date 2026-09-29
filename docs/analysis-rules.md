@@ -51,6 +51,7 @@ https://documentation.red-gate.com/codeanalysis/code-analysis-for-sql-server/bes
 | SW044 | EXISTS over an aggregate with no GROUP BY/HAVING | BP (unverified) | GROUP BY or HAVING excluded |
 | SW045 | DECIMAL / NUMERIC without precision | BP (unverified) | Any explicit precision excluded |
 | SW046 | xp_cmdshell | Security (unverified) | Any schema/database qualification matched |
+| SW047 | EXEC of a concatenated string (`EXEC('...' + @x)`) | Security (unverified) | EXEC of one literal or one variable excluded |
 
 SW027 replaces the originally planned "comparison with NULL using =/<>" rule, which duplicates SW003 (BP011).
 Rule IDs marked unverified could not be confirmed against the Redgate catalog; treat them as related, not equivalent.

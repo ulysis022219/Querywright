@@ -2,7 +2,7 @@
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
     <!-- Identity Id keeps the pre-rename value so installs upgrade in place. -->
-    <Identity Id="SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450" Version="0.3.0" Language="en-US" Publisher="Querywright contributors" />
+    <Identity Id="SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450" Version="1.0.0" Language="en-US" Publisher="Querywright contributors" />
     <DisplayName>Querywright (development prototype)</DisplayName>
     <Description xml:space="preserve">Independent SQL productivity prototype: snippets, formatting, analysis, offline completion popup, Tab snippet shortcuts, F12 navigation, wildcard expansion, semicolons and local-variable rename.</Description>
   </Metadata>

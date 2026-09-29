@@ -101,6 +101,9 @@ SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER 
         private static readonly ConcurrentDictionary<string, IReadOnlyList<string>> databaseCache =
             new ConcurrentDictionary<string, IReadOnlyList<string>>();
 
+        /// <summary>Progress of the running catalog load, for the refresh command's status bar: percent and a step label.</summary>
+        internal static (int Percent, string Step) Progress = (0, "connecting");
+
         internal static void Refresh() { cache.Clear(); procedureCache.Clear(); databaseCache.Clear(); }
 
         /// <summary>Databases on the server, read with the catalog; null until that load completes.</summary>
@@ -364,29 +367,36 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 var parameters = new List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default)>();
                 var databases = new List<string>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
+                Progress = (0, "connecting");
                 using (var sql = connection.Open())
                 {
                     sql.Open();
+                    Progress = (10, "reading columns");
                     using (var command = new SqlCommand(CatalogQuery, sql) { CommandTimeout = 15 })
                     using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
                     {
+                        // ponytail: row totals are unknown up front, so the percent is per result set, not per row.
                         while (reader.Read() && columns.Count < MaxRows)
                             columns.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetBoolean(4), reader.GetBoolean(5)));
                         while (reader.Read()) { } // drain capped rows
+                        Progress = (55, "reading foreign keys");
                         if (reader.NextResult())
                             while (reader.Read() && keys.Count < MaxRows)
                                 keys.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                                     reader.GetString(4), reader.GetString(5), reader.GetString(6)));
                         while (reader.Read()) { }
+                        Progress = (70, "reading procedures");
                         if (reader.NextResult())
                             while (reader.Read() && parameters.Count < MaxRows)
                                 parameters.Add((reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
                                     reader.IsDBNull(3) ? null : reader.GetString(3), !reader.IsDBNull(4) && reader.GetBoolean(4), !reader.IsDBNull(5) && reader.GetBoolean(5)));
                         while (reader.Read()) { }
+                        Progress = (85, "reading databases");
                         if (reader.NextResult())
                             while (reader.Read()) databases.Add(reader.GetString(0));
                     }
                 }
+                Progress = (95, "indexing " + columns.Count + " columns");
                 var foreignKeys = keys.GroupBy(k => k.Id).ToLookup(g => (g.First().Schema, g.First().Table),
                     g => new SchemaForeignKey(g.Select(k => k.Column).ToArray(), g.First().RefSchema, g.First().RefTable, g.Select(k => k.RefColumn).ToArray()));
                 var tables = columns.GroupBy(c => (c.Schema, c.Table))

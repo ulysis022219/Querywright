@@ -8,6 +8,8 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Automation;
 
 namespace Querywright.Ssms
 {
@@ -21,10 +23,20 @@ namespace Querywright.Ssms
             window.FontSize = Math.Max(13, SystemFonts.MessageFontSize);
             window.SetResourceReference(Control.BackgroundProperty, SystemColors.ControlBrushKey);
             window.SetResourceReference(Control.ForegroundProperty, SystemColors.ControlTextBrushKey);
+            if (Application.Current != null) HostTheme(window);
             void ControlStyle(Type type, params Setter[] setters)
             {
-                var style = new Style(type);
+                var style = new Style(type, window.TryFindResource(type) as Style);
                 foreach (var setter in setters) style.Setters.Add(setter);
+                if (type == typeof(Button))
+                {
+                    var primary = new MultiTrigger();
+                    primary.Conditions.Add(new Condition(Button.IsDefaultProperty, true));
+                    primary.Conditions.Add(new Condition(Button.IsCancelProperty, false));
+                    primary.Setters.Add(new Setter(Control.FontWeightProperty, FontWeights.SemiBold));
+                    primary.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(2)));
+                    style.Triggers.Add(primary);
+                }
                 window.Resources[type] = style;
             }
             ControlStyle(typeof(Button), new Setter(Control.PaddingProperty, new Thickness(14, 6, 14, 6)),
@@ -37,9 +49,91 @@ namespace Querywright.Ssms
             ControlStyle(typeof(TabItem), new Setter(Control.PaddingProperty, new Thickness(14, 7, 14, 7)));
         }
 
+        // Keep standalone dialog checks independent of the SSMS-only SDK assemblies.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void HostTheme(Window window)
+        {
+            if (window.TryFindResource(Microsoft.VisualStudio.Shell.VsResourceKeys.ThemedDialogDefaultStylesKey) is ResourceDictionary theme)
+                window.Resources.MergedDictionaries.Add(theme);
+            if (window.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey) is Brush)
+                window.SetResourceReference(Control.BackgroundProperty, Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey);
+            if (window.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey) is Brush)
+                window.SetResourceReference(Control.ForegroundProperty, Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey);
+        }
+
+        internal static void Style(System.Windows.Forms.Form form)
+        {
+            if (Application.Current != null) HostTheme(form);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void HostTheme(System.Windows.Forms.Form form)
+        {
+            var background = Application.Current.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey) as SolidColorBrush;
+            var foreground = Application.Current.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey) as SolidColorBrush;
+            if (background == null || foreground == null) return;
+            var back = System.Drawing.Color.FromArgb(background.Color.R, background.Color.G, background.Color.B);
+            var fore = System.Drawing.Color.FromArgb(foreground.Color.R, foreground.Color.G, foreground.Color.B);
+            void Paint(System.Windows.Forms.Control control)
+            {
+                control.BackColor = back; control.ForeColor = fore;
+                if (control is System.Windows.Forms.Button button)
+                {
+                    button.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+                    button.FlatAppearance.BorderColor = fore;
+                    button.FlatAppearance.BorderSize = button == form.AcceptButton ? 2 : 1;
+                }
+                if (control is System.Windows.Forms.PropertyGrid property)
+                {
+                    property.ViewBackColor = property.HelpBackColor = property.CategorySplitterColor = back;
+                    property.ViewForeColor = property.HelpForeColor = property.CategoryForeColor = fore;
+                    property.LineColor = System.Drawing.SystemColors.ControlDark;
+                }
+                if (control is System.Windows.Forms.DataGridView grid)
+                {
+                    grid.BackgroundColor = back; grid.EnableHeadersVisualStyles = false;
+                    grid.DefaultCellStyle.BackColor = grid.ColumnHeadersDefaultCellStyle.BackColor = back;
+                    grid.DefaultCellStyle.ForeColor = grid.ColumnHeadersDefaultCellStyle.ForeColor = fore;
+                    grid.DefaultCellStyle.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+                    grid.DefaultCellStyle.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+                }
+                foreach (System.Windows.Forms.Control child in control.Controls) Paint(child);
+            }
+            // These dialogs are modal: read the active host theme each time they open.
+            Paint(form);
+        }
+
+        internal static System.Windows.Forms.Label FormHeader(string title, string description)
+            => new System.Windows.Forms.Label { Text = title + "\r\n" + description, Dock = System.Windows.Forms.DockStyle.Top,
+                AutoSize = true, Padding = new System.Windows.Forms.Padding(0, 0, 0, 16), UseMnemonic = false };
+
+        internal static StackPanel Header(string title, string description)
+        {
+            var header = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
+            header.Children.Add(new TextBlock { Text = title, FontSize = 22, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            header.Children.Add(new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
+            DockPanel.SetDock(header, Dock.Top);
+            return header;
+        }
+
+        internal static Border Footer(UIElement buttons)
+        {
+            var footer = new Border { Child = buttons, BorderThickness = new Thickness(0, 1, 0, 0), Margin = new Thickness(0, 12, 0, 0) };
+            footer.SetResourceReference(Border.BorderBrushProperty, SystemColors.ActiveBorderBrushKey);
+            DockPanel.SetDock(footer, Dock.Bottom);
+            return footer;
+        }
+
+        internal static TextBlock Status()
+        {
+            var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+            AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+            return status;
+        }
+
         internal static WrapPanel Buttons(Window window, params (string Text, bool IsDefault, bool IsCancel, Action? Click)[] items)
         {
-            var panel = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+            var panel = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
             foreach (var item in items)
             {
                 var button = new Button { Content = item.Text, MinWidth = 90, Margin = new Thickness(4), IsDefault = item.IsDefault, IsCancel = item.IsCancel };
@@ -60,11 +154,12 @@ namespace Querywright.Ssms
         {
             Title = "Querywright: pick columns";
             DialogParts.Style(this);
-            Width = 420; Height = 520; MinWidth = 300; MinHeight = 300;
+            Width = 460; Height = 540; MinWidth = 360; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             // TextBlock content so an underscore in a column name is not read as an access key.
             var boxes = columns.Select(c => new CheckBox { Content = new TextBlock { Text = c }, IsChecked = checkAll, Margin = new Thickness(2) }).ToList();
             var root = new DockPanel { Margin = new Thickness(12) };
+            root.Children.Add(DialogParts.Header("Choose columns", "Select the columns to include in your script."));
             var top = new StackPanel { Orientation = Orientation.Horizontal };
             var all = new Button { Content = "Select _all", Margin = new Thickness(0, 0, 4, 8), Padding = new Thickness(8, 2, 8, 2) };
             var none = new Button { Content = "Select _none", Margin = new Thickness(0, 0, 4, 8), Padding = new Thickness(8, 2, 8, 2) };
@@ -72,14 +167,14 @@ namespace Querywright.Ssms
             none.Click += (s, e) => boxes.ForEach(b => b.IsChecked = false);
             top.Children.Add(all); top.Children.Add(none);
             DockPanel.SetDock(top, Dock.Top); root.Children.Add(top);
-            root.Children.Add(DialogParts.Buttons(this,
+            root.Children.Add(DialogParts.Footer(DialogParts.Buttons(this,
                 ("_OK", true, false, () =>
                 {
                     Selected.Clear();
                     Selected.AddRange(boxes.Where(b => b.IsChecked == true).Select(b => ((TextBlock)b.Content).Text));
                     DialogResult = true;
                 }),
-                ("_Cancel", false, true, null)));
+                ("_Cancel", false, true, null))));
             var list = new StackPanel();
             boxes.ForEach(b => list.Children.Add(b));
             root.Children.Add(new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
@@ -101,23 +196,26 @@ namespace Querywright.Ssms
             Width = 480; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
+            root.Children.Add(DialogParts.Header(title.Replace("Querywright: ", ""), choices == null ? "Enter a name to continue." : "Choose an existing name or enter a new one."));
             Control box = choices == null
                 ? new TextBox { Text = initial, Margin = new Thickness(0, 4, 0, 4) }
                 : new ComboBox { ItemsSource = choices, IsEditable = true, Text = initial, Margin = new Thickness(0, 4, 0, 4) };
             string Text() => (box as TextBox)?.Text ?? ((ComboBox)box).Text;
-            var error = new TextBlock { Foreground = System.Windows.Media.Brushes.Firebrick, TextWrapping = TextWrapping.Wrap };
+            var error = DialogParts.Status();
+            error.FontWeight = FontWeights.SemiBold;
+            box.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((s, e) => error.Text = ""));
             var body = new StackPanel();
             body.Children.Add(new Label { Content = label, Target = box });
             body.Children.Add(box);
             body.Children.Add(error);
             DockPanel.SetDock(body, Dock.Top); root.Children.Add(body);
-            root.Children.Add(DialogParts.Buttons(this,
+            root.Children.Add(DialogParts.Footer(DialogParts.Buttons(this,
                 ("_OK", true, false, () =>
                 {
-                    if (string.IsNullOrWhiteSpace(Text())) { error.Text = "Enter a name."; return; }
+                    if (string.IsNullOrWhiteSpace(Text())) { error.Text = "Enter a name."; box.Focus(); return; }
                     Value = Text().Trim(); DialogResult = true;
                 }),
-                ("_Cancel", false, true, null)));
+                ("_Cancel", false, true, null))));
             Content = root;
             Loaded += (s, e) => { Keyboard.Focus(box); (box as TextBox)?.SelectAll(); };
         }
@@ -190,13 +288,16 @@ namespace Querywright.Ssms
             internal List<Version> Versions = new List<Version>();
             internal string TitleFile => Folder != null ? Path.Combine(Folder.FullName, TabHistory.Title) : TabHistory.TitlePath(Legacy!.FullName);
             internal string FavoriteFile => Folder != null ? Path.Combine(Folder.FullName, TabHistory.Favorite) : TabHistory.FavoritePath(Legacy!.FullName);
-            public override string ToString()
+            internal string DisplayName
             {
-                string first = Latest.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
-                if (first.Length > 60) first = first.Substring(0, 60) + "...";
-                string label = !string.IsNullOrEmpty(Name) ? "[" + Name + "]" : Caption.Length > 0 ? Caption + "   " + first : first;
-                return Versions[0].Time.ToString("yyyy-MM-dd h:mm tt", CultureInfo.InvariantCulture) + "   " + label + (Connection.Length > 0 ? "   (" + Connection + ")" : "");
+                get
+                {
+                    string first = Latest.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "Saved query";
+                    return Name ?? (Caption.Length > 0 ? Caption : first.Substring(0, Math.Min(80, first.Length)));
+                }
             }
+            internal string Detail => Versions[0].Time.ToString("MMM d, h:mm tt", CultureInfo.InvariantCulture) + "  ·  " + Versions.Count + " version(s)" + (Connection.Length > 0 ? "\n" + Connection : "");
+            public override string ToString() => DisplayName + "\n" + Detail;
         }
 
         private static string? ReadOrNull(string path) => File.Exists(path) ? File.ReadAllText(path).Trim() : null;
@@ -222,7 +323,7 @@ namespace Querywright.Ssms
         {
             Title = "Querywright: tab history";
             DialogParts.Style(this);
-            Width = 1100; Height = 700; MinWidth = 700; MinHeight = 450;
+            Width = 1100; Height = 760; MinWidth = 760; MinHeight = 580;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var tabs = new List<Tab>();
             if (Directory.Exists(folder))
@@ -242,6 +343,9 @@ namespace Querywright.Ssms
                 tabs.Sort((a, b) => b.Versions[0].Time.CompareTo(a.Versions[0].Time));
             }
             var layout = new DockPanel { Margin = new Thickness(12) };
+            layout.Children.Add(DialogParts.Header("Tab history", "Find a saved query, review a version, and reopen it in a new window."));
+            var feedback = DialogParts.Status();
+            DockPanel.SetDock(feedback, Dock.Bottom); layout.Children.Add(feedback);
             var search = new TextBox { Margin = new Thickness(0, 4, 0, 8) };
             var top = new StackPanel();
             var views = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
@@ -253,6 +357,7 @@ namespace Querywright.Ssms
             top.Children.Add(search);
             DockPanel.SetDock(top, Dock.Top); layout.Children.Add(top);
             var list = new ListBox();
+            ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
             var versionList = new ListBox();
             var versionsLabel = new Label { Content = "_History:", Target = versionList, Padding = new Thickness(0, 8, 0, 4) };
             var preview = new TextBox { IsReadOnly = true, AcceptsReturn = true, FontFamily = new System.Windows.Media.FontFamily("Consolas"),
@@ -285,12 +390,16 @@ namespace Querywright.Ssms
                         group = bucket;
                         list.Items.Add(new ListBoxItem { Content = bucket, IsEnabled = false, Focusable = false, FontWeight = FontWeights.Bold, Margin = new Thickness(0, list.Items.Count == 0 ? 0 : 8, 0, 2) });
                     }
-                    var item = new ListBoxItem { Content = tab.ToString(), Tag = tab };
+                    var row = new StackPanel();
+                    row.Children.Add(new TextBlock { Text = (tab.Favorite ? "\u2605  " : "") + tab.DisplayName, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+                    row.Children.Add(new TextBlock { Text = tab.Detail, FontSize = 12, Margin = new Thickness(0, 4, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+                    var item = new ListBoxItem { Content = row, Tag = tab, ToolTip = tab.ToString() };
+                    AutomationProperties.SetName(item, (tab.Favorite ? "Favorite: " : "") + tab.ToString());
                     list.Items.Add(item);
                     if (tab == keep) list.SelectedItem = item;
                 }
                 if (Selected() == null) list.SelectedItem = list.Items.OfType<ListBoxItem>().FirstOrDefault(i => i.Tag is Tab);
-                if (list.Items.Count == 0) list.Items.Add(new ListBoxItem { Content = new TextBlock { Text = term.Length > 0 ? "No tabs match your search." : favorites ? "No favorites yet. Select a tab in History and click Add to favorites." : "No saved tabs.", TextWrapping = TextWrapping.Wrap }, IsEnabled = false, Focusable = false });
+                if (list.Items.Count == 0) list.Items.Add(new ListBoxItem { Content = new TextBlock { Text = term.Length > 0 ? "No tabs match your search. Try a shorter name or SQL fragment." : favorites ? "No favorites yet. Select a tab in History and click Add to favorites." : "No saved tabs yet. Queries appear here as you edit and execute them when tab history is enabled.", TextWrapping = TextWrapping.Wrap }, IsEnabled = false, Focusable = false });
             }
             search.TextChanged += (s, e) => Filter();
             historyView.Checked += (s, e) => Filter();
@@ -298,16 +407,20 @@ namespace Querywright.Ssms
             list.SelectionChanged += (s, e) =>
             {
                 var tab = Selected();
-                versionsLabel.Content = "_History" + (tab == null ? "" : " for " + (tab.Name ?? (tab.Caption.Length > 0 ? tab.Caption : "this tab")).Replace("_", "__")) + ":";
+                versionsLabel.Content = "_Versions:";
+                versionsLabel.ToolTip = tab?.DisplayName;
                 versionList.ItemsSource = tab?.Versions;
                 if (tab != null) versionList.SelectedIndex = 0;
             };
+            bool previewReady = false;
             versionList.SelectionChanged += (s, e) =>
             {
-                try { preview.Text = versionList.SelectedItem is Version version ? File.ReadAllText(version.File.FullName) : ""; }
-                catch (IOException) { preview.Text = ""; } catch (UnauthorizedAccessException) { preview.Text = ""; }
+                previewReady = false;
+                feedback.Text = "";
+                try { preview.Text = versionList.SelectedItem is Version version ? File.ReadAllText(version.File.FullName) : ""; previewReady = versionList.SelectedItem is Version; }
+                catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { preview.Text = ""; feedback.Text = "Could not read this version. " + error.Message; }
             };
-            void Open() { if (versionList.SelectedItem is Version) { Text = preview.Text; DialogResult = true; } }
+            void Open() { if (previewReady) { Text = preview.Text; DialogResult = true; } }
             list.MouseDoubleClick += (s, e) => Open();
             versionList.MouseDoubleClick += (s, e) => Open();
             Button? favoriteButton = null;
@@ -322,8 +435,9 @@ namespace Querywright.Ssms
                         if (tab.Favorite) File.Delete(tab.FavoriteFile);
                         else File.WriteAllText(tab.FavoriteFile, "", Encoding.UTF8);
                     }
-                    catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
+                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { feedback.Text = "Could not update favorite. " + error.Message; return; }
                     tab.Favorite = !tab.Favorite; Filter();
+                    feedback.Text = tab.Favorite ? "Added to favorites." : "Removed from favorites.";
                 }),
                 ("_Rename...", false, false, () =>
                 {
@@ -333,30 +447,37 @@ namespace Querywright.Ssms
                     string name = System.Text.RegularExpressions.Regex.Replace(prompt.Value, @"\s+", " ").Trim();
                     if (name.Length > 200) name = name.Substring(0, 200);
                     try { File.WriteAllText(tab.TitleFile, name, Encoding.UTF8); }
-                    catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
+                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { feedback.Text = "Could not rename this tab. " + error.Message; return; }
                     tab.Name = name; Filter(tab);
+                    feedback.Text = "Tab renamed.";
                 }),
                 ("_Delete tab", false, false, () =>
                 {
                     if (!(Selected() is Tab tab)) return;
+                    if (MessageBox.Show(this, "Delete \"" + tab.DisplayName + "\" and all " + tab.Versions.Count + " saved version(s)? This cannot be undone.",
+                        "Delete saved tab", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
                     try
                     {
                         if (tab.Folder != null) tab.Folder.Delete(true);
                         else { tab.Legacy!.Delete(); File.Delete(TabHistory.TitlePath(tab.Legacy.FullName)); File.Delete(TabHistory.FavoritePath(tab.Legacy.FullName)); }
                     }
-                    catch (IOException) { return; } catch (UnauthorizedAccessException) { return; }
+                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { feedback.Text = "Could not delete this tab. " + error.Message; return; }
                     tabs.Remove(tab); Filter();
+                    feedback.Text = "Saved tab deleted.";
                 }),
                 ("_Cancel", false, true, null));
             favoriteButton = (Button)buttons.Children[1];
+            ((Button)buttons.Children[0]).ToolTip = "Open the selected version without executing it (Enter).";
+            ((Button)buttons.Children[3]).ToolTip = "Permanently delete this tab and every saved version. Confirmation required.";
+            ((Button)buttons.Children[3]).Margin = new Thickness(16, 4, 4, 4);
             void UpdateButtons()
             {
-                ((Button)buttons.Children[0]).IsEnabled = versionList.SelectedItem is Version;
+                ((Button)buttons.Children[0]).IsEnabled = previewReady;
                 for (int i = 1; i <= 3; i++) ((Button)buttons.Children[i]).IsEnabled = Selected() != null;
             }
             list.SelectionChanged += (s, e) => UpdateButtons();
             versionList.SelectionChanged += (s, e) => UpdateButtons();
-            layout.Children.Add(buttons);
+            layout.Children.Add(DialogParts.Footer(buttons));
             var left = new Grid();
             left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2, GridUnitType.Star), MinHeight = 60 });
             left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -370,8 +491,11 @@ namespace Querywright.Ssms
             var splitter = new GridSplitter { Width = 6, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, ResizeDirection = GridResizeDirection.Columns, ResizeBehavior = GridResizeBehavior.PreviousAndNext };
             System.Windows.Automation.AutomationProperties.SetName(splitter, "Resize history and preview panes");
             Grid.SetColumn(splitter, 1); grid.Children.Add(splitter);
-            Grid.SetColumn(preview, 2);
-            grid.Children.Add(left); grid.Children.Add(preview);
+            var previewPanel = new DockPanel();
+            var previewLabel = new Label { Content = "SQL preview", FontWeight = FontWeights.SemiBold, Margin = new Thickness(8, 0, 0, 4) };
+            DockPanel.SetDock(previewLabel, Dock.Top); previewPanel.Children.Add(previewLabel); previewPanel.Children.Add(preview);
+            Grid.SetColumn(previewPanel, 2);
+            grid.Children.Add(left); grid.Children.Add(previewPanel);
             layout.Children.Add(grid);
             Content = layout;
             Filter();
@@ -420,6 +544,8 @@ namespace Querywright.Ssms
             var split = new System.Windows.Forms.SplitContainer { Dock = System.Windows.Forms.DockStyle.Fill, Width = 950, SplitterDistance = 340, Panel1MinSize = 240, Panel2MinSize = 240 };
             split.Panel1.Controls.Add(grid); split.Panel2.Controls.Add(preview);
             Controls.Add(split); Controls.Add(buttons);
+            Controls.Add(DialogParts.FormHeader("Formatting style", "Adjust options on the left; review formatted SQL on the right."));
+            DialogParts.Style(this);
             void Render()
             {
                 if (Style.IndentSize < 1 || Style.IndentSize > 16) { preview.Text = "Indent size must be between 1 and 16."; ok.Enabled = false; return; }
@@ -439,13 +565,20 @@ namespace Querywright.Ssms
         {
             Title = title;
             DialogParts.Style(this);
-            Width = 760; Height = 560; MinWidth = 360; MinHeight = 240;
+            Width = 800; Height = 620; MinWidth = 440; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;
             var root = new DockPanel { Margin = new Thickness(12) };
-            root.Children.Add(DialogParts.Buttons(this,
-                ("_Copy", false, false, () => Clipboard.SetText(script)),
-                ("Close", true, true, () => Close())));
+            root.Children.Add(DialogParts.Header(title, "Inspect the definition and " + (parameters ? "parameters" : "columns") + ". This view is read-only."));
+            var status = DialogParts.Status();
+            DockPanel.SetDock(status, Dock.Bottom); root.Children.Add(status);
+            root.Children.Add(DialogParts.Footer(DialogParts.Buttons(this,
+                ("_Copy script", true, false, () =>
+                {
+                    try { Clipboard.SetText(script); status.Text = "Copied script to clipboard."; }
+                    catch (System.Runtime.InteropServices.ExternalException) { status.Text = "Clipboard is busy. Try copying again."; }
+                }),
+                ("_Close", false, true, () => Close()))));
             var text = new TextBox
             {
                 Text = script, IsReadOnly = true, FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 13,

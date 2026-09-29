@@ -22,13 +22,14 @@ namespace Querywright.Ssms
         {
             Title = purpose == null ? "Querywright: script for multiple databases" : "Querywright: " + purpose;
             DialogParts.Style(this);
-            Width = 600; Height = 680; MinWidth = 460; MinHeight = 560;
+            Width = 640; Height = 720; MinWidth = 480; MinHeight = 640;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
+            root.Children.Add(DialogParts.Header(purpose == null ? "Script across databases" : purpose,
+                purpose == null ? "Build one script for your selected databases. Nothing runs until you execute it." : "Choose databases carefully. This operation runs on the server with your login."));
 
             var top = new StackPanel();
-            top.Children.Add(new TextBlock { Text = purpose == null ? "Tick the databases on " + server + " to script for. The script opens in a new window; nothing is executed."
-                    : "Tick the databases on " + server + " to " + purpose + ". This runs on the server with your login.", TextWrapping = TextWrapping.Wrap });
+            top.Children.Add(new TextBlock { Text = "Server: " + server, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = server, FontWeight = FontWeights.SemiBold });
             if (scriptHasUse)
                 top.Children.Add(new TextBlock { Text = "The script has its own USE statement, which overrides the database of each block.", TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 6, 0, 0) });
             var filter = new TextBox { Margin = new Thickness(0, 4, 0, 4) };
@@ -39,7 +40,7 @@ namespace Querywright.Ssms
             DockPanel.SetDock(top, Dock.Top); root.Children.Add(top);
 
             var bottom = new StackPanel();
-            var count = new TextBlock { Margin = new Thickness(0, 6, 0, 0) };
+            var count = DialogParts.Status();
             bottom.Children.Add(count);
             if (purpose == null)
             {
@@ -53,15 +54,16 @@ namespace Querywright.Ssms
             selection.Children.Add(all); selection.Children.Add(none); top.Children.Add(selection);
             var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
             var ok = new Button { Content = purpose == null ? "_Open script" : "_Run", MinWidth = 90, Margin = new Thickness(4), IsDefault = true };
+            ok.ToolTip = purpose == null ? "Open the generated script in a new query window." : "Run against every selected database, including selections hidden by filters.";
             var cancel = new Button { Content = "_Cancel", MinWidth = 90, Margin = new Thickness(4), IsCancel = true };
             buttons.Children.Add(ok); buttons.Children.Add(cancel);
-            bottom.Children.Add(buttons);
+            bottom.Children.Add(DialogParts.Footer(buttons));
             DockPanel.SetDock(bottom, Dock.Bottom); root.Children.Add(bottom);
 
             var items = databases.Select(name => new CheckBox { Content = new TextBlock { Text = name }, Tag = name, IsChecked = previous.Contains(name), Margin = new Thickness(2) }).ToList();
             var list = new ListBox { Margin = new Thickness(0, 6, 0, 0) };
             System.Windows.Automation.AutomationProperties.SetName(list, "Databases");
-            var empty = new TextBlock { Text = "No databases match your filter.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, IsHitTestVisible = false };
+            var empty = new TextBlock { Text = "No databases match. Clear the filter or show system databases.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, IsHitTestVisible = false };
             var listArea = new Grid(); listArea.Children.Add(list); listArea.Children.Add(empty);
             root.Children.Add(listArea);
             Content = root;

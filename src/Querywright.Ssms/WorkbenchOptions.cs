@@ -32,6 +32,11 @@ namespace Querywright.Ssms
         [Description("Colors the strip above a query editor by connection: \"pattern=color\" pairs separated by ';' matched against server/database, e.g. \"prod=Red;test=Orange\".")]
         public string TabColorRules { get; set; } = "";
 
+        [Category("Environment")]
+        [DisplayName("Show connection in editor")]
+        [Description("Shows \"server \u00B7 database\" at the bottom right of each connected query editor, colored by the tab color rules.")]
+        public bool ShowConnection { get; set; } = true;
+
         [Category("Snippets")]
         [DisplayName("Snippet folder")]
         [Description("Folder of editable .sql templates. Use a shared folder for team snippets.")]

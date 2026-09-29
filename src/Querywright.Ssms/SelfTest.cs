@@ -68,6 +68,10 @@ namespace Querywright.Ssms
                                 ?? throw new InvalidOperationException("command " + arg + " not registered");
                             command.Invoke();
                             break;
+                        case "caption": // append the bottom connection label's text
+                            view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- " +
+                                (view.Properties.TryGetProperty("QuerywrightConnection", out string caption) ? caption : "(none)"));
+                            break;
                         case "latest": // follow the newest SQL window, e.g. one a command opened
                             if (View == null || Adapter == null) throw new InvalidOperationException("no SQL editor");
                             view = View; adapter = Adapter; target = (IOleCommandTarget)adapter;

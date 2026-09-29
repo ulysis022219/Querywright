@@ -183,7 +183,7 @@ namespace Querywright.Core
         }
 
         public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable>? tables,
-            string defaultSchema = "dbo", bool caseSensitive = false)
+            string defaultSchema = "dbo", bool caseSensitive = false, IReadOnlyList<string>? databases = null)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
@@ -236,6 +236,8 @@ namespace Querywright.Core
                     items.AddRange(resolver.Items.Select(i => (i, Kind.Column)));
                 else if (qualifier.Count > 0) Qualified(qualifier);
             }
+            else if (at > 0 && segment[at - 1].Is("USE"))
+                foreach (var database in databases ?? Array.Empty<string>()) Add(Kind.Table, database, QuoteIfNeeded(database), "database");
             else
             {
                 Tok? prev = at > 0 ? segment[at - 1] : (Tok?)null;

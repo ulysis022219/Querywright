@@ -761,6 +761,8 @@ Check(FixOne("CREATE PROCEDURE dbo.p\nAS\nBEGIN\n    SELECT 1;\nEND", "SW015") =
 Check(FixOne("DECLARE @a int;\nDECLARE @b int = 1;\nSELECT @a;", "SW016") == "DECLARE @a int;\nSELECT @a;" &&
     FixOne("DECLARE @a int, @b int;\nSELECT @b;", "SW016") == "DECLARE @b int;\nSELECT @b;" && FixOne("DECLARE @a int, @b int;\nSELECT @a;", "SW016") == "DECLARE @a int;\nSELECT @a;" &&
     FixOne("SELECT 1; DECLARE @t TABLE (a int);", "SW016") == "SELECT 1; ", "fix unused declaration");
+Check(SqlCompletion.Complete("USE Q", 5, null, databases: new[] { "master", "QwTest", "Other DB" }).Items.Select(i => i.InsertText).SequenceEqual(new[] { "QwTest" }) &&
+    SqlCompletion.Complete("USE ", 4, null, databases: new[] { "Other DB" }).Items.Single().InsertText == "[Other DB]", "USE suggests databases only");
 Check(ObjectScript.SameScript("CREATE VIEW v AS\r\nSELECT 1  \r\n", "CREATE VIEW v AS\nSELECT 1") && !ObjectScript.SameScript("SELECT 1", "SELECT  1") && !ObjectScript.SameScript("a", null), "same script ignores line endings only");
 Check(FixOne("SELECT * FROM dbo.People;", "SW001", assistTables) == "SELECT Id,\r\n       FullName,\r\n       Born,\r\n       Code,\r\n       Stamp,\r\n       Twice FROM dbo.People;" &&
     FixOne("SELECT * FROM dbo.Missing;", "SW001", assistTables) == "<null>" && FixOne("SELECT * FROM dbo.People;", "SW001") == "<null>", "fix wildcard needs metadata");

@@ -441,15 +441,27 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 var foreignKeys = keys.GroupBy(k => k.Id).ToLookup(g => (g.First().Schema, g.First().Table),
                     g => new SchemaForeignKey(g.Select(k => k.Column).ToArray(), g.First().RefSchema, g.First().RefTable, g.Select(k => k.RefColumn).ToArray()));
                 var byName = StringComparer.OrdinalIgnoreCase;
+                // One odd object (blank names, or a key on columns past the row cap) is skipped, not the whole catalog.
+                int skipped = 0;
                 var tables = columns.GroupBy(c => (c.Schema, c.Table)).OrderBy(g => g.Key.Schema, byName).ThenBy(g => g.Key.Table, byName)
-                    .Select(g => new SchemaTable(g.Key.Schema, g.Key.Table, g.Select(c => c.Column).ToArray(),
-                        g.Select(c => c.Type).ToArray(), foreignKeys[g.Key].ToArray(), g.Select(c => c.Generated).ToArray(), g.First().View)).ToArray();
+                    .Select(g =>
+                    {
+                        var names = g.Select(c => c.Column).ToArray();
+                        try
+                        {
+                            return new SchemaTable(g.Key.Schema, g.Key.Table, names, g.Select(c => c.Type).ToArray(),
+                                foreignKeys[g.Key].Where(k => k.Columns.All(c => names.Contains(c, byName))).ToArray(), g.Select(c => c.Generated).ToArray(), g.First().View);
+                        }
+                        catch (ArgumentException) { skipped++; return null; }
+                    }).Where(t => t != null).ToArray();
+                if (skipped > 0) ActivityLog.TryLogWarning("Querywright", "Live metadata skipped " + skipped + " objects with unusable names");
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
                 databaseCache[connection.Key] = databases;
                 procedureCache[connection.Key] = parameters.GroupBy(p => (p.Schema, p.Procedure)).OrderBy(g => g.Key.Schema, byName).ThenBy(g => g.Key.Procedure, byName)
                     .Select(g => new SchemaProcedure(g.Key.Schema, g.Key.Procedure, g.Where(p => p.Name != null)
                         .Select(p => new SchemaParameter(p.Name, p.Type, p.Output, p.Default)).ToArray())).ToArray();
-                ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + tables.Length + " tables");
+                ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + tables.Length + " tables"
+                    + (columns.Count >= MaxRows ? " (column cap reached)" : ""));
                 stale.TryRemove(connection.Key, out _);
                 return tables;
             }

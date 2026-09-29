@@ -543,10 +543,20 @@ namespace Querywright.Ssms
         private async Task RefreshMetadataAsync()
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            LiveMetadata.Refresh();
-            CurrentTables(); // restart the load for the active connection
+            LiveMetadata.Refresh(); // every consumer (popup, quick info, *, INSERT/EXEC fill, JOIN ON, column picker) reads this cache
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-            status?.SetText("Querywright: refreshing database metadata.");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null)
+            {
+                status?.SetText("Querywright: no live connection; the offline schema file is re-read whenever it changes.");
+                return;
+            }
+            status?.SetText("Querywright: refreshing database metadata...");
+            var tables = await LiveMetadata.LoadAsync(connection);
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            status?.SetText(tables == null ? "Querywright: metadata refresh failed; see the SSMS activity log."
+                : "Querywright: metadata refreshed (" + tables.Count + " tables and views, "
+                    + (LiveMetadata.Procedures(connection)?.Count ?? 0) + " procedures).");
         }
 
         /// <summary>Shift+F5: selects the statement under the caret and runs SSMS's own Execute. Only on this explicit command.</summary>

@@ -8,8 +8,7 @@ It helps you write, format, check and refactor T-SQL faster, right inside the SS
 - **Private by default.** Credentials, query text and result data are never logged.
 - **MIT licensed.**
 
-> Status: early release (0.x). It is tested automatically against SSMS 22 on every build,
-> but expect rough edges. Please [report problems](https://github.com/ulysis022219/SqlWorkbench/issues).
+> Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/SqlWorkbench/issues).
 
 ## Install
 

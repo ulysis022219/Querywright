@@ -82,6 +82,11 @@ namespace Querywright.Ssms
         [Description("When you execute DROP TABLE or TRUNCATE TABLE, ask before SSMS runs it.")]
         public bool WarnDropTruncate { get; set; }
 
+        [Category("Environment")]
+        [DisplayName("Warn before USE then change data")]
+        [Description("When a script switches database with USE and then inserts, updates, deletes, merges, truncates or drops, ask before SSMS runs it.")]
+        public bool WarnUseSwitch { get; set; } = true;
+
         [Category("Results grid")]
         [DisplayName("CSV delimiter")]
         [Description("Separator used by Save as CSV. Semicolon suits Excel in locales that use a decimal comma.")]

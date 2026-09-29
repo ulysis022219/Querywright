@@ -56,6 +56,7 @@ namespace Querywright.Core
         public RuleSeverity SW044 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW045 { get; set; } = RuleSeverity.Warning;
         public RuleSeverity SW046 { get; set; } = RuleSeverity.Warning;
+        public RuleSeverity SW047 { get; set; } = RuleSeverity.Warning;
 
         public RuleSeverity Severity(string rule)
         {

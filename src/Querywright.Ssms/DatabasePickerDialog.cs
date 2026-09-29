@@ -18,15 +18,16 @@ namespace Querywright.Ssms
         private readonly CheckBox stopOnError = new CheckBox { Content = "_Stop on first error (needs SQLCMD mode; $(name) in the script becomes a SQLCMD variable)", Margin = new Thickness(0, 8, 0, 0) };
         private readonly CheckBox printName = new CheckBox { Content = "_Print each database name (shows in Messages)", IsChecked = true, Margin = new Thickness(0, 4, 0, 0) };
 
-        internal DatabasePickerDialog(string server, IReadOnlyList<string> databases, ISet<string> previous, bool scriptHasUse)
+        internal DatabasePickerDialog(string server, IReadOnlyList<string> databases, ISet<string> previous, bool scriptHasUse, string purpose = null)
         {
-            Title = "Querywright: script for multiple databases";
+            Title = purpose == null ? "Querywright: script for multiple databases" : "Querywright: " + purpose;
             Width = 520; Height = 600; MinWidth = 400; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
 
             var top = new StackPanel();
-            top.Children.Add(new TextBlock { Text = "Tick the databases on " + server + " to script for. The script opens in a new window; nothing is executed.", TextWrapping = TextWrapping.Wrap });
+            top.Children.Add(new TextBlock { Text = purpose == null ? "Tick the databases on " + server + " to script for. The script opens in a new window; nothing is executed."
+                    : "Tick the databases on " + server + " to " + purpose + ". This runs on the server with your login.", TextWrapping = TextWrapping.Wrap });
             if (scriptHasUse)
                 top.Children.Add(new TextBlock { Text = "The script has its own USE statement, which overrides the database of each block.", TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 6, 0, 0) });
             var filter = new TextBox { Margin = new Thickness(0, 4, 0, 4) };
@@ -39,12 +40,11 @@ namespace Querywright.Ssms
             var bottom = new StackPanel();
             var count = new TextBlock { Margin = new Thickness(0, 6, 0, 0) };
             bottom.Children.Add(count);
-            bottom.Children.Add(stopOnError);
-            bottom.Children.Add(printName);
+            if (purpose == null) { bottom.Children.Add(stopOnError); bottom.Children.Add(printName); }
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
             var all = new Button { Content = "Select _all", MinWidth = 90, Margin = new Thickness(0, 4, 4, 4) };
             var none = new Button { Content = "Select _none", MinWidth = 90, Margin = new Thickness(4) };
-            var ok = new Button { Content = "_Open script", MinWidth = 90, Margin = new Thickness(40, 4, 4, 4), IsDefault = true };
+            var ok = new Button { Content = purpose == null ? "_Open script" : "_Run", MinWidth = 90, Margin = new Thickness(40, 4, 4, 4), IsDefault = true };
             var cancel = new Button { Content = "_Cancel", MinWidth = 90, Margin = new Thickness(4), IsCancel = true };
             buttons.Children.Add(all); buttons.Children.Add(none); buttons.Children.Add(ok); buttons.Children.Add(cancel);
             bottom.Children.Add(buttons);

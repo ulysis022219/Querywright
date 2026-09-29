@@ -417,6 +417,9 @@ Check(Rules("CREATE PROCEDURE dbo.p;2 AS SET NOCOUNT ON;").SequenceEqual(new[] {
 Check(Rules("SELECT a FROM dbo.T WHERE a !< 1;").SequenceEqual(new[] { "SW042" }) && Rules("SELECT a FROM dbo.T WHERE a !> 1 OR a <> 2;").SequenceEqual(new[] { "SW042" }), "!< !>");
 Check(Rules("SELECT TOP 100 PERCENT a FROM dbo.T ORDER BY a;").SequenceEqual(new[] { "SW043" }) &&
     Rules("SELECT TOP 50 PERCENT a FROM dbo.T ORDER BY a;").Length == 0, "TOP 100 PERCENT");
+Check(Rules("DECLARE @t sysname = N'x'; EXEC('SELECT 1 FROM ' + @t);").Contains("SW047") && !Rules("EXEC('SELECT 1');").Contains("SW047"), "concatenated EXEC");
+Check(SqlRefactoring.UnwrapDynamicSql(SqlRefactoring.WrapAsDynamicSql("SELECT 'a';")).Trim() == "SELECT 'a';" && SqlRefactoring.WrapAsDynamicSql("SELECT 'a';").Contains("N'SELECT ''a'';'"), "wrap and unwrap dynamic SQL");
+Check(SqlAnalysis.DatabaseSwitchChanges("USE Other; DELETE FROM dbo.T WHERE Id = 1;").SequenceEqual(new[] { "USE Other" }) && SqlAnalysis.DatabaseSwitchChanges("USE Other; SELECT 1;").Count == 0 && SqlAnalysis.DatabaseSwitchChanges("DELETE FROM dbo.T WHERE Id = 1;").Count == 0, "USE with data changes");
 Check(Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T WHERE a = 1) SELECT 1;").SequenceEqual(new[] { "SW044" }) &&
     Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T GROUP BY a) SELECT 1; IF EXISTS (SELECT MAX(a) FROM dbo.T HAVING MAX(a) > 1) SELECT 1;").Length == 0, "EXISTS aggregate");
 Check(Rules("EXEC master.dbo.xp_cmdshell 'dir';").SequenceEqual(new[] { "SW046" }) && Rules("EXEC xp_cmdshell 'dir';").SequenceEqual(new[] { "SW017", "SW046" }) &&

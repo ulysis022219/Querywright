@@ -77,7 +77,7 @@ internals, the commands report that and do nothing.
 
 ## 6. Code analysis (as-you-type squiggles + Error List)
 
-Querywright rules today: SW001–SW046, mapped in analysis-rules.md, with inline `-- querywright-disable`
+Querywright rules today: SW001–SW047, mapped in analysis-rules.md, with inline `-- querywright-disable`
 suppression. Remaining syntax-only candidates:
 
 | SQL Prompt | Meaning |

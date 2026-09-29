@@ -14,8 +14,10 @@ namespace Querywright.Core
         public int Length { get; }
         public string? Schema { get; }
         public string? Name { get; }
+        /// <summary>Database part of a three-part name (OtherDb.dbo.Proc); null for the connected database.</summary>
+        public string? Database { get; }
         internal DefinitionTarget(int offset, int length) { Offset = offset; Length = length; }
-        internal DefinitionTarget(string? schema, string name) { Offset = -1; Schema = schema; Name = name; }
+        internal DefinitionTarget(string? schema, string name, string? database = null) { Offset = -1; Schema = schema; Name = name; Database = database; }
     }
 
     public sealed class StatementSpan
@@ -68,9 +70,10 @@ namespace Querywright.Core
                     .SelectMany(c => c.Items).FirstOrDefault(c => StringComparer.OrdinalIgnoreCase.Equals(c.ExpressionName.Value, name.BaseIdentifier.Value));
                 if (cte != null) return new DefinitionTarget(cte.ExpressionName.StartOffset, cte.ExpressionName.FragmentLength);
             }
-            // ponytail: database/server parts are left to the host's native navigation.
-            if (name.DatabaseIdentifier != null || name.ServerIdentifier != null) return null;
-            return new DefinitionTarget(name.SchemaIdentifier?.Value, name.BaseIdentifier.Value);
+            // ponytail: linked-server names are left to the host's native navigation.
+            if (name.ServerIdentifier != null) return null;
+            string? schema = string.IsNullOrEmpty(name.SchemaIdentifier?.Value) ? null : name.SchemaIdentifier!.Value; // OtherDb..Name
+            return new DefinitionTarget(schema, name.BaseIdentifier.Value, name.DatabaseIdentifier?.Value);
         }
 
         public static StatementSpan? StatementAt(string sql, int position)

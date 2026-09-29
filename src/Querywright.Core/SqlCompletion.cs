@@ -35,7 +35,9 @@ namespace Querywright.Core
         public SchemaTable(string schema, string name, string[] columns, SchemaForeignKey[]? foreignKeys) : this(schema, name, columns, null, foreignKeys) { }
         /// <summary>Identity, computed and rowversion columns parallel to <see cref="Columns"/>; INSERT fill skips them.</summary>
         public IReadOnlyList<bool>? Generated { get; }
-        public SchemaTable(string schema, string name, string[] columns, string?[]? columnTypes, SchemaForeignKey[]? foreignKeys, bool[]? generated = null)
+        /// <summary>A view rather than a table (hover label only).</summary>
+        public bool IsView { get; }
+        public SchemaTable(string schema, string name, string[] columns, string?[]? columnTypes, SchemaForeignKey[]? foreignKeys, bool[]? generated = null, bool isView = false)
         {
             if (string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(name) || columns == null || columns.Any(string.IsNullOrWhiteSpace))
                 throw new ArgumentException("Schema, table and column names must be nonempty.");
@@ -45,7 +47,7 @@ namespace Querywright.Core
                 throw new ArgumentException("Generated flags must parallel the column names.");
             if (foreignKeys != null && foreignKeys.Any(k => k == null || k.Columns.Any(c => !columns.Contains(c, StringComparer.OrdinalIgnoreCase))))
                 throw new ArgumentException("Foreign key columns must belong to the table.");
-            Schema = schema; Name = name; Columns = Array.AsReadOnly((string[])columns.Clone());
+            Schema = schema; Name = name; IsView = isView; Columns = Array.AsReadOnly((string[])columns.Clone());
             ColumnTypes = columnTypes == null ? null : Array.AsReadOnly((string?[])columnTypes.Clone());
             Generated = generated == null ? null : Array.AsReadOnly((bool[])generated.Clone());
             ForeignKeys = Array.AsReadOnly(foreignKeys == null ? Array.Empty<SchemaForeignKey>() : (SchemaForeignKey[])foreignKeys.Clone());

@@ -62,7 +62,8 @@ namespace Querywright.Ssms
 
         private static readonly string CatalogQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT s.name, o.name, c.name, " + TypeSql("c") + @",
-    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR TYPE_NAME(c.system_type_id) = 'timestamp' THEN 1 ELSE 0 END AS bit)
+    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR TYPE_NAME(c.system_type_id) = 'timestamp' THEN 1 ELSE 0 END AS bit),
+    CAST(CASE o.type WHEN 'V' THEN 1 ELSE 0 END AS bit)
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = o.object_id
@@ -130,6 +131,102 @@ ORDER BY 1, 2, p.parameter_id;";
                     return command.ExecuteScalar() as string;
                 }
             }
+        }
+
+        // Size without the type name, e.g. 50, max, 18,2, 7; empty when the type takes none.
+        private const string SizeSql = @"CASE WHEN TYPE_NAME(c.system_type_id) IN ('varchar', 'char', 'varbinary', 'binary')
+            THEN CASE c.max_length WHEN -1 THEN 'max' ELSE CAST(c.max_length AS varchar(5)) END
+        WHEN TYPE_NAME(c.system_type_id) IN ('nvarchar', 'nchar')
+            THEN CASE c.max_length WHEN -1 THEN 'max' ELSE CAST(c.max_length / 2 AS varchar(5)) END
+        WHEN TYPE_NAME(c.system_type_id) IN ('decimal', 'numeric') THEN CAST(c.precision AS varchar(3)) + ',' + CAST(c.scale AS varchar(3))
+        WHEN TYPE_NAME(c.system_type_id) IN ('datetime2', 'time', 'datetimeoffset') THEN CAST(c.scale AS varchar(3))
+        ELSE '' END";
+
+        private static readonly string DetailsQuery = @"SET LOCK_TIMEOUT 3000;
+DECLARE @id int = OBJECT_ID(@name);
+SELECT RTRIM(o.type), OBJECT_DEFINITION(o.object_id), ds.name
+FROM sys.objects AS o
+LEFT JOIN sys.indexes AS i ON i.object_id = o.object_id AND i.index_id < 2
+LEFT JOIN sys.data_spaces AS ds ON ds.data_space_id = i.data_space_id
+WHERE o.object_id = @id;
+SELECT c.name, TYPE_NAME(c.user_type_id), CASE WHEN c.user_type_id = c.system_type_id THEN " + SizeSql + @" ELSE '' END, c.is_nullable,
+    c.collation_name, CAST(ic.seed_value AS nvarchar(40)) + N', ' + CAST(ic.increment_value AS nvarchar(40)),
+    cc.definition, CAST(ISNULL(cc.is_persisted, 0) AS bit), dc.name, dc.definition
+FROM sys.columns AS c
+LEFT JOIN sys.identity_columns AS ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+LEFT JOIN sys.computed_columns AS cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
+LEFT JOIN sys.default_constraints AS dc ON dc.object_id = c.default_object_id
+WHERE c.object_id = @id ORDER BY c.column_id;
+SELECT k.name, CAST(CASE k.type WHEN 'PK' THEN 1 ELSE 0 END AS bit), CAST(CASE i.type WHEN 1 THEN 1 ELSE 0 END AS bit), c.name, ic.is_descending_key, ds.name
+FROM sys.key_constraints AS k
+JOIN sys.indexes AS i ON i.object_id = k.parent_object_id AND i.index_id = k.unique_index_id
+JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.key_ordinal > 0
+JOIN sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+LEFT JOIN sys.data_spaces AS ds ON ds.data_space_id = i.data_space_id
+WHERE k.parent_object_id = @id ORDER BY k.type DESC, k.name, ic.key_ordinal;
+SELECT f.name, pc.name, SCHEMA_NAME(r.schema_id), r.name, rc.name, f.delete_referential_action_desc, f.update_referential_action_desc
+FROM sys.foreign_keys AS f
+JOIN sys.foreign_key_columns AS fc ON fc.constraint_object_id = f.object_id
+JOIN sys.columns AS pc ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+JOIN sys.objects AS r ON r.object_id = f.referenced_object_id
+JOIN sys.columns AS rc ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+WHERE f.parent_object_id = @id ORDER BY f.name, fc.constraint_column_id;
+SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = @id ORDER BY name;
+SELECT p.name, TYPE_NAME(p.user_type_id) + CASE WHEN p.user_type_id = p.system_type_id AND " + SizeSql.Replace("c.", "p.") + @" <> ''
+    THEN '(' + " + SizeSql.Replace("c.", "p.") + @" + ')' ELSE '' END, p.is_output
+FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY p.parameter_id;";
+
+        internal sealed class ObjectDetails
+        {
+            internal string Type = "";
+            internal string Definition;
+            internal string Filegroup;
+            internal readonly List<ScriptColumn> Columns = new List<ScriptColumn>();
+            internal readonly List<string> Constraints = new List<string>();
+            internal readonly List<(string Name, string Type, bool Output)> Parameters = new List<(string, string, bool)>();
+        }
+
+        /// <summary>Hover popup: type, definition, columns, constraints and parameters of one object; null when it does not exist. Read-only, parameterized.</summary>
+        internal static ObjectDetails Details(ActiveConnection connection, string schema, string name)
+        {
+            string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
+            string Text(SqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+            var details = new ObjectDetails();
+            using (var sql = connection.Open())
+            {
+                sql.Open();
+                using (var command = new SqlCommand(DetailsQuery, sql) { CommandTimeout = 15 })
+                {
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = Quote(schema) + "." + Quote(name);
+                    using (var reader = command.ExecuteReader())
+                    {
+                        if (!reader.Read()) return null;
+                        details.Type = reader.GetString(0); details.Definition = Text(reader, 1); details.Filegroup = Text(reader, 2);
+                        reader.NextResult();
+                        while (reader.Read())
+                            details.Columns.Add(new ScriptColumn(reader.GetString(0), reader.GetString(1), Text(reader, 2), reader.GetBoolean(3))
+                            {
+                                Collation = Text(reader, 4), Identity = Text(reader, 5), Computed = Text(reader, 6), Persisted = reader.GetBoolean(7),
+                                DefaultName = Text(reader, 8), Default = Text(reader, 9),
+                            });
+                        reader.NextResult();
+                        var keys = new List<(string Name, bool Primary, bool Clustered, string Column, bool Descending, string Filegroup)>();
+                        while (reader.Read()) keys.Add((reader.GetString(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetString(3), reader.GetBoolean(4), Text(reader, 5)));
+                        details.Constraints.AddRange(keys.GroupBy(k => k.Name).Select(g =>
+                            ObjectScript.Key(g.Key, g.First().Primary, g.First().Clustered, g.Select(k => (k.Column, k.Descending)), g.First().Filegroup)));
+                        reader.NextResult();
+                        var foreign = new List<(string Name, string Column, string RefSchema, string RefTable, string RefColumn, string Delete, string Update)>();
+                        while (reader.Read()) foreign.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), Text(reader, 5), Text(reader, 6)));
+                        details.Constraints.AddRange(foreign.GroupBy(k => k.Name).Select(g => ObjectScript.ForeignKey(g.Key, g.Select(k => k.Column),
+                            g.First().RefSchema, g.First().RefTable, g.Select(k => k.RefColumn), g.First().Delete, g.First().Update)));
+                        reader.NextResult();
+                        while (reader.Read()) details.Constraints.Add(ObjectScript.Check(reader.GetString(0), reader.GetString(1)));
+                        reader.NextResult();
+                        while (reader.Read()) details.Parameters.Add((reader.GetString(0), reader.GetString(1), reader.GetBoolean(2)));
+                    }
+                }
+            }
+            return details;
         }
 
         private const string DependentsQuery = @"SET LOCK_TIMEOUT 3000;
@@ -234,7 +331,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         {
             try
             {
-                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated)>();
+                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View)>();
                 var parameters = new List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default)>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
                 using (var sql = connection.Open())
@@ -244,7 +341,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
                     {
                         while (reader.Read() && columns.Count < MaxRows)
-                            columns.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetBoolean(4)));
+                            columns.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetBoolean(4), reader.GetBoolean(5)));
                         while (reader.Read()) { } // drain capped rows
                         if (reader.NextResult())
                             while (reader.Read() && keys.Count < MaxRows)
@@ -261,7 +358,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     g => new SchemaForeignKey(g.Select(k => k.Column).ToArray(), g.First().RefSchema, g.First().RefTable, g.Select(k => k.RefColumn).ToArray()));
                 var tables = columns.GroupBy(c => (c.Schema, c.Table))
                     .Select(g => new SchemaTable(g.Key.Schema, g.Key.Table, g.Select(c => c.Column).ToArray(),
-                        g.Select(c => c.Type).ToArray(), foreignKeys[g.Key].ToArray(), g.Select(c => c.Generated).ToArray())).ToArray();
+                        g.Select(c => c.Type).ToArray(), foreignKeys[g.Key].ToArray(), g.Select(c => c.Generated).ToArray(), g.First().View)).ToArray();
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
                 procedureCache[connection.Key] = parameters.GroupBy(p => (p.Schema, p.Procedure))
                     .Select(g => new SchemaProcedure(g.Key.Schema, g.Key.Procedure, g.Where(p => p.Name != null)

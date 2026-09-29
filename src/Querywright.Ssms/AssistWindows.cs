@@ -258,4 +258,36 @@ namespace Querywright.Ssms
             Render();
         }
     }
+
+    /// <summary>Hover popup: Script and Summary tabs for one database object. Read-only; Copy puts the script on the clipboard.</summary>
+    internal sealed class ObjectInfoWindow : Window
+    {
+        internal ObjectInfoWindow(string title, string script, IEnumerable<(string Name, string Type, string Nullability)> summary, bool parameters)
+        {
+            Title = title;
+            Width = 760; Height = 560; MinWidth = 360; MinHeight = 240;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            ShowInTaskbar = false;
+            var root = new DockPanel { Margin = new Thickness(12) };
+            root.Children.Add(DialogParts.Buttons(this,
+                ("_Copy", false, false, () => Clipboard.SetText(script)),
+                ("Close", true, true, () => Close())));
+            var text = new TextBox
+            {
+                Text = script, IsReadOnly = true, FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 13,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            };
+            var view = new GridView();
+            string[] headers = parameters ? new[] { "Parameter", "Data Type", "Direction" } : new[] { "Column Name", "Data Type", "Nullability" };
+            string[] paths = { "Item1", "Item2", "Item3" };
+            for (int i = 0; i < 3; i++)
+                view.Columns.Add(new GridViewColumn { Header = headers[i], DisplayMemberBinding = new System.Windows.Data.Binding(paths[i]), Width = i == 0 ? 260 : 180 });
+            var list = new ListView { View = view, ItemsSource = summary.Select(r => Tuple.Create(r.Name, r.Type, r.Nullability)).ToList() };
+            var tabs = new TabControl();
+            tabs.Items.Add(new TabItem { Header = "Script", Content = text });
+            tabs.Items.Add(new TabItem { Header = "Summary", Content = list });
+            root.Children.Add(tabs);
+            Content = root;
+        }
+    }
 }

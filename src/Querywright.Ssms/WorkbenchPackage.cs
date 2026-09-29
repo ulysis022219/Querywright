@@ -206,6 +206,30 @@ namespace Querywright.Ssms
             catch (Exception error) when (!(error is OutOfMemoryException)) { return false; }
         }
 
+        /// <summary>After a suggestion is committed: INSERT INTO t / EXEC p gets its column list or parameters right away.</summary>
+        internal void TryFillAfterCommit(IWpfTextView view)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (view.IsClosed || !view.Selection.IsEmpty || view.Caret.InVirtualSpace) return;
+            try { Fill(view, view.TextSnapshot, view.Caret.Position.BufferPosition.Position); }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { ShowWarning(error.Message); }
+        }
+
+        // Tab after INSERT INTO t / EXEC p writes the column list or parameters.
+        private bool Fill(IWpfTextView view, ITextSnapshot snapshot, int caret)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            // ponytail: cheap keyword gate so ordinary Tabs never parse the whole script on the UI thread.
+            int from = Math.Max(0, caret - 300);
+            string recent = snapshot.GetText(from, caret - from);
+            string text = recent.IndexOf("INSERT", StringComparison.OrdinalIgnoreCase) >= 0 || recent.IndexOf("EXEC", StringComparison.OrdinalIgnoreCase) >= 0
+                ? snapshot.GetText() : null;
+            var fill = text == null ? null : SqlAssist.FillStatement(text, caret, CurrentTables(), CurrentProcedures(text));
+            if (fill == null) return false;
+            ReplaceText(view, new SnapshotSpan(snapshot, fill.Start, fill.Length), fill.Text, fill.Text.Length, 0, 0, "Fill statement");
+            return true;
+        }
+
         internal bool TryTabExpand(IWpfTextView view)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
@@ -240,18 +264,7 @@ namespace Querywright.Ssms
                     ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
                     return true;
                 }
-                // SQL Prompt: Tab after INSERT INTO t / EXEC p writes the column list or parameters.
-                // ponytail: cheap keyword gate so ordinary Tabs never parse the whole script on the UI thread.
-                int from = Math.Max(0, caret - 300);
-                string recent = snapshot.GetText(from, caret - from);
-                string text = recent.IndexOf("INSERT", StringComparison.OrdinalIgnoreCase) >= 0 || recent.IndexOf("EXEC", StringComparison.OrdinalIgnoreCase) >= 0
-                    ? snapshot.GetText() : null;
-                var fill = text == null ? null : SqlAssist.FillStatement(text, caret, CurrentTables(), CurrentProcedures(text));
-                if (fill != null)
-                {
-                    ReplaceText(view, new SnapshotSpan(snapshot, fill.Start, fill.Length), fill.Text, fill.Text.Length, 0, 0, "Fill statement");
-                    return true;
-                }
+                if (Fill(view, snapshot, caret)) return true;
                 string shortcut = SnippetFiles.ShortcutBefore(line.GetText(), caret - line.Start.Position);
                 if (shortcut == null) return false;
                 if (!Directory.Exists(options.SnippetFolder)) SnippetFiles.Initialize(options.SnippetFolder);
@@ -581,6 +594,33 @@ namespace Querywright.Ssms
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 ShowWarning((error as System.Reflection.TargetInvocationException)?.InnerException?.Message ?? error.Message);
+            }
+        }
+
+        /// <summary>Hover link click: Script and Summary of one object from the connected database. Read-only; nothing is executed.</summary>
+        internal async Task ShowObjectAsync(string schema, string name)
+        {
+            try
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                var connection = LiveMetadata.Capture();
+                if (connection == null) throw new InvalidOperationException("Connect the query window to a database first.");
+                var details = await Task.Run(() => LiveMetadata.Details(connection, schema, name));
+                if (details == null) throw new InvalidOperationException(schema + "." + name + " was not found in the connected database, or you lack VIEW DEFINITION permission.");
+                bool table = details.Type == "U";
+                string script = table && details.Columns.Count > 0
+                    ? ObjectScript.CreateTable(schema, name, details.Columns, details.Filegroup, details.Constraints)
+                    : details.Definition ?? "-- The definition is encrypted or not visible with your permissions.";
+                bool parameters = details.Columns.Count == 0 && details.Parameters.Count > 0;
+                var summary = parameters
+                    ? details.Parameters.Select(p => (p.Name, p.Type, p.Output ? "OUTPUT" : "IN"))
+                    : details.Columns.Select(c => (c.Name, c.DataType, c.Nullable ? "NULL" : "NOT NULL"));
+                await ShowDialogAsync(new ObjectInfoWindow(schema + "." + name, script, summary.ToList(), parameters));
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                ShowWarning(error.Message);
             }
         }
 

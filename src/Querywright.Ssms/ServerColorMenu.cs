@@ -37,7 +37,11 @@ namespace Querywright.Ssms
                     .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache", false)).FirstOrDefault(t => t != null);
                 if (cache == null) { Status = "no ServiceCache type"; return false; }
                 var explorer = cache.GetMethod("GetObjectExplorer", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.Invoke(null, null);
-                if (explorer == null) { Status = "no object explorer"; return false; }
+                // SSMS 22: the explorer is only reachable as a service.
+                var service = AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(a => a.GetType("Microsoft.SqlServer.Management.UI.VSIntegration.ObjectExplorer.IObjectExplorerService", false)).FirstOrDefault(t => t != null);
+                if (explorer == null && service != null) explorer = ServiceProvider.GlobalProvider.GetService(service);
+                if (explorer == null) { Status = "no object explorer" + (service == null ? " service type" : ""); return false; }
                 var property = explorer.GetType().GetProperty("Tree", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                 if (property == null) { Status = "no Tree property on " + explorer.GetType().FullName; return false; }
                 var value = property.GetValue(explorer);

@@ -89,7 +89,8 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                File.WriteAllText(result, "error: " + error.GetType().Name + ": " + error.Message);
+                var inner = error is System.Reflection.TargetInvocationException { InnerException: { } cause } ? cause : error;
+                File.WriteAllText(result, "error: " + inner.GetType().Name + ": " + inner.Message);
             }
         }
 

@@ -722,6 +722,10 @@ Check(Fill("INSERT OnlyId|")!.Text == " DEFAULT VALUES", "all generated uses DEF
 var spaced = Fill("EXEC dbo.usp_Add \t|");
 Check(spaced is { Start: 16, Length: 2 } && spaced.Text.StartsWith(" @Name = "), "fill after trailing blanks replaces them");
 Check(Fill("EXEC dbo.usp_Add\n|") == null, "no fill on the next line");
+var dated = SqlAssist.ProceduresFromScript("CREATE PROC dbo.p @At datetime, @Id uniqueidentifier, @Off datetimeoffset AS SELECT 1;");
+var execDates = SqlAssist.FillStatement("EXEC dbo.p", 10, null, dated, now: new DateTimeOffset(2026, 9, 29, 5, 10, 6, TimeSpan.FromHours(8)))?.Text ?? "";
+Check(execDates.Contains("@At = '2026-09-29 05:10:06',") && execDates.Contains("@Off = '2026-09-29 05:10:06 +08:00'") && !execDates.Contains("("),
+    "EXEC fill uses the current time as literals");
 string[] ProcNames(string text) { int at = text.IndexOf('|'); return SqlCompletion.Complete(text.Remove(at, 1), at, null, procedures: procs).Items.Select(i => i.InsertText).ToArray(); }
 Check(ProcNames("EXEC usp|").SequenceEqual(new[] { "dbo.usp_Add" }) && ProcNames("EXEC @rc = N|").SequenceEqual(new[] { "dbo.NoArgs" }) &&
     ProcNames("EXECUTE dbo.|").SequenceEqual(new[] { "NoArgs", "usp_Add" }) && ProcNames("EXEC sales.|").Length == 0, "procedure suggestions after EXEC");

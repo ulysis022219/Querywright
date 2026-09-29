@@ -2,7 +2,7 @@ name: Build VSIX
 
 on:
   push:
-    branches: [main, master, 'claude/**']
+    branches: [main, master, dev, 'claude/**']
     tags: ['v*']
   workflow_dispatch:
     inputs:

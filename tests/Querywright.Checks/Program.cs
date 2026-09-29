@@ -685,7 +685,9 @@ Check(SqlRefactoring.CreateToAlter("CREATE OR /*c*/ ALTER FUNCTION f() RETURNS i
 Check(SqlRefactoring.CreateToAlter("SELECT 1") == "SELECT 1" && SqlRefactoring.CreateToAlter("") == "", "no create unchanged");
 Check(SqlRefactoring.CreateToAlter("CREATE TRIGGER t ON dbo.x AFTER INSERT AS BEGIN CREATE TABLE #t(i int) END").StartsWith("ALTER TRIGGER") , "only first create changes");
 Console.WriteLine($"PASS: {checks} total checks including CREATE to ALTER. SSMS integration not tested.");
-Check(SqlNavigation.FindDefinition("EXEC otherdb.dbo.p;", 16) == null, "cross-database F12 left to host");
+Check(SqlNavigation.FindDefinition("EXEC otherdb.dbo.p;", 16) is { Offset: -1, Database: "otherdb", Schema: "dbo", Name: "p" }, "cross-database F12 names the database");
+Check(SqlNavigation.FindDefinition("SELECT * FROM otherdb..People;", 23) is { Database: "otherdb", Schema: null, Name: "People" }, "cross-database default schema");
+Check(SqlNavigation.FindDefinition("EXEC srv.otherdb.dbo.p;", 20) == null, "linked-server F12 left to host");
 var procTarget = SqlNavigation.FindDefinition("EXEC dbo.usp_Load @x = 1;", 10);
 Check(procTarget != null && procTarget.Offset < 0 && procTarget.Schema == "dbo" && procTarget.Name == "usp_Load", "F12 on procedure names object");
 Console.WriteLine($"PASS: {checks} total checks including object F12 targets. SSMS integration not tested.");

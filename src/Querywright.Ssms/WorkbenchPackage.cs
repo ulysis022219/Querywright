@@ -314,6 +314,8 @@ namespace Querywright.Ssms
                 if (bypassDefinition || target.Name == null || options?.LiveMetadata == false) return false;
                 var connection = LiveMetadata.Capture();
                 if (connection == null) return false;
+                // OtherDb.dbo.Proc: read the definition from that database on the same server.
+                if (target.Database != null) connection = connection.WithDatabase(target.Database);
                 _ = JoinableTaskFactory.RunAsync(() => ScriptObjectAsync(connection, target.Schema, target.Name));
                 return true;
             }
@@ -353,6 +355,9 @@ namespace Querywright.Ssms
                 var view = GetSqlView();
                 if (view == source) throw new InvalidOperationException("Could not open a new query window.");
                 string text = SqlRefactoring.CreateToAlter(definition);
+                // The new window connects to the source window's database; switch it so the ALTER targets the object's own database.
+                if (connection.Database != null && !string.Equals(connection.Database, LiveMetadata.Capture()?.Database, StringComparison.OrdinalIgnoreCase))
+                    text = "USE [" + connection.Database.Replace("]", "]]") + "];\r\nGO\r\n" + text;
                 ReplaceText(view, new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length), text, 0, 0, 0, "Script " + name);
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
@@ -667,6 +672,7 @@ namespace Querywright.Ssms
                 throw new InvalidOperationException("Highlight a table, view, procedure or function name in a script without syntax errors.");
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
             if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the object.");
+            if (target.Database != null) connection = connection.WithDatabase(target.Database);
             string schema = target.Schema ?? "dbo", name = target.Name, full = schema + "." + name;
             var databases = (await Task.Run(() => LiveMetadata.Databases(connection))).Where(d => !string.Equals(d, connection.Database, StringComparison.OrdinalIgnoreCase)).ToList();
             await JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -777,6 +783,7 @@ namespace Querywright.Ssms
             catch (FormatException) { target = null; }
             if (target == null || target.Offset >= 0 || target.Name == null)
                 throw new InvalidOperationException("Place the caret on a table, view, procedure or function name in a script without syntax errors.");
+            if (target.Database != null) throw new InvalidOperationException("Rename works on objects in the connected database; open a query on " + target.Database + " first.");
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
             if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the object.");
             string schema = target.Schema ?? "dbo";
@@ -798,6 +805,7 @@ namespace Querywright.Ssms
             catch (FormatException) { target = null; }
             if (target == null || target.Offset >= 0 || target.Name == null)
                 throw new InvalidOperationException("Place the caret on a table name in a script without syntax errors.");
+            if (target.Database != null) throw new InvalidOperationException("Split works on tables in the connected database; open a query on " + target.Database + " first.");
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
             if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the table.");
             string schema = target.Schema ?? "dbo";

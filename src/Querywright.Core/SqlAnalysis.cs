@@ -56,7 +56,27 @@ namespace Querywright.Core
         }
 
         /// <summary>Rules with a mechanical fix.</summary>
-        public static readonly IReadOnlyCollection<string> FixableRules = new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };
+        /// <summary>Targets of DELETE/UPDATE statements without WHERE, e.g. "DELETE LC.StatusHdr". Empty when none or the SQL does not parse.</summary>
+        public static IReadOnlyList<string> UnfilteredChanges(string sql)
+        {
+            var fragment = new TSql170Parser(true).Parse(new StringReader(sql ?? ""), out var errors);
+            if (errors.Count > 0) return Array.Empty<string>();
+            var found = new Unfiltered(sql!);
+            fragment.Accept(found);
+            return found.Targets;
+        }
+
+        private sealed class Unfiltered : TSqlFragmentVisitor
+        {
+            private readonly string sql;
+            internal readonly List<string> Targets = new List<string>();
+            internal Unfiltered(string sql) => this.sql = sql;
+            private void Add(string verb, TableReference target) => Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength));
+            public override void Visit(DeleteSpecification node) { if (node.WhereClause == null) Add("DELETE", node.Target); }
+            public override void Visit(UpdateSpecification node) { if (node.WhereClause == null) Add("UPDATE", node.Target); }
+        }
+
+        public static readonly IReadOnlyCollection<string> FixableRules =new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };
 
         /// <summary>The edit that resolves one diagnostic, or null when the rule has no safe fix here. The result must still parse.</summary>
         public static TextEdit? Fix(string sql, SqlDiagnostic diagnostic, IReadOnlyList<SchemaTable>? tables = null, string defaultSchema = "dbo")

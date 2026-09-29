@@ -28,8 +28,9 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`.
   56 built in; add your own `.sql` files or share a team folder.
 - Expand `*` into a column list, or pick the columns you want.
-- **F12** jumps to where a variable, alias or CTE is declared.
+- **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view, function or trigger it opens an ALTER script in a new query and on a table a CREATE TABLE script (also in scripts with syntax errors elsewhere), including three-part names in another database on the same server (`OtherDb.dbo.Proc`).
 - **Shift+F5** runs only the statement under the caret (only when you press it).
+- Executing a **DELETE or UPDATE without WHERE** asks first ("Execute anyway" / "Don't execute"); turn it off in the prompt or under Tools > Options > Querywright.
 
 **Formatting**
 - Format a selection, a whole document, or every `.sql` file in a folder.
@@ -47,9 +48,12 @@ settings are kept. To uninstall, run `Install.cmd -Uninstall`. Details: [INSTALL
 - Split a table, or wrap a selection as a stored procedure.
 
 **Everyday helpers**
-- Tab history: find and reopen queries you closed, even after a restart.
+- Tab history: find and reopen queries you closed, even after a restart (toolbar button next to New Query).
 - A colored strip and a `server · database` label on every query window, so you always know
-  where you are connected. Color rules like `prod=Red;test=Orange` are set in Tools > Options.
+  where you are connected. Right-click a server in Object Explorer > **Querywright: server color...**
+  to pick its color, or write rules like `prod=Red;test=Orange` in Tools > Options.
+- Highlight an object name, right-click > **Querywright: compare object with database...** to check it against
+  another database on the same server: a message if identical, otherwise a side-by-side diff.
 - Results grid right-click: copy as `IN (...)`, script rows as `INSERT`, open in Excel, save as CSV.
 
 All commands are in the **Tools** menu under "Querywright". Settings are under

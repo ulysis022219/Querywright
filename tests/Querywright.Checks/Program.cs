@@ -259,11 +259,12 @@ void RejectExpand(string text)
     catch (InvalidOperationException) { checks++; return; }
     throw new Exception("Expected wildcard rejection for " + text);
 }
-Check(Expand("SELECT *| FROM dbo.People;").Text == "Id, Name, [odd]]column]", "single-table wildcard");
-Check(Expand("SELECT o.*|, 1 FROM dbo.People p JOIN dbo.Orders o ON p.Id = o.PersonId;") is var q && q.Text == "o.OrderId, o.PersonId" && q.Start == 7 && q.Length == 3, "qualified wildcard span");
-Check(Expand("SELECT |* FROM People p, dbo.Orders o;").Text.StartsWith("p.Id, p.Name, p.[odd]]column], o.OrderId"), "multi-table wildcard order");
+Check(Expand("SELECT *| FROM dbo.People;").Text == "Id,\r\n       Name,\r\n       [odd]]column]", "single-table wildcard vertical");
+Check(Expand("SELECT o.*|, 1 FROM dbo.People p JOIN dbo.Orders o ON p.Id = o.PersonId;") is var q && q.Text == "o.OrderId,\r\n       o.PersonId" && q.Start == 7 && q.Length == 3, "qualified wildcard span");
+Check(Expand("SELECT |* FROM People p, dbo.Orders o;").Text.StartsWith("p.Id,\r\n       p.Name,\r\n       p.[odd]]column],\r\n       o.OrderId"), "multi-table wildcard order");
 Check(Expand("WITH c AS (SELECT OrderId FROM dbo.Orders) SELECT *| FROM c;").Text == "OrderId", "CTE wildcard");
-Check(Expand("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT *| FROM dbo.Orders);").Text == "OrderId, PersonId", "inner scope wildcard");
+Check(Expand("SELECT 1 FROM dbo.People p WHERE EXISTS (SELECT *| FROM dbo.Orders);").Text == "OrderId,\r\n                                                PersonId", "inner scope wildcard");
+Check(SqlCompletion.ColumnList("SELECT a\n\tFROM x;\n\tSELECT ", 26, new[] { "a", "b" }) == "a,\n\t       b", "column list keeps LF and tabs");
 RejectExpand("SELECT *| FROM dbo.Missing;");
 RejectExpand("SELECT *| FROM dbo.People p CROSS APPLY OPENJSON(p.Name) j;");
 RejectExpand("SELECT x.*| FROM dbo.People p;");
@@ -295,6 +296,11 @@ Check(Go("EXEC dbo.Get|People;") is { Name: "GetPeople" }, "procedure definition
 Check(Go("WITH c AS (SELECT 1 AS x) SELECT x FROM |c;") is { Offset: 5, Length: 1 }, "CTE definition");
 Check(Go("UPDATE p SET Name = N'' FROM dbo.People p WHERE p|.Id = 1;") is { Offset: 40 }, "UPDATE alias definition");
 Check(Go("SELECT Pe|ople.Name FROM dbo.People;") is { Schema: "dbo", Name: "People" }, "unaliased table qualifier");
+Check(Go("SELECT dbo.fn_Ta|x(1);") is { Offset: -1, Schema: "dbo", Name: "fn_Tax" }, "scalar function definition");
+Check(Go("SELECT Other.dbo.fn_Ta|x(1);") is { Database: "Other", Schema: "dbo", Name: "fn_Tax" }, "cross-database scalar function");
+Check(Go("SELECT FROM\nEXEC dbo.usp_Lo|ad;") is { Offset: -1, Schema: "dbo", Name: "usp_Load" }, "object name in a script with syntax errors");
+Check(Go("SELECT FROM\nEXEC [Other]..[usp Lo|ad];") is { Database: "Other", Schema: null, Name: "usp Load" }, "db..name in a script with syntax errors");
+Check(Go("SELECT FROM\nEXEC srv.db.dbo.p|;") == null && Go("SELECT FROM @x|") == null, "linked server and variables skipped on syntax errors");
 Console.WriteLine($"PASS: {checks} total checks including navigation. SSMS integration not tested.");
 
 Check(SnippetFiles.ShortcutBefore("SELECT 1;\nssf", 13) == "ssf", "shortcut word");
@@ -313,6 +319,11 @@ Console.WriteLine($"PASS: {checks} total checks including snippet shortcuts. SSM
 string[] Rules(string sql) => SqlAnalysis.Analyze(sql).Diagnostics.Select(d => d.Rule).Distinct().Order().ToArray();
 Check(Rules("DELETE FROM dbo.T;").SequenceEqual(new[] { "SW005" }) && Rules("DELETE FROM dbo.T WHERE Id = 1;").Length == 0, "DELETE without WHERE");
 Check(Rules("UPDATE dbo.T SET x = 1;").SequenceEqual(new[] { "SW006" }) && Rules("UPDATE dbo.T SET x = 1 WHERE Id = 1;").Length == 0, "UPDATE without WHERE");
+Check(new WorkbenchSettings().Severity("SW005") == RuleSeverity.Disabled && new WorkbenchSettings().Severity("SW006") == RuleSeverity.Disabled, "no-WHERE squiggles off by default");
+Check(SqlAnalysis.UnfilteredChanges("DELETE FROM LC.StatusHdr").SequenceEqual(new[] { "DELETE LC.StatusHdr" })
+    && SqlAnalysis.UnfilteredChanges("SELECT 1; UPDATE t SET x = 1 FROM dbo.T t JOIN dbo.U u ON u.Id = t.Id;").SequenceEqual(new[] { "UPDATE t" })
+    && SqlAnalysis.UnfilteredChanges("DELETE FROM dbo.T WHERE Id = 1; UPDATE dbo.T SET x = 1 WHERE Id = 2;").Count == 0
+    && SqlAnalysis.UnfilteredChanges("DELETE FROM").Count == 0, "unfiltered changes for execute prompt");
 Check(Rules("SELECT a FROM dbo.T ORDER BY 1;").SequenceEqual(new[] { "SW007" }) && Rules("SELECT a FROM dbo.T ORDER BY a;").Length == 0, "ORDER BY constant");
 Check(Rules("DECLARE @s varchar = 'x'; SELECT @s, CAST(1 AS nvarchar);").SequenceEqual(new[] { "SW008" }) &&
     Rules("DECLARE @s varchar(10) = 'x'; SELECT @s, CAST(1 AS nvarchar(max));").Length == 0, "string length");
@@ -684,7 +695,9 @@ Check(SqlRefactoring.CreateToAlter("CREATE OR /*c*/ ALTER FUNCTION f() RETURNS i
 Check(SqlRefactoring.CreateToAlter("SELECT 1") == "SELECT 1" && SqlRefactoring.CreateToAlter("") == "", "no create unchanged");
 Check(SqlRefactoring.CreateToAlter("CREATE TRIGGER t ON dbo.x AFTER INSERT AS BEGIN CREATE TABLE #t(i int) END").StartsWith("ALTER TRIGGER") , "only first create changes");
 Console.WriteLine($"PASS: {checks} total checks including CREATE to ALTER. SSMS integration not tested.");
-Check(SqlNavigation.FindDefinition("EXEC otherdb.dbo.p;", 16) == null, "cross-database F12 left to host");
+Check(SqlNavigation.FindDefinition("EXEC otherdb.dbo.p;", 16) is { Offset: -1, Database: "otherdb", Schema: "dbo", Name: "p" }, "cross-database F12 names the database");
+Check(SqlNavigation.FindDefinition("SELECT * FROM otherdb..People;", 23) is { Database: "otherdb", Schema: null, Name: "People" }, "cross-database default schema");
+Check(SqlNavigation.FindDefinition("EXEC srv.otherdb.dbo.p;", 20) == null, "linked-server F12 left to host");
 var procTarget = SqlNavigation.FindDefinition("EXEC dbo.usp_Load @x = 1;", 10);
 Check(procTarget != null && procTarget.Offset < 0 && procTarget.Schema == "dbo" && procTarget.Name == "usp_Load", "F12 on procedure names object");
 Console.WriteLine($"PASS: {checks} total checks including object F12 targets. SSMS integration not tested.");
@@ -711,6 +724,17 @@ var orders = Fill("insert sales.[Orders]|;");
 Check(orders != null && orders.Text.Contains("    0,                   -- OrderId - int") && orders.Text.Contains("NEWID(),") && orders.Text.Contains("SYSDATETIMEOFFSET(),") &&
     orders.Text.Contains("0x,") && orders.Text.Contains("N'',") && orders.Text.Contains("    NULL                 -- Odd - sql_variant"), "INSERT fill placeholders by type");
 Check(Fill("INSERT OnlyId|")!.Text == " DEFAULT VALUES", "all generated uses DEFAULT VALUES");
+var spaced = Fill("EXEC dbo.usp_Add \t|");
+Check(spaced is { Start: 16, Length: 2 } && spaced.Text.StartsWith(" @Name = "), "fill after trailing blanks replaces them");
+Check(Fill("EXEC dbo.usp_Add\n|") == null, "no fill on the next line");
+var dated = SqlAssist.ProceduresFromScript("CREATE PROC dbo.p @At datetime, @Id uniqueidentifier, @Off datetimeoffset AS SELECT 1;");
+var execDates = SqlAssist.FillStatement("EXEC dbo.p", 10, null, dated, now: new DateTimeOffset(2026, 9, 29, 5, 10, 6, TimeSpan.FromHours(8)))?.Text ?? "";
+Check(execDates.Contains("@At = '2026-09-29 05:10:06',") && execDates.Contains("@Off = '2026-09-29 05:10:06 +08:00'") && !execDates.Contains("("),
+    "EXEC fill uses the current time as literals");
+string[] ProcNames(string text) { int at = text.IndexOf('|'); return SqlCompletion.Complete(text.Remove(at, 1), at, null, procedures: procs).Items.Select(i => i.InsertText).ToArray(); }
+Check(ProcNames("EXEC usp|").SequenceEqual(new[] { "dbo.usp_Add" }) && ProcNames("EXEC @rc = N|").SequenceEqual(new[] { "dbo.NoArgs" }) &&
+    ProcNames("EXECUTE dbo.|").SequenceEqual(new[] { "NoArgs", "usp_Add" }) && ProcNames("EXEC sales.|").Length == 0, "procedure suggestions after EXEC");
+Check(!ProcNames("SELECT usp|").Contains("dbo.usp_Add"), "procedures only after EXEC");
 Check(Fill("INSERT INTO dbo.People| (Id) VALUES (1)") == null && Fill("INSERT INTO dbo.People|\nSELECT 1") == null && Fill("INSERT INTO dbo.People| x") == null,
     "INSERT fill skips continued statements");
 Check(Fill("INSERT INTO dbo.People|\nSELECT 2;") == null && Fill("INSERT INTO dbo.Peo|ple") == null && Fill("INSERT INTO dbo.Missing|") == null &&
@@ -760,7 +784,10 @@ Check(FixOne("CREATE PROCEDURE dbo.p\nAS\nBEGIN\n    SELECT 1;\nEND", "SW015") =
 Check(FixOne("DECLARE @a int;\nDECLARE @b int = 1;\nSELECT @a;", "SW016") == "DECLARE @a int;\nSELECT @a;" &&
     FixOne("DECLARE @a int, @b int;\nSELECT @b;", "SW016") == "DECLARE @b int;\nSELECT @b;" && FixOne("DECLARE @a int, @b int;\nSELECT @a;", "SW016") == "DECLARE @a int;\nSELECT @a;" &&
     FixOne("SELECT 1; DECLARE @t TABLE (a int);", "SW016") == "SELECT 1; ", "fix unused declaration");
-Check(FixOne("SELECT * FROM dbo.People;", "SW001", assistTables) == "SELECT Id, FullName, Born, Code, Stamp, Twice FROM dbo.People;" &&
+Check(SqlCompletion.Complete("USE Q", 5, null, databases: new[] { "master", "QwTest", "Other DB" }).Items.Select(i => i.InsertText).SequenceEqual(new[] { "QwTest" }) &&
+    SqlCompletion.Complete("USE ", 4, null, databases: new[] { "Other DB" }).Items.Single().InsertText == "[Other DB]", "USE suggests databases only");
+Check(ObjectScript.SameScript("CREATE VIEW v AS\r\nSELECT 1  \r\n", "CREATE VIEW v AS\nSELECT 1") && !ObjectScript.SameScript("SELECT 1", "SELECT  1") && !ObjectScript.SameScript("a", null), "same script ignores line endings only");
+Check(FixOne("SELECT * FROM dbo.People;", "SW001", assistTables) == "SELECT Id,\r\n       FullName,\r\n       Born,\r\n       Code,\r\n       Stamp,\r\n       Twice FROM dbo.People;" &&
     FixOne("SELECT * FROM dbo.Missing;", "SW001", assistTables) == "<null>" && FixOne("SELECT * FROM dbo.People;", "SW001") == "<null>", "fix wildcard needs metadata");
 var fixedAll = SqlAnalysis.FixAll("DECLARE @unused int, @x int = 1;\nSELECT @@IDENTITY WHERE @x = NULL;\nEXEC usp_Load;\n-- querywright-disable-next-line SW009\nSELECT @@IDENTITY;");
 Check(fixedAll.Fixed == 4 && fixedAll.Text == "DECLARE @x int = 1;\nSELECT SCOPE_IDENTITY() WHERE @x IS NULL;\nEXEC dbo.usp_Load;\n-- querywright-disable-next-line SW009\nSELECT @@IDENTITY;", "fix all respects suppression: " + fixedAll.Text);
@@ -839,6 +866,29 @@ try { ResultGrid.InsertScript(new[] { "a", "b" }, null, new List<string?[]> { ne
 string csv = ResultGrid.Delimited(new[] { "a", "b" }, new List<string?[]> { new[] { "=1+1", "x,y" }, new[] { "-5", "say \"hi\"\nthere" }, new[] { null, "@SUM(A1)" }, new[] { "-x", "+1" } }, ',', "\n");
 Check(csv == "a,b\n'=1+1,\"x,y\"\n-5,\"say \"\"hi\"\"\nthere\"\n,'@SUM(A1)\n'-x,'+1\n", "csv quoting and injection guard: " + csv);
 Check(ResultGrid.Delimited(new[] { "a" }, new List<string?[]> { new[] { "x\ty" } }, '\t', "\n") == "a\n\"x\ty\"\n", "tab-delimited quoting");
+string colorRules = ColorRules.Set("prod=Red; test=Orange", ColorRules.ServerPattern(@"10.0.0.1\SQL"), "#FF8800");
+Check(colorRules == @"10.0.0.1\SQL/=#FF8800;prod=Red;test=Orange" && ColorRules.Get(colorRules, @"10.0.0.1\sql/") == "#FF8800", "server color rule added first: " + colorRules);
+Check(ColorRules.Set(ColorRules.Set(colorRules, @"10.0.0.1\SQL/", "Blue"), @"10.0.0.1\SQL/", null) == "prod=Red;test=Orange" && ColorRules.Get("", "x/") == null, "server color rule replaced and cleared");
+try { ColorRules.Set("", "a=b/", "Red"); throw new Exception("Expected odd server rejection"); } catch (ArgumentException) { checks++; }
+var xlsxStream = new MemoryStream();
+ResultGrid.Xlsx(xlsxStream, new[] { "When", "Code", "Amt", "Big", "Note", "" }, new[] { "datetime", "varchar(10)", "decimal(18,2)", "bigint", "nvarchar(max)", "float" },
+    new List<string?[]> { new[] { "2026-09-28 13:45:12.123", "007", "12.50", "1234567890123456789", "=1+1 <b>&\u0001", "1.5E-05" }, new string?[] { null, "x", "-3.00", "42", "", "0" } });
+string sheet;
+using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(xlsxStream.ToArray())))
+{
+    Check(zip.Entries.Select(e => e.FullName).OrderBy(n => n, StringComparer.Ordinal).SequenceEqual(new[] { "[Content_Types].xml", "_rels/.rels", "xl/_rels/workbook.xml.rels", "xl/styles.xml", "xl/workbook.xml", "xl/worksheets/sheet1.xml" }), "xlsx parts");
+    using (var reader = new StreamReader(zip.GetEntry("xl/worksheets/sheet1.xml")!.Open())) sheet = reader.ReadToEnd();
+    string xlsxStyles;
+    using (var reader = new StreamReader(zip.GetEntry("xl/styles.xml")!.Open())) xlsxStyles = reader.ReadToEnd();
+    Check(xlsxStyles.Contains("formatCode=\"0.00\"") && xlsxStyles.Contains("formatCode=\"0\""), "xlsx keeps grid decimal places: " + xlsxStyles);
+    foreach (var e in zip.Entries) using (var reader = new StreamReader(e.Open())) System.Xml.Linq.XDocument.Parse(reader.ReadToEnd());
+    checks++;
+}
+Check(sheet.Contains("<c r=\"A2\" s=\"2\" t=\"inlineStr\"><is><t xml:space=\"preserve\">2026-09-28 13:45:12.123</t>"), "xlsx date kept as grid text");
+Check(sheet.Contains(">007</t>") && sheet.Contains(">1234567890123456789</t>") && sheet.Contains(">1.5E-05</t>"), "xlsx codes, long numbers and exponents kept as text");
+Check(sheet.Contains("<c r=\"C2\" s=\"3\"><v>12.50</v>") && sheet.Contains("<c r=\"D3\" s=\"4\"><v>42</v>") && sheet.Contains("<v>-3.00</v>"), "xlsx numeric columns as numbers: " + sheet);
+Check(sheet.Contains("=1+1 &lt;b&gt;&amp;</t>") && !sheet.Contains("<f>"), "xlsx escapes text and never writes formulas");
+Check(!sheet.Contains("r=\"A3\"") && sheet.Contains(">Column6</t>"), "xlsx NULL is an empty cell; unnamed header named");
 Check(Updates.IsNewer("v0.4.0", "0.3.0.57") && Updates.IsNewer("v0.3.1", "0.3.0") && Updates.IsNewer("V1.0", "0.9.9.9"), "newer release detected");
 Check(!Updates.IsNewer("v0.3.0", "0.3.0.57") && !Updates.IsNewer("v0.2.9", "0.3.0.1") && !Updates.IsNewer("dev-master", "0.3.0.1")
     && !Updates.IsNewer("v0.4.0", null) && !Updates.IsNewer(null, "0.3.0") && !Updates.IsNewer("v0.4.0-beta", "0.3.0"), "same, older or malformed versions ignored");

@@ -2,6 +2,7 @@
 <CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable">
   <Extern href="stdidcmd.h" />
   <Extern href="vsshlids.h" />
+  <Include href="KnownImageIds.vsct" />
   <Commands package="PackageGuid">
     <Groups>
       <Group guid="CommandsGuid" id="ToolsGroup" priority="0x0600">
@@ -10,6 +11,14 @@
       <!-- SSMS results-grid right-click menu (GUID_SQLEditorGroup:IDM_SQLWB_SQLRESGRID_CONTEXT, from SQLEditors.dll). -->
       <Group guid="CommandsGuid" id="GridGroup" priority="0x0600">
         <Parent guid="guidSqlEditorGroup" id="IDM_SQLWB_SQLRESGRID_CONTEXT" />
+      </Group>
+      <!-- SQL query editor right-click menu (GUID_SQLEditorGroup:IDM_SQLWB_SQLEDITOR_CONTEXT). -->
+      <Group guid="CommandsGuid" id="EditorGroup" priority="0x0600">
+        <Parent guid="guidSqlEditorGroup" id="IDM_SQLWB_SQLEDITOR_CONTEXT" />
+      </Group>
+      <!-- Standard toolbar (the New Query row). -->
+      <Group guid="CommandsGuid" id="ToolbarGroup" priority="0xF000">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_TOOL_STANDARD" />
       </Group>
     </Groups>
     <Buttons>
@@ -87,7 +96,9 @@
       </Button>
       <Button guid="CommandsGuid" id="TabHistory" priority="0x01B0" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
-        <Strings><ButtonText>Querywright: tab history...</ButtonText></Strings>
+        <Icon guid="ImageCatalogGuid" id="History" />
+        <CommandFlag>IconIsMoniker</CommandFlag>
+        <Strings><ButtonText>Querywright: tab history...</ButtonText><ToolTipText>Querywright: tab history (reopen closed queries)</ToolTipText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameObject" priority="0x01C0" type="Button">
         <Parent guid="CommandsGuid" id="ToolsGroup" />
@@ -121,6 +132,10 @@
         <Parent guid="CommandsGuid" id="ToolsGroup" />
         <Strings><ButtonText>Querywright: format SQL files in folder...</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="CompareObject" priority="0x0010" type="Button">
+        <Parent guid="CommandsGuid" id="EditorGroup" />
+        <Strings><ButtonText>Querywright: compare object with database...</ButtonText></Strings>
+      </Button>
       <Button guid="CommandsGuid" id="CopyAsIn" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <Strings><ButtonText>Querywright: copy as IN clause</ButtonText></Strings>
@@ -151,6 +166,12 @@
     </CommandPlacement>
     <CommandPlacement guid="CommandsGuid" id="SaveAsCsv" priority="0x0230">
       <Parent guid="CommandsGuid" id="ToolsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="CompareObject" priority="0x0280">
+      <Parent guid="CommandsGuid" id="ToolsGroup" />
+    </CommandPlacement>
+    <CommandPlacement guid="CommandsGuid" id="TabHistory" priority="0x0100">
+      <Parent guid="CommandsGuid" id="ToolbarGroup" />
     </CommandPlacement>
   </CommandPlacements>
   <KeyBindings>
@@ -185,6 +206,7 @@
       <IDSymbol name="FixAtCaret" value="0x0115" />
       <IDSymbol name="FixAll" value="0x0116" />
       <IDSymbol name="GridGroup" value="0x1030" />
+      <IDSymbol name="ToolbarGroup" value="0x1040" />
       <IDSymbol name="CopyAsIn" value="0x0117" />
       <IDSymbol name="ScriptAsInsert" value="0x0118" />
       <IDSymbol name="OpenInExcel" value="0x0119" />
@@ -193,9 +215,12 @@
       <IDSymbol name="SplitTable" value="0x011C" />
       <IDSymbol name="EditFormattingStyle" value="0x011D" />
       <IDSymbol name="FormatFolder" value="0x011E" />
+      <IDSymbol name="CompareObject" value="0x011F" />
+      <IDSymbol name="EditorGroup" value="0x1050" />
     </GuidSymbol>
     <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">
       <IDSymbol name="IDM_SQLWB_SQLRESGRID_CONTEXT" value="0x0070" />
+      <IDSymbol name="IDM_SQLWB_SQLEDITOR_CONTEXT" value="0x0050" />
     </GuidSymbol>
   </Symbols>
 </CommandTable>

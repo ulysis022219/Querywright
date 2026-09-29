@@ -51,7 +51,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Encapsulate as new stored procedure | host (CREATE PROCEDURE script from the selection, variables become parameters; new window) |
 | Find unused variables and parameters | host (Error List) |
 | Summarize script (outline of statements) | host (Error List, click to navigate) |
-| Find invalid objects | missing (metadata) |
+| Find invalid objects | host: read-only binding check of up to 2000 modules (sys.dm_sql_referenced_entities in TRY/CATCH + unresolved sys.sql_expression_dependencies); report opens in a new window |
 | Script object as ALTER / CREATE | host (F12, ALTER in a new query; never executed) |
 | Remove square brackets / add brackets | host |
 
@@ -85,7 +85,7 @@ Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: host (fix
 
 ## Remaining
 
-Split table, find invalid objects. Everything else above is at least host-wired; SSMS e2e covers the scenarios listed in features.md.
+Split table. Everything else above is at least host-wired; SSMS e2e covers the scenarios listed in features.md.
 
 ## Sources
 

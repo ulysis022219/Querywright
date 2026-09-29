@@ -702,6 +702,10 @@ Check(renameScript.Contains("EXEC sys.sp_rename N'[dbo].[People]', N'Person';\nG
     renameScript.Contains("ALTER PROCEDURE dbo.usp_P AS SELECT p.Id FROM dbo.Person AS p WHERE dbo.People_Count() > 0 AND 'People' <> ''") &&
     renameScript.Contains("-- sales.vS: no direct reference") && renameScript.Contains("-- dbo.bad: definition could not be parsed"), "rename object script: " + renameScript);
 Check(SqlRefactoring.RenameObjectScript("dbo", "fn", "fn2", new[] { ("dbo", "v", "CREATE VIEW v AS SELECT dbo.fn(1) AS x") }, "\n").Contains("ALTER VIEW v AS SELECT dbo.fn2(1) AS x"), "rename scalar function callers");
+var invalidReport = SqlRefactoring.InvalidObjectsReport("Db", new[] { ("dbo", "vB", "Invalid column name 'x'.\r\nmore"), ("dbo", "pA", "gone"), ("dbo", "pA", "gone") }, "\n");
+Check(invalidReport.Contains("(2 issues)") && invalidReport.IndexOf("dbo.pA: gone") < invalidReport.IndexOf("dbo.vB: Invalid column name 'x'. more"), "invalid objects report sorted, distinct, one line each");
+Check(SqlRefactoring.InvalidObjectsReport(null, Array.Empty<(string, string, string)>(), "\n").Contains("No invalid objects found"), "invalid objects report empty");
+Check(invalidReport.Split('\n').All(l => l.Length == 0 || l.StartsWith("--")), "invalid objects report is comments only");
 Check(SqlRefactoring.RenameObjectScript("dbo", "t", "a b", null, "\n").Contains("N'a b'") && SqlRefactoring.RenameObjectScript("dbo", "t", "it's", null).Contains("N'it''s'"), "rename quotes new name");
 foreach (var bad in new[] { "", "t", new string('x', 129), "a\nb" })
 {

@@ -964,7 +964,7 @@ namespace Querywright.Ssms
         }
 
         /// <summary>Selected text of the query window, else its whole text; null when there is none. Never logged.</summary>
-        private string? QueryTextOrNull()
+        private string QueryTextOrNull()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             try

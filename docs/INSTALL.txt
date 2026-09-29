@@ -1,4 +1,4 @@
-Querywright development build for SSMS 22 (x64). Untested prototype; no affiliation with Redgate.
+Querywright for SSMS 22 (x64). Free, open-source (MIT), early release.
 
 Install
 1. Save your work and close SSMS 22.

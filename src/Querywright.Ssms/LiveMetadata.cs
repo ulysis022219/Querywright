@@ -73,38 +73,45 @@ namespace Querywright.Ssms
     internal static class LiveMetadata
     {
         private const int MaxRows = 100_000;
-        private static string TypeSql(string c) => @"TYPE_NAME(" + c + @".user_type_id) +
-    CASE WHEN TYPE_NAME(" + c + @".user_type_id) IN ('varchar', 'char', 'varbinary', 'binary')
+        // Joins sys.types/sys.schemas once instead of per-row TYPE_NAME()/SCHEMA_NAME() calls, and orders by the catalog's
+        // own key (object_id, column_id) so large databases need no server-side name sort; names are sorted client-side.
+        private static string TypeSql(string c, string t) => t + @".name +
+    CASE WHEN " + t + @".name IN ('varchar', 'char', 'varbinary', 'binary')
             THEN '(' + CASE " + c + @".max_length WHEN -1 THEN 'max' ELSE CAST(" + c + @".max_length AS varchar(5)) END + ')'
-        WHEN TYPE_NAME(" + c + @".user_type_id) IN ('nvarchar', 'nchar')
+        WHEN " + t + @".name IN ('nvarchar', 'nchar')
             THEN '(' + CASE " + c + @".max_length WHEN -1 THEN 'max' ELSE CAST(" + c + @".max_length / 2 AS varchar(5)) END + ')'
-        WHEN TYPE_NAME(" + c + @".user_type_id) IN ('decimal', 'numeric')
+        WHEN " + t + @".name IN ('decimal', 'numeric')
             THEN '(' + CAST(" + c + @".precision AS varchar(3)) + ',' + CAST(" + c + @".scale AS varchar(3)) + ')'
         ELSE '' END";
 
         private static readonly string CatalogQuery = @"SET LOCK_TIMEOUT 3000;
-SELECT s.name, o.name, c.name, " + TypeSql("c") + @",
-    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR TYPE_NAME(c.system_type_id) = 'timestamp' THEN 1 ELSE 0 END AS bit),
+SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
+    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit),
     CAST(CASE o.type WHEN 'V' THEN 1 ELSE 0 END AS bit)
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = o.object_id
+LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
 WHERE o.type IN ('U', 'V') AND o.is_ms_shipped = 0
-ORDER BY s.name, o.name, c.column_id;
-SELECT fk.object_id, SCHEMA_NAME(p.schema_id), p.name, pc.name, SCHEMA_NAME(r.schema_id), r.name, rc.name
+ORDER BY c.object_id, c.column_id;
+SELECT fk.object_id, ps.name, p.name, pc.name, rs.name, r.name, rc.name
 FROM sys.foreign_keys AS fk
 JOIN sys.foreign_key_columns AS k ON k.constraint_object_id = fk.object_id
 JOIN sys.objects AS p ON p.object_id = k.parent_object_id
+JOIN sys.schemas AS ps ON ps.schema_id = p.schema_id
 JOIN sys.columns AS pc ON pc.object_id = k.parent_object_id AND pc.column_id = k.parent_column_id
 JOIN sys.objects AS r ON r.object_id = k.referenced_object_id
+JOIN sys.schemas AS rs ON rs.schema_id = r.schema_id
 JOIN sys.columns AS rc ON rc.object_id = k.referenced_object_id AND rc.column_id = k.referenced_column_id
 WHERE p.is_ms_shipped = 0
 ORDER BY fk.object_id, k.constraint_column_id;
-SELECT SCHEMA_NAME(o.schema_id), o.name, p.name, " + TypeSql("p") + @", p.is_output, p.has_default_value
+SELECT s.name, o.name, p.name, " + TypeSql("p", "t") + @", p.is_output, p.has_default_value
 FROM sys.objects AS o
+JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 LEFT JOIN sys.parameters AS p ON p.object_id = o.object_id AND p.parameter_id > 0
+LEFT JOIN sys.types AS t ON t.user_type_id = p.user_type_id
 WHERE o.type IN ('P', 'PC') AND o.is_ms_shipped = 0
-ORDER BY 1, 2, p.parameter_id;
+ORDER BY o.object_id, p.parameter_id;
 SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;";
 
         private static readonly ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>> cache =
@@ -119,7 +126,17 @@ SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER 
         /// <summary>Progress of the running catalog load, for the refresh command's status bar: percent and a step label.</summary>
         internal static (int Percent, string Step) Progress = (0, "connecting");
 
-        internal static void Refresh() { cache.Clear(); procedureCache.Clear(); databaseCache.Clear(); }
+        /// <summary>The last good tables per connection, served while a refresh reloads so completion never goes empty.</summary>
+        private static readonly ConcurrentDictionary<string, IReadOnlyList<SchemaTable>> stale =
+            new ConcurrentDictionary<string, IReadOnlyList<SchemaTable>>();
+
+        // Procedures and databases keep their old lists until the reload replaces them.
+        internal static void Refresh()
+        {
+            foreach (var entry in cache)
+                if (entry.Value.Status == TaskStatus.RanToCompletion && entry.Value.Result != null) stale[entry.Key] = entry.Value.Result;
+            cache.Clear();
+        }
 
         /// <summary>Databases on the server, read with the catalog; null until that load completes.</summary>
         internal static IReadOnlyList<string> DatabaseNames(ActiveConnection connection) =>
@@ -139,7 +156,8 @@ SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER 
             if (connection == null) return null;
             var task = LoadAsync(connection);
             #pragma warning disable VSTHRD002 // completed task: no wait
-            return task.Status == TaskStatus.RanToCompletion ? task.Result : null;
+            return task.Status == TaskStatus.RanToCompletion && task.Result != null ? task.Result
+                : stale.TryGetValue(connection.Key, out var previous) ? previous : null;
 #pragma warning restore VSTHRD002
         }
 
@@ -381,7 +399,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 using (var sql = connection.Open())
                 {
                     Progress = (10, "reading columns");
-                    using (var command = new SqlCommand(CatalogQuery, sql) { CommandTimeout = 15 })
+                    using (var command = new SqlCommand(CatalogQuery, sql) { CommandTimeout = 60 })
                     using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
                     {
                         // ponytail: row totals are unknown up front, so the percent is per result set, not per row.
@@ -408,15 +426,17 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 Progress = (95, "indexing " + columns.Count + " columns");
                 var foreignKeys = keys.GroupBy(k => k.Id).ToLookup(g => (g.First().Schema, g.First().Table),
                     g => new SchemaForeignKey(g.Select(k => k.Column).ToArray(), g.First().RefSchema, g.First().RefTable, g.Select(k => k.RefColumn).ToArray()));
-                var tables = columns.GroupBy(c => (c.Schema, c.Table))
+                var byName = StringComparer.OrdinalIgnoreCase;
+                var tables = columns.GroupBy(c => (c.Schema, c.Table)).OrderBy(g => g.Key.Schema, byName).ThenBy(g => g.Key.Table, byName)
                     .Select(g => new SchemaTable(g.Key.Schema, g.Key.Table, g.Select(c => c.Column).ToArray(),
                         g.Select(c => c.Type).ToArray(), foreignKeys[g.Key].ToArray(), g.Select(c => c.Generated).ToArray(), g.First().View)).ToArray();
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
                 databaseCache[connection.Key] = databases;
-                procedureCache[connection.Key] = parameters.GroupBy(p => (p.Schema, p.Procedure))
+                procedureCache[connection.Key] = parameters.GroupBy(p => (p.Schema, p.Procedure)).OrderBy(g => g.Key.Schema, byName).ThenBy(g => g.Key.Procedure, byName)
                     .Select(g => new SchemaProcedure(g.Key.Schema, g.Key.Procedure, g.Where(p => p.Name != null)
                         .Select(p => new SchemaParameter(p.Name, p.Type, p.Output, p.Default)).ToArray())).ToArray();
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + tables.Length + " tables");
+                stale.TryRemove(connection.Key, out _);
                 return tables;
             }
             // Pipe/network not ready yet (cold LocalDB, server starting): retry shortly instead of backing off 30 s.

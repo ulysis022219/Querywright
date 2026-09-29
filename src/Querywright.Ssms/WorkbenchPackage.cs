@@ -186,6 +186,7 @@ namespace Querywright.Ssms
             Add(0x011E, FormatFolderAsync);
             Add(0x011F, CompareObjectAsync);
             Add(0x0120, GoToDefinitionAsync);
+            Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             Instance = this;
             ServerColorMenu.Start();
             PriorityCommands.Start(this);

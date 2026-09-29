@@ -11,15 +11,15 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 | Suggestions as you type | Popup on every identifier, keyword, after `.`/space | host (live connection metadata or offline schema; keywords, functions, variables, CTEs, aliases, snippets) | — |
 | Ctrl+Space / refresh suggestions | Show list; Ctrl+Shift+D refreshes metadata | host (Ctrl+Space is the editor's own; Ctrl+Shift+D bound) | — |
 | JOIN ON suggestions | Proposes join conditions from foreign keys | host (FKs from live metadata or offline DDL) | — |
-| Column picker | Tick columns in a list for SELECT/INSERT | missing | WPF picker over resolved scope |
-| INSERT/EXEC parameter fill | Expands column list / parameters for INSERT and EXEC | missing | Needs metadata |
+| Column picker | Tick columns in a list for SELECT/INSERT | host (Tools > pick columns for *: checkbox list replaces `*` or `alias.*`) | — |
+| INSERT/EXEC parameter fill | Expands column list / parameters for INSERT and EXEC | host (Tab after `INSERT INTO t` / `EXEC p`; generated columns skipped; procedures from the connection or the script) | — |
 | Snippet shortcut + Tab | `ssf` Tab → `SELECT * FROM` | host (also listed in the popup; Tab expands with the list open) | — |
 | Wildcard expansion with Tab | `*` Tab → column list | host | — |
 | F12 | Scripts object as ALTER in new tab; local declarations | host (locals; procedures, views, functions, triggers scripted as ALTER from the live connection; tables and unreadable objects defer to SSMS) | — |
 | Execute current statement | Shift+F5 runs the statement under the caret | host (selects the statement, then SSMS's own Query.Execute — only on explicit keypress) | — |
 | Tab coloring | Color query tabs per server/database environment | host (colored strip above the editor; rules in Options) | — |
-| Tab history | Searchable history of opened/closed tabs, restore after crash | missing | Local, crash-safe store |
-| Quick info | Hover shows object definition / column type | missing | Needs metadata |
+| Tab history | Searchable history of opened/closed tabs, restore after crash | host (local files, saved each minute and on close, newest 200; search, preview, reopen, delete; opt out in Options) | — |
+| Quick info | Hover shows object definition / column type | host (variables, procedure parameters, table columns and types; cached metadata only) | — |
 
 ## 2. Formatting (Ctrl+K Ctrl+Y)
 
@@ -46,9 +46,9 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Refactor | Querywright |
 |---|---|
 | Rename local variable / alias | host (variable and alias, with preview) |
-| Smart rename object (updates dependents) | missing (script preview only, never silent execution) |
+| Smart rename object (updates dependents) | host (sp_rename + ALTER for dependent modules, opened in a new window; never executed) |
 | Split table | missing |
-| Encapsulate as new stored procedure | missing |
+| Encapsulate as new stored procedure | host (CREATE PROCEDURE script from the selection, variables become parameters; new window) |
 | Find unused variables and parameters | host (Error List) |
 | Summarize script (outline of statements) | host (Error List, click to navigate) |
 | Find invalid objects | missing (metadata) |
@@ -75,12 +75,11 @@ suppression. Remaining syntax-only candidates:
 | PE002 | Unqualified table/view name (needs default-schema awareness to avoid noise) |
 | ST011 / ST012 | Temp table vs table variable hints |
 
-Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: missing.
+Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: host (fix at caret / fix all for SW001, SW003, SW009, SW010, SW015, SW016, SW017; every fix must re-parse).
 
 ## Remaining
 
-Column picker, INSERT/EXEC parameter fill, quick info, tab history,
-object-level refactors (smart rename, split table, encapsulate; would be reviewable scripts only), analysis auto-fixes.
+Split table, find invalid objects. Everything else above is at least host-wired; SSMS e2e covers the scenarios listed in features.md.
 Results-grid actions are out of scope (no API).
 
 ## Sources

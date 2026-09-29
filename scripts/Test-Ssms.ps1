@@ -177,6 +177,8 @@ if ($live) {
     Expect '* + Tab from live metadata' $text { param($t) $t -match 'FullName' -and $t -notmatch '\*' }
     $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|home|right:7|type:p.Ful|wait:3000|tab|wait:1000'
     Expect 'column completion from live metadata' $text { param($t) $t -match 'SELECT p\.FullName ?FROM' }
+    $text = Session 'insert-fill' "INSERT INTO dbo.People" @('-S', $server, '-d', 'QwTest', '-C') 'wait:40000|end|tab|wait:3000'
+    Expect 'INSERT + Tab fills columns from live metadata' $text { param($t) $t -match 'Id' -and $t -match 'FullName' -and $t -match 'VALUES' }
 }
 
 foreach ($log in Get-ChildItem $Out -Filter 'ActivityLog-*.xml') {

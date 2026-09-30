@@ -37,8 +37,14 @@ namespace Querywright.Core
         public IReadOnlyList<bool>? Generated { get; }
         /// <summary>A view rather than a table (hover label only).</summary>
         public bool IsView { get; }
-        public SchemaTable(string schema, string name, string[] columns, string?[]? columnTypes, SchemaForeignKey[]? foreignKeys, bool[]? generated = null, bool isView = false)
+        /// <summary>Nullability and default parallel to <see cref="Columns"/>, e.g. "NOT NULL DEFAULT ((0))"; null (or a null entry) means unknown.</summary>
+        public IReadOnlyList<string?>? ColumnNotes { get; }
+        public SchemaTable(string schema, string name, string[] columns, string?[]? columnTypes, SchemaForeignKey[]? foreignKeys, bool[]? generated = null, bool isView = false,
+            string?[]? columnNotes = null)
         {
+            if (columnNotes != null && columns != null && columnNotes.Length != columns.Length)
+                throw new ArgumentException("Column notes must parallel the column names.");
+            ColumnNotes = columnNotes == null ? null : Array.AsReadOnly((string?[])columnNotes.Clone());
             if (string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(name) || columns == null || columns.Any(string.IsNullOrWhiteSpace))
                 throw new ArgumentException("Schema, table and column names must be nonempty.");
             if (columnTypes != null && columnTypes.Length != columns.Length)
@@ -52,10 +58,12 @@ namespace Querywright.Core
             Generated = generated == null ? null : Array.AsReadOnly((bool[])generated.Clone());
             ForeignKeys = Array.AsReadOnly(foreignKeys == null ? Array.Empty<SchemaForeignKey>() : (SchemaForeignKey[])foreignKeys.Clone());
         }
-        internal string? TypeOf(string column)
+        internal string? TypeOf(string column) => Of(ColumnTypes, column);
+        internal string? NoteOf(string column) => Of(ColumnNotes, column);
+        private string? Of(IReadOnlyList<string?>? values, string column)
         {
-            if (ColumnTypes == null) return null;
-            for (int i = 0; i < Columns.Count; i++) if (string.Equals(Columns[i], column, StringComparison.OrdinalIgnoreCase)) return ColumnTypes[i];
+            if (values == null) return null;
+            for (int i = 0; i < Columns.Count; i++) if (string.Equals(Columns[i], column, StringComparison.OrdinalIgnoreCase)) return values[i];
             return null;
         }
     }
@@ -92,7 +100,8 @@ namespace Querywright.Core
         private const string Marker = "__QuerywrightCompletionMarker__";
         private const int MaxItems = 200;
         private static string Quote(string name) => "[" + name.Replace("]", "]]") + "]";
-        private static string ColumnDescription(string? type, string source) => "column " + (type == null ? "" : type + " ") + source;
+        private static string ColumnDescription(SchemaTable? table, string column, string source) =>
+            "column " + (table?.TypeOf(column) is string type ? type + " " : "") + (table?.NoteOf(column) is string note ? note + " " : "") + source;
 
         private static readonly HashSet<string> Keywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -322,7 +331,7 @@ namespace Querywright.Core
                     if (near.Count == 0 && context == Context.Column)
                         foreach (var table in catalog)
                             foreach (var column in table.Columns)
-                                Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(table.TypeOf(column), table.Schema + "." + table.Name));
+                                Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(table, column, table.Schema + "." + table.Name));
                     else if (resolver != null && resolver.Handled && !resolver.TableMarker)
                         items.AddRange(resolver.Items.Select(i => (resolver.Sources == 1 && !qualifySingleTable ? Bare(i) : i, Kind.Column)));
                     else
@@ -331,7 +340,7 @@ namespace Querywright.Core
                         foreach (var s in near.Concat(scan.Sources.Except(near)).Where(s => seen.Add(s.Alias)))
                             foreach (var column in s.Columns)
                             {
-                                var item = new CompletionItem(column, QuoteIfNeeded(s.Alias) + "." + QuoteIfNeeded(column), ColumnDescription(s.Table?.TypeOf(column), s.Alias + "." + column));
+                                var item = new CompletionItem(column, QuoteIfNeeded(s.Alias) + "." + QuoteIfNeeded(column), ColumnDescription(s.Table, column, s.Alias + "." + column));
                                 if (!near.Contains(s)) far.Add(item);
                                 else if (near.Count == 1 && !qualifySingleTable) item = Bare(item);
                                 items.Add((item, Kind.Column));
@@ -354,7 +363,7 @@ namespace Querywright.Core
                     foreach (var t in other.Where(t => names.Equals(t.Schema, parts[1]))) Add(Kind.Table, t.Name, QuoteIfNeeded(t.Name), "table " + db + "." + t.Schema + "." + t.Name);
                 else
                     foreach (var t in other.Where(t => names.Equals(t.Schema, parts[1]) && names.Equals(t.Name, parts[2])))
-                        foreach (var column in t.Columns) Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(t.TypeOf(column), db + "." + t.Schema + "." + t.Name + "." + column));
+                        foreach (var column in t.Columns) Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(t, column, db + "." + t.Schema + "." + t.Name + "." + column));
                 return true;
             }
 
@@ -367,10 +376,10 @@ namespace Querywright.Core
                 {
                     string label = source?.Alias ?? table!.Name;
                     foreach (var column in source?.Columns ?? table!.Columns)
-                        Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription((source?.Table ?? table)?.TypeOf(column), label + "." + column));
+                        Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(source?.Table ?? table, column, label + "." + column));
                 }
                 else if (parts.Count == 1 && scan.Ctes.TryGetValue(parts[0], out var cteColumns))
-                    foreach (var column in cteColumns) Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(null, parts[0] + "." + column));
+                    foreach (var column in cteColumns) Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(null, column, parts[0] + "." + column));
                 else if (parts.Count == 1)
                     foreach (var t in catalog.Where(t => names.Equals(t.Schema, parts[0])))
                         Add(Kind.Table, t.Name, QuoteIfNeeded(t.Name), "table " + t.Schema + "." + t.Name);
@@ -730,7 +739,7 @@ namespace Querywright.Core
                         var table = reference is NamedTableReference named && !IsCte(named) ? Find(named) : null;
                         foreach (string column in Columns(reference!))
                             Items.Add(new CompletionItem(column, qualifier == null ? QuoteIfNeeded(alias) + "." + QuoteIfNeeded(column) : QuoteIfNeeded(column),
-                                ColumnDescription(table?.TypeOf(column), alias + "." + column)));
+                                ColumnDescription(table, column, alias + "." + column)));
                         Sources++;
                         if (qualifier != null) return; // Inner aliases shadow outer aliases, even when metadata is missing.
                     }

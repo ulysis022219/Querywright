@@ -89,21 +89,25 @@ namespace Querywright.Ssms
         private static readonly string ColumnsQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
     CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit),
-    CAST(CASE o.type WHEN 'U' THEN 0 ELSE 1 END AS bit)
+    CAST(CASE o.type WHEN 'U' THEN 0 ELSE 1 END AS bit),
+    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END + ISNULL(' DEFAULT ' + LEFT(d.definition, 200), '')
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = o.object_id
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
+LEFT JOIN sys.default_constraints AS d ON d.object_id = c.default_object_id
 WHERE o.type IN ('U', 'V', 'IF', 'TF') AND o.is_ms_shipped = 0
 ORDER BY o.object_id, c.column_id;";
 
         private static readonly string SynonymsQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
-    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit), CAST(1 AS bit)
+    CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit), CAST(1 AS bit),
+    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END + ISNULL(' DEFAULT ' + LEFT(d.definition, 200), '')
 FROM sys.synonyms AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = OBJECT_ID(o.base_object_name)
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
+LEFT JOIN sys.default_constraints AS d ON d.object_id = c.default_object_id
 WHERE PARSENAME(o.base_object_name, 4) IS NULL AND ISNULL(PARSENAME(o.base_object_name, 3), DB_NAME()) = DB_NAME()
 ORDER BY o.object_id, c.column_id;";
 
@@ -454,7 +458,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             {
                 Progress = (0, "connecting");
                 var problems = new List<string>();
-                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View)>();
+                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note)>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
                 List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default, bool Function)> parameters = null;
                 List<string> databases = null;
@@ -463,12 +467,12 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 {
                     Progress = (10, "reading columns");
                     // Essential: an error here propagates to the retry logic below.
-                    columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5)), out capped);
+                    columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), Text(r, 6)), out capped);
                     Progress = (45, "reading synonyms");
                     try
                     {
                         if (!capped)
-                            columns.AddRange(ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true), out _));
+                            columns.AddRange(ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6)), out _));
                     }
                     catch (Exception error) when (IsRecoverable(error)) { problems.Add("synonyms " + Describe(error)); }
                     Progress = (55, "reading foreign keys");
@@ -488,7 +492,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     var last = columns[columns.Count - 1];
                     columns.RemoveAll(c => c.Schema == last.Schema && c.Table == last.Table);
                 }
-                var built = CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View)),
+                var built = CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View, (string)c.Note)),
                     keys.Select(k => (k.Id, (string)k.Schema, (string)k.Table, (string)k.Column, (string)k.RefSchema, (string)k.RefTable, (string)k.RefColumn)));
                 if (built.Skipped > 0) ActivityLog.TryLogWarning("Querywright", "Live metadata skipped " + built.Skipped + " objects with unusable names");
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.

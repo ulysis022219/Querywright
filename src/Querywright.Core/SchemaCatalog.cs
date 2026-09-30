@@ -14,8 +14,20 @@ namespace Querywright.Core
             internal string[] Columns = Array.Empty<string>();
             internal string?[] Types = Array.Empty<string?>();
             internal bool[] Generated = Array.Empty<bool>();
+            internal string?[]? Notes;
             internal string[] PrimaryKey = Array.Empty<string>();
             internal readonly List<(string[] Columns, SchemaObjectName Target, string[] Referenced)> Keys = new List<(string[], SchemaObjectName, string[])>();
+        }
+
+        // Only what the column definition states; a table-level PRIMARY KEY is not folded into NOT NULL.
+        private static string? Note(ColumnDefinition column, string ddl)
+        {
+            bool? nullable = column.Constraints.OfType<NullableConstraintDefinition>().Select(n => (bool?)n.Nullable).FirstOrDefault();
+            if (column.Constraints.OfType<UniqueConstraintDefinition>().Any(u => u.IsPrimaryKey)) nullable = false;
+            var value = column.DefaultConstraint?.Expression;
+            string note = (nullable == null ? "" : nullable.Value ? "NULL" : "NOT NULL") +
+                (value == null ? "" : " DEFAULT " + ddl.Substring(value.StartOffset, value.FragmentLength));
+            return note.Length == 0 ? null : note.TrimStart();
         }
 
         public static IReadOnlyList<SchemaTable> FromDdl(string ddl)
@@ -45,7 +57,8 @@ namespace Querywright.Core
                     Columns = node.Definition.ColumnDefinitions.Select(c => c.ColumnIdentifier.Value).ToArray(),
                     Types = node.Definition.ColumnDefinitions.Select(c => TypeName(c.DataType)).ToArray(),
                     Generated = node.Definition.ColumnDefinitions.Select(c => c.IdentityOptions != null || c.ComputedColumnExpression != null ||
-                        c.DataType is SqlDataTypeReference t && (t.SqlDataTypeOption == SqlDataTypeOption.Timestamp || t.SqlDataTypeOption == SqlDataTypeOption.Rowversion)).ToArray()
+                        c.DataType is SqlDataTypeReference t && (t.SqlDataTypeOption == SqlDataTypeOption.Timestamp || t.SqlDataTypeOption == SqlDataTypeOption.Rowversion)).ToArray(),
+                    Notes = node.Definition.ColumnDefinitions.Select(c => Note(c, ddl)).ToArray()
                 };
                 foreach (var column in node.Definition.ColumnDefinitions)
                 {
@@ -65,7 +78,7 @@ namespace Querywright.Core
                     ?? throw new FormatException("ALTER TABLE " + name.BaseIdentifier.Value + " targets a table not defined in the schema SQL.");
                 AddConstraints(draft, alter.Definition.TableConstraints);
             }
-            return drafts.Select(d => new SchemaTable(d.Schema, d.Name, d.Columns, d.Types, d.Keys.Select(k => Key(d, k, drafts)).Where(k => k != null).Select(k => k!).ToArray(), d.Generated)).ToArray();
+            return drafts.Select(d => new SchemaTable(d.Schema, d.Name, d.Columns, d.Types, d.Keys.Select(k => Key(d, k, drafts)).Where(k => k != null).Select(k => k!).ToArray(), d.Generated, false, d.Notes)).ToArray();
         }
 
         private static bool Same(Draft draft, string schema, string name) =>

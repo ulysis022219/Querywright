@@ -14,7 +14,7 @@ namespace Querywright.Core
 
         /// <returns>Tables sorted by schema then name, and how many objects were skipped as unusable.</returns>
         public static (SchemaTable[] Tables, int Skipped) Tables(
-            IEnumerable<(string? Schema, string? Table, string? Column, string? Type, bool Generated, bool View)> columns,
+            IEnumerable<(string? Schema, string? Table, string? Column, string? Type, bool Generated, bool View, string? Note)> columns,
             IEnumerable<(int Id, string? Schema, string? Table, string? Column, string? RefSchema, string? RefTable, string? RefColumn)> keys)
         {
             var foreignKeys = new Dictionary<(string, string), List<SchemaForeignKey>>();
@@ -33,7 +33,7 @@ namespace Querywright.Core
 
             int skipped = 0;
             var tables = new List<SchemaTable>();
-            var usable = (columns ?? Enumerable.Empty<(string?, string?, string?, string?, bool, bool)>())
+            var usable = (columns ?? Enumerable.Empty<(string?, string?, string?, string?, bool, bool, string?)>())
                 .Where(c => !string.IsNullOrWhiteSpace(c.Schema) && !string.IsNullOrWhiteSpace(c.Table));
             foreach (var group in usable.GroupBy(c => (c.Schema!, c.Table!)))
             {
@@ -44,7 +44,7 @@ namespace Querywright.Core
                 var names = cols.Select(c => c.Column!).ToArray();
                 var fks = foreignKeys.TryGetValue(group.Key, out var candidates)
                     ? candidates.Where(k => k.Columns.All(c => names.Contains(c, Names))).ToArray() : Array.Empty<SchemaForeignKey>();
-                try { tables.Add(new SchemaTable(group.Key.Item1, group.Key.Item2, names, cols.Select(c => c.Type).ToArray(), fks, cols.Select(c => c.Generated).ToArray(), cols[0].View)); }
+                try { tables.Add(new SchemaTable(group.Key.Item1, group.Key.Item2, names, cols.Select(c => c.Type).ToArray(), fks, cols.Select(c => c.Generated).ToArray(), cols[0].View, cols.Select(c => c.Note).ToArray())); }
                 catch (ArgumentException) { skipped++; }
             }
             return (tables.OrderBy(t => t.Schema, Names).ThenBy(t => t.Name, Names).ToArray(), skipped);

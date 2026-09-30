@@ -51,6 +51,28 @@ namespace Querywright.Core
         public static bool IsNumber(string? value) =>
             value != null && Regex.IsMatch(value, @"^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?$", RegexOptions.CultureInvariant);
 
+        /// <summary>Status bar text for selected cells: count of non-NULL cells, and sum/avg/min/max over the numeric ones.</summary>
+        public static string SelectionSummary(IEnumerable<string?> values)
+        {
+            int count = 0, numbers = 0;
+            decimal sum = 0, min = 0, max = 0;
+            bool overflow = false;
+            foreach (var v in values)
+            {
+                if (v == null) continue;
+                count++;
+                if (!decimal.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var d)) continue;
+                min = numbers == 0 ? d : Math.Min(min, d);
+                max = numbers == 0 ? d : Math.Max(max, d);
+                numbers++;
+                try { if (!overflow) sum += d; } catch (OverflowException) { overflow = true; }
+            }
+            if (numbers == 0) return "Count: " + count;
+            string F(decimal d) => d.ToString("0.##########", CultureInfo.InvariantCulture);
+            return "Count: " + count + "    Sum: " + (overflow ? "overflow" : F(sum)) + "    Avg: " + (overflow ? "-" : F(Math.Round(sum / numbers, 10))) +
+                "    Min: " + F(min) + "    Max: " + F(max);
+        }
+
         public static string Quote(string value) => "N'" + value.Replace("'", "''") + "'";
 
         /// <summary>SQL Prompt's "Copy as IN clause": distinct values, numbers bare when every value is numeric, NULLs dropped.</summary>

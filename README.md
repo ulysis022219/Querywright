@@ -17,7 +17,8 @@ It helps you write, format, check and refactor T-SQL faster, right inside the SS
 3. Start SSMS 22 and open a query window.
 
 Querywright tells you when a newer release is out (once a day; turn it off under
-Tools > Options > Querywright > Updates). Click **Install update** in the notice: Querywright
+Tools > Options > Querywright > Updates; check now with Querywright > **Check for updates...**).
+Click **Install update** in the notice: Querywright
 downloads and verifies the release, then waits for you to save your work and close SSMS.
 The updater installs it automatically; reopen SSMS when it reports success. Your settings are kept.
 Older versions that only show **Download** need one manual update to get this feature.
@@ -34,6 +35,8 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt
 - Expand `*` into a column list, or pick the columns you want.
 - **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view, function or trigger it opens an ALTER script in a new query and on a table a CREATE TABLE script (also in scripts with syntax errors elsewhere), including three-part names in another database on the same server (`OtherDb.dbo.Proc`).
 - **BEGIN/END pairs** are colored by nesting level (BEGIN/END, BEGIN TRY/END TRY, CASE/END, with their IF, WHILE or ELSE); the pair at the caret is highlighted, **Ctrl+]** jumps between them, and hovering an END shows the line that opened it.
+- **Parameter hints**: after `EXEC dbo.Proc ` or `dbo.fn(` a tooltip lists the parameters with the current one in bold.
+- **Folding**: `--region name` / `--endregion` sections and multi-line BEGIN/END blocks collapse from the margin.
 - **Shift+F5** runs only the statement under the caret (only when you press it).
 - Executing a **DELETE or UPDATE without WHERE** asks first ("Execute anyway" / "Don't execute"); turn it off in the prompt or under Tools > Options > Querywright.
 
@@ -53,7 +56,8 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt
 - Split a table, or wrap a selection as a stored procedure.
 
 **Everyday helpers**
-- Tab history: every SQL window keeps timestamped versions (a few seconds after each edit, and on execute), grouped per tab with a preview; reopen any version, even after a restart (toolbar button next to New Query).
+- Tab history: every SQL window keeps timestamped versions (a few seconds after each edit, and on execute), grouped per tab with a preview; search covers every saved version; reopen any version, even after a restart (toolbar button next to New Query).
+- Select several cells in a results grid to see count, sum, average, min and max in the status bar.
 - A colored strip and a `server · database` label on every query window, so you always know
   where you are connected. Right-click a server in Object Explorer > **Querywright: server color...**
   to pick its color, or write rules like `prod=Red;test=Orange` in Tools > Options.

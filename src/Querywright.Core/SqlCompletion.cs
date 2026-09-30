@@ -270,7 +270,7 @@ namespace Querywright.Core
                 (qualifier == null || qualifier.Count == 1))
             {
                 context = Context.Table;
-                foreach (var p in procedures.Where(p => qualifier == null || names.Equals(p.Schema, qualifier[0])))
+                foreach (var p in procedures.Where(p => !p.IsFunction && (qualifier == null || names.Equals(p.Schema, qualifier[0]))))
                     Add(Kind.Table, p.Name, (qualifier == null ? QuoteIfNeeded(p.Schema) + "." : "") + QuoteIfNeeded(p.Name), "procedure " + p.Schema + "." + p.Name);
             }
             else if (qualifier != null && CrossDatabase(qualifier)) { }
@@ -312,7 +312,8 @@ namespace Querywright.Core
                 if (context != Context.Table)
                 {
                     foreach (var join in Joins(segment, at, scan, catalog, defaultSchema, names)) items.Add((join, Kind.Join));
-                    foreach (var k in Keywords) Add(Kind.Keyword, k, k, "keyword");
+                    // ponytail: ORDER and GROUP are only ever followed by BY; name == insert text, as the SSMS list commits reliably then.
+                    foreach (var k in Keywords) { string w = k.Equals("ORDER", StringComparison.OrdinalIgnoreCase) || k.Equals("GROUP", StringComparison.OrdinalIgnoreCase) ? k + " BY" : k; Add(Kind.Keyword, w, w, "keyword"); }
                     foreach (var f in Functions) Add(Kind.Function, f, f + "(", "function");
                     foreach (var s in scan.Sources.Where(s => s.Explicit)) Add(Kind.Alias, s.Alias, QuoteIfNeeded(s.Alias), "alias " + s.Description);
                     // Tables of the caret's own statement first; others in the same batch (no semicolons between) rank after them.

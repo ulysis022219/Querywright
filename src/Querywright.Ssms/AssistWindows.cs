@@ -373,16 +373,28 @@ namespace Querywright.Ssms
                 return time >= today ? "Today" : time >= today.AddDays(-1) ? "Yesterday" : time >= today.AddDays(-7) ? "Last week"
                     : time >= today.AddMonths(-1) ? "Last month" : "Older";
             }
+            // Old versions are read once, on the first search that needs them, and kept for this dialog only.
+            var texts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            bool VersionHas(Version version, string term)
+            {
+                if (!texts.TryGetValue(version.File.FullName, out var text))
+                {
+                    try { text = File.ReadAllText(version.File.FullName); }
+                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { text = ""; }
+                    texts[version.File.FullName] = text;
+                }
+                return text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0;
+            }
             void Filter(Tab? keep = null)
             {
-                // ponytail: search covers each tab's name and latest text, not every old version.
                 string term = search.Text.Trim();
                 bool favorites = favoritesView.IsChecked == true;
                 favoritesView.Content = "F_avorites (" + tabs.Count(t => t.Favorite) + ")";
                 list.Items.Clear();
                 string? group = null;
                 foreach (var tab in tabs.Where(t => t.Favorite == favorites && (term.Length == 0 || t.Latest.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0
-                    || (t.Name ?? "").IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0 || t.Caption.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)))
+                    || (t.Name ?? "").IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0 || t.Caption.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0
+                    || t.Versions.Skip(1).Any(v => VersionHas(v, term)))))
                 {
                     string bucket = Bucket(tab.Versions[0].Time);
                     if (!favorites && bucket != group)
@@ -410,7 +422,9 @@ namespace Querywright.Ssms
                 versionsLabel.Content = "_Versions:";
                 versionsLabel.ToolTip = tab?.DisplayName;
                 versionList.ItemsSource = tab?.Versions;
-                if (tab != null) versionList.SelectedIndex = 0;
+                // Searching: open on the newest version that contains the text.
+                string term = search.Text.Trim();
+                if (tab != null) versionList.SelectedIndex = term.Length == 0 ? 0 : Math.Max(0, tab.Versions.FindIndex(v => v == tab.Versions[0] ? tab.Latest.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0 : VersionHas(v, term)));
             };
             bool previewReady = false;
             versionList.SelectionChanged += (s, e) =>

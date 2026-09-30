@@ -278,6 +278,35 @@ namespace Querywright.Ssms
             return true;
         }
 
+        private const string FieldsKey = "QuerywrightSnippetFields";
+
+        private static void SelectField(IWpfTextView view, (List<ITrackingSpan> Fields, ITrackingPoint End) stops, int index)
+        {
+            var field = stops.Fields[index].GetSpan(view.TextSnapshot);
+            view.Selection.Select(field, false);
+            view.Caret.MoveTo(field.End);
+            view.Caret.EnsureVisible();
+        }
+
+        /// <summary>Tab after a snippet with $name$ fields: select the next field, then go to $CURSOR$ (or the end) and stop.
+        /// False when no snippet fields are active or the caret has left them, so Tab works as usual.</summary>
+        internal bool TryNextField(IWpfTextView view)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (!view.Properties.TryGetProperty(FieldsKey, out (List<ITrackingSpan> Fields, ITrackingPoint End) stops)) return false;
+            var snapshot = view.TextSnapshot;
+            int caret = view.Caret.Position.BufferPosition.Position;
+            int current = stops.Fields.FindIndex(f => f.GetSpan(snapshot).Contains(caret) || f.GetSpan(snapshot).End.Position == caret);
+            if (current < 0) { EndFields(view); return false; }
+            if (current + 1 < stops.Fields.Count) { SelectField(view, stops, current + 1); return true; }
+            EndFields(view);
+            view.Selection.Clear();
+            view.Caret.MoveTo(stops.End.GetPoint(snapshot));
+            return true;
+        }
+
+        internal static void EndFields(IWpfTextView view) => view.Properties.RemoveProperty(FieldsKey);
+
         internal bool TryTabExpand(IWpfTextView view)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
@@ -322,7 +351,7 @@ namespace Querywright.Ssms
                 string template = SnippetFiles.Read(path);
                 var expansion = Snippets.Expand(template, SnippetContext(template, ""), DateTimeOffset.Now);
                 ReplaceText(view, new SnapshotSpan(snapshot, caret - shortcut.Length, shortcut.Length), expansion.Text,
-                    expansion.Caret, expansion.SelectionStart, expansion.SelectionLength, "Expand snippet " + shortcut);
+                    expansion.Caret, expansion.SelectionStart, expansion.SelectionLength, "Expand snippet " + shortcut, expansion.Fields);
                 return true;
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
@@ -1316,7 +1345,8 @@ namespace Querywright.Ssms
             }
         }
 
-        private void ReplaceText(IWpfTextView view, SnapshotSpan span, string text, int caret, int selectionStart, int selectionLength, string name)
+        private void ReplaceText(IWpfTextView view, SnapshotSpan span, string text, int caret, int selectionStart, int selectionLength, string name,
+            IReadOnlyList<(int Start, int Length)> fields = null)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             if (view.IsClosed || view.TextSnapshot != span.Snapshot)
@@ -1338,6 +1368,12 @@ namespace Querywright.Ssms
                 view.Caret.MoveTo(new SnapshotPoint(after, start + caret));
                 if (selectionLength > 0)
                     view.Selection.Select(new SnapshotSpan(after, start + selectionStart, selectionLength), false);
+                if (fields?.Count > 0)
+                {
+                    view.Properties[FieldsKey] = (fields.Select(f => after.CreateTrackingSpan(start + f.Start, f.Length, SpanTrackingMode.EdgeInclusive)).ToList(),
+                        after.CreateTrackingPoint(start + caret, PointTrackingMode.Positive));
+                    SelectField(view, ((List<ITrackingSpan>, ITrackingPoint))view.Properties[FieldsKey], 0);
+                }
                 operations.AddAfterTextBufferChangePrimitive();
                 transaction.Complete();
             }
@@ -1486,7 +1522,7 @@ namespace Querywright.Ssms
                 if (view.IsClosed || view.TextSnapshot != before)
                     throw new InvalidOperationException("Query changed while choosing the snippet. Retry insertion.");
                 ReplaceText(view, selected, expansion.Text, expansion.Caret, expansion.SelectionStart,
-                    expansion.SelectionLength, "Insert SQL snippet");
+                    expansion.SelectionLength, "Insert SQL snippet", expansion.Fields);
             }
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException ||
                 error is ArgumentException || error is FormatException || error is InvalidOperationException || error is COMException)

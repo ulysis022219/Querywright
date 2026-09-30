@@ -12,9 +12,12 @@ namespace Querywright.Core
         public int Caret { get; }
         public int SelectionStart { get; }
         public int SelectionLength { get; }
+        /// <summary>Tab stops from lowercase <c>$name$</c> placeholders, in template order; the name is the default text.</summary>
+        public IReadOnlyList<(int Start, int Length)> Fields { get; }
 
-        internal SnippetExpansion(string text, int caret, int start, int length)
+        internal SnippetExpansion(string text, int caret, int start, int length, IReadOnlyList<(int, int)> fields)
         {
+            Fields = fields;
             Text = text;
             Caret = caret;
             SelectionStart = start;
@@ -25,7 +28,7 @@ namespace Querywright.Core
     public static class Snippets
     {
         private static readonly Regex Tokens = new Regex(
-            @"\$(?<name>[A-Z]+)(?:\((?<format>[^\r\n$]*)\))?\$",
+            @"\$(?:(?<name>[A-Z]+)(?:\((?<format>[^\r\n$]*)\))?|(?<field>[a-z][a-z0-9_]*))\$",
             RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
         // Context values are inserted literally, never interpreted as more placeholders.
@@ -39,9 +42,18 @@ namespace Querywright.Core
 
             var output = new StringBuilder();
             int offset = 0, caret = -1, start = -1, end = -1;
+            var fields = new List<(int, int)>();
             foreach (Match token in Tokens.Matches(template))
             {
                 output.Append(template, offset, token.Index - offset);
+                offset = token.Index + token.Length;
+                if (token.Groups["field"].Success)
+                {
+                    // ponytail: each $name$ is its own stop; repeats are not linked.
+                    fields.Add((output.Length, token.Groups["field"].Length));
+                    output.Append(token.Groups["field"].Value);
+                    continue;
+                }
                 string name = token.Groups["name"].Value;
                 bool formatted = token.Groups["format"].Success;
                 if (formatted && name != "DATE" && name != "TIME")
@@ -82,12 +94,11 @@ namespace Querywright.Core
                         output.Append(token.Value);
                         break;
                 }
-                offset = token.Index + token.Length;
             }
             output.Append(template, offset, template.Length - offset);
             if (start >= 0 && end < 0) throw new FormatException("Missing SELECTIONEND marker.");
             return new SnippetExpansion(output.ToString(), caret < 0 ? output.Length : caret,
-                start < 0 ? 0 : start, start < 0 ? 0 : end - start);
+                start < 0 ? 0 : start, start < 0 ? 0 : end - start, fields);
         }
     }
 }

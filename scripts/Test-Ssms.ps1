@@ -155,6 +155,10 @@ Expect 'keyword completion' $text { param($t) $t -match '^SELECT 1 ORDER' }
 $text = Session 'quotes' '' @() "wait:3000|type:SELECT N'ab'x, 'it''s'|wait:1000"
 Expect 'closing quotes' $text { param($t) $t -eq "SELECT N'ab'x, 'it''s'" }
 
+# Format on save (off by default): Ctrl+S formats the document before it is written.
+$text = Session 'format-on-save' "select Id from dbo.People" @() 'wait:3000|set:FormatOnSave=True|focus|save|wait:2000'
+Expect 'format on save' $text { param($t) $t -cmatch '^SELECT' -and [IO.File]::ReadAllText((Join-Path $Out 'format-on-save.sql')) -eq $t }
+
 # Live metadata against LocalDB on the disposable runner (the only database this test writes to).
 $server = '(localdb)\MSSQLLocalDB'
 try {
@@ -180,6 +184,10 @@ if ($live) {
     # 'ready' waits for SSMS to connect and the package to load the catalog.
     $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|home|right:8|tab|wait:3000'
     Expect '* + Tab from live metadata' $text { param($t) $t -match 'FullName' -and $t -notmatch '\*' }
+    # The schema cache holds names and types only: no row data, no connection strings.
+    $cache = Get-ChildItem "$env:LOCALAPPDATA\Querywright\SchemaCache" -Filter *.txt -ErrorAction SilentlyContinue
+    $cached = ($cache | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
+    $results['schema cache on disk'] = if ($cache -and $cached -match 'FullName' -and $cached -match 'GetPeople' -and $cached -notmatch 'Ann|Neil|Integrated|Password|localdb' -and ($cache.BaseName -match '^[0-9a-f]{64}$')) { 'PASS' } else { "FAIL: [$($cache.Name)] $cached" }
     $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|home|right:7|type:p.Ful|wait:3000|tab|wait:1000'
     Expect 'column completion from live metadata' $text { param($t) $t -match 'SELECT p\.FullName ?FROM' }
     $text = Session 'insert-fill' "INSERT INTO dbo.People" @('-S', $server, '-d', 'QwTest', '-C') 'ready|end|tab|wait:3000'
@@ -200,6 +208,11 @@ if ($live) {
     # Results grid: run a read-only SELECT, focus the grid, then "Script as INSERT" (0x118) opens a new window.
     $text = Session 'grid-insert' "SELECT Id, FullName FROM dbo.People ORDER BY Id;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|focus|exec|wait:10000|grid|cmd:118|wait:5000|latest'
     Expect 'results grid script as INSERT' $text { param($t) $t -match 'DROP TABLE IF EXISTS #Results' -and $t -match 'CREATE TABLE #Results' -and $t -match 'DROP TABLE #Results;' -and $t -match "\(1, N'Ann O''Neil'\)" -and $t -match '\(2, NULL\)' }
+    # A production connection always asks before DROP; the self-test answers "Don't execute", so the table must survive.
+    $text = Session 'production' "DROP TABLE dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|set:ProductionServers=localdb|prompt|focus|exec|wait:5000'
+    $connection = New-Object System.Data.SqlClient.SqlConnection "Server=$server;Integrated Security=true;Initial Catalog=QwTest"
+    $connection.Open(); $command = $connection.CreateCommand(); $command.CommandText = "SELECT OBJECT_ID('dbo.People')"; $kept = $command.ExecuteScalar() -isnot [DBNull]; $connection.Close()
+    Expect 'production prompt blocks DROP' $text { param($t) $kept -and $t -match '-- prompt PRODUCTION \(\S*MSSQLLocalDB/QwTest\)' -and $t -match 'dbo\.People' }
 }
 
 foreach ($log in Get-ChildItem $Out -Filter 'ActivityLog-*.xml') {

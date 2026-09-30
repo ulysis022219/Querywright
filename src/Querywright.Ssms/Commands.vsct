@@ -183,7 +183,7 @@
       </Button>
       <Button guid="CommandsGuid" id="EditFormattingStyle" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="SettingsGroup" />
-        <Strings><ButtonText>Formatting style...</ButtonText></Strings>
+        <Strings><ButtonText>Formatting style and rules...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FormatFolder" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />

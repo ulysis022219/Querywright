@@ -518,25 +518,26 @@ namespace Querywright.Ssms
         }
     }
 
-    /// <summary>Formatting style editor: property grid with a live preview. Edits a copy; the caller saves on OK.</summary>
+    /// <summary>Formatting style (property grid with a live preview) and analysis rule severities. Edits a copy; the caller saves on OK.</summary>
     internal sealed class FormattingStyleDialog : System.Windows.Forms.Form
     {
         private const string Sample = "select c.CustomerId, c.Name, count(*) as Orders from dbo.Customer c join dbo.[Order] o on o.CustomerId = c.CustomerId\r\n" +
             "where c.Active = 1 and o.Placed >= '20240101' group by c.CustomerId, c.Name having count(*) > 1 order by Orders desc\r\n" +
             "insert into dbo.Audit (Id, Note) values (1, N'x')";
-        internal Querywright.Core.FormattingStyle Style { get; }
+        internal Querywright.Core.WorkbenchSettings Settings { get; }
+        private Querywright.Core.FormattingStyle Style => Settings.Formatting;
 
-        internal FormattingStyleDialog(Querywright.Core.FormattingStyle current, string settingsPath)
+        internal FormattingStyleDialog(Querywright.Core.WorkbenchSettings current, string settingsPath)
         {
             // ponytail: copy through XML so the dialog never mutates the caller's settings until OK.
-            var serializer = new System.Xml.Serialization.XmlSerializer(typeof(Querywright.Core.FormattingStyle));
+            var serializer = new System.Xml.Serialization.XmlSerializer(typeof(Querywright.Core.WorkbenchSettings));
             using (var buffer = new MemoryStream())
             {
                 serializer.Serialize(buffer, current);
                 buffer.Position = 0;
-                Style = (Querywright.Core.FormattingStyle)serializer.Deserialize(buffer);
+                Settings = (Querywright.Core.WorkbenchSettings)serializer.Deserialize(buffer);
             }
-            Text = "Querywright: formatting style (" + settingsPath + ")";
+            Text = "Querywright: formatting style and rules (" + settingsPath + ")";
             Width = 1000; Height = 600;
             MinimumSize = new System.Drawing.Size(720, 420);
             Font = System.Drawing.SystemFonts.MessageBoxFont;
@@ -557,8 +558,12 @@ namespace Querywright.Ssms
             AcceptButton = ok; CancelButton = cancel;
             var split = new System.Windows.Forms.SplitContainer { Dock = System.Windows.Forms.DockStyle.Fill, Width = 950, SplitterDistance = 340, Panel1MinSize = 240, Panel2MinSize = 240 };
             split.Panel1.Controls.Add(grid); split.Panel2.Controls.Add(preview);
-            Controls.Add(split); Controls.Add(buttons);
-            Controls.Add(DialogParts.FormHeader("Formatting style", "Adjust options on the left; review formatted SQL on the right."));
+            var rules = new System.Windows.Forms.PropertyGrid { SelectedObject = Settings, Dock = System.Windows.Forms.DockStyle.Fill, ToolbarVisible = false, PropertySort = System.Windows.Forms.PropertySort.Alphabetical, AccessibleName = "Analysis rule severities" };
+            var tabs = new System.Windows.Forms.TabControl { Dock = System.Windows.Forms.DockStyle.Fill };
+            tabs.TabPages.Add("Formatting"); tabs.TabPages.Add("Analysis rules");
+            tabs.TabPages[0].Controls.Add(split); tabs.TabPages[1].Controls.Add(rules);
+            Controls.Add(tabs); Controls.Add(buttons);
+            Controls.Add(DialogParts.FormHeader("Formatting style and rules", "Formatting: adjust options on the left, review SQL on the right. Analysis rules: Disabled, Info, Warning or Error. Saved to the shared settings file."));
             DialogParts.Style(this);
             void Render()
             {

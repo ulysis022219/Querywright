@@ -143,13 +143,16 @@ namespace Querywright.Ssms
             {
                 var view = package.GetSqlView();
                 var options = package.Options;
-                if (options != null && (options.WarnUnfilteredChanges || options.WarnDropTruncate || options.WarnUseSwitch))
+                var connection = options == null || string.IsNullOrWhiteSpace(options.ProductionServers) ? null : LiveMetadata.CaptureNames();
+                bool production = connection != null && ColorRules.Matches(options.ProductionServers, connection.Value.Server, connection.Value.Database);
+                if (options != null && (production || options.WarnUnfilteredChanges || options.WarnDropTruncate || options.WarnUseSwitch))
                 {
                     // SSMS runs the selection when there is one, otherwise the whole window.
                     string sql = view.Selection.IsEmpty ? view.TextSnapshot.GetText()
                         : string.Join("\n", view.Selection.SelectedSpans.Select(s => s.GetText()));
-                    var targets = sql.Length > 1_000_000 ? System.Array.Empty<string>() : SqlAnalysis.UnfilteredChanges(sql, options.WarnUnfilteredChanges, options.WarnDropTruncate);
-                    if (targets.Count > 0 && !Ask(targets, false)) return VSConstants.S_OK;
+                    var targets = sql.Length > 1_000_000 ? System.Array.Empty<string>()
+                        : SqlAnalysis.UnfilteredChanges(sql, production || options.WarnUnfilteredChanges, production || options.WarnDropTruncate, production);
+                    if (targets.Count > 0 && !Ask(targets, false, production ? connection.Value.Server + (string.IsNullOrEmpty(connection.Value.Database) ? "" : "/" + connection.Value.Database) : null)) return VSConstants.S_OK;
                     var switches = options.WarnUseSwitch && sql.Length <= 1_000_000 ? SqlAnalysis.DatabaseSwitchChanges(sql) : System.Array.Empty<string>();
                     if (switches.Count > 0 && !Ask(switches, true)) return VSConstants.S_OK;
                 }
@@ -173,7 +176,8 @@ namespace Querywright.Ssms
             return true;
         }
 
-        private bool Ask(System.Collections.Generic.IReadOnlyList<string> targets, bool switched)
+        /// <summary>Asks before running; <paramref name="production"/> names the production connection, whose prompt cannot be turned off here.</summary>
+        private bool Ask(System.Collections.Generic.IReadOnlyList<string> targets, bool switched, string production = null)
         {
             using (var form = new Form
             {
@@ -184,11 +188,12 @@ namespace Querywright.Ssms
                 var layout = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false };
                 layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0),
                     Text = switched ? "This script switches database with USE and then changes data:"
+                        : production != null ? "PRODUCTION (" + production + "): you're about to execute " + (targets.Count == 1 ? "a statement" : targets.Count + " statements") + " that change schema or can change or remove every row:"
                         : "You're about to execute " + (targets.Count == 1 ? "a statement" : targets.Count + " statements") + " that can change or remove every row:" });
                 layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0), Font = new System.Drawing.Font(form.Font, System.Drawing.FontStyle.Bold),
                     Text = string.Join(Environment.NewLine, targets.Take(10)) + (targets.Count > 10 ? Environment.NewLine + "..." : ""), Margin = new Padding(3, 8, 3, 12) });
                 var never = new CheckBox { AutoSize = true, Text = "Don't show this warning again" };
-                layout.Controls.Add(never);
+                if (production == null) layout.Controls.Add(never);
                 var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 12, 0, 0) };
                 var cancel = new Button { Text = "Don't execute", DialogResult = DialogResult.Cancel, AutoSize = true };
                 var run = new Button { Text = "Execute anyway", DialogResult = DialogResult.OK, AutoSize = true };

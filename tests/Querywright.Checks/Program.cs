@@ -1087,4 +1087,122 @@ Check(asm_catB.ColumnNotes![0] == "NOT NULL DEFAULT ((0))", "catalog keeps live 
     var manyTables = Enumerable.Range(0, 300).Select(n => new SchemaTable("dbo", "T" + n, "C" + n)).Concat(shop).ToArray();
     Check(SqlCompletion.Complete("SELECT * FROM Orders o WHERE o.Total > 1 AND o.CustId = 1 ORDER BY o.Total ", 75, manyTables).Items.Count(i => i.Description.StartsWith("column")) == 3, "item cap keeps in-scope columns");
 }
-Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes and object refactors. SSMS integration not tested.");
+Check(SqlAnalysis.UnfilteredChanges("DROP PROCEDURE dbo.p; ALTER TABLE dbo.T ADD c int; TRUNCATE TABLE dbo.T; SELECT 1; UPDATE dbo.T SET c = 1 WHERE c = 2", false, false, schema: true)
+    .SequenceEqual(new[] { "DROP PROCEDURE dbo.p", "ALTER TABLE dbo.T ADD c int" }) && SqlAnalysis.UnfilteredChanges("ALTER TABLE dbo.T ADD c int").Count == 0, "production: DROP/ALTER only with schema");
+Check(SqlAnalysis.UnfilteredChanges("ALTER PROCEDURE dbo.p AS\nSELECT 1 FROM dbo.T WHERE Id = 1", false, false, true).Single() == "ALTER PROCEDURE dbo.p AS"
+    && SqlAnalysis.UnfilteredChanges("ALTER TABLE dbo." + new string('x', 100) + " ADD c int", false, false, true).Single().Length == 80, "production: first line of statement, capped");
+Check(ColorRules.Matches("dev; PROD ", @"sql-prod01\A", "Sales") && ColorRules.Matches("prod01/Sales", "prod01", "Sales") && !ColorRules.Matches("prod", "dev01", "Sales")
+    && !ColorRules.Matches(";;", "x", "y") && !ColorRules.Matches("prod", null, null), "production server patterns");
+Check(typeof(WorkbenchSettings).GetProperties().Where(p => p.PropertyType == typeof(RuleSeverity))
+    .All(p => p.GetCustomAttributes(typeof(System.ComponentModel.DisplayNameAttribute), false).Cast<System.ComponentModel.DisplayNameAttribute>().Single().DisplayName.StartsWith(p.Name + " ")), "every rule has a display name in the settings editor");
+
+// Stress: huge or deeply nested input on a 1 MB stack (the UI thread's size) must not overflow; a stack overflow ends this process, failing CI.
+{
+    var cat = new[] { new SchemaTable("dbo", "Orders", "OrderId", "CustId", "Total") };
+    var shapes = new Func<int, string>[]
+    {
+        n => "SELECT " + new string('(', n) + "1" + new string(')', n),
+        n => "SELECT " + new string('(', n),
+        n => string.Concat(Enumerable.Repeat("IF 1=1 BEGIN ", n)) + "SELECT 1 " + string.Concat(Enumerable.Repeat("END ", n)),
+        n => "SELECT " + string.Concat(Enumerable.Repeat("CASE WHEN 1=1 THEN ", n)) + "1" + string.Concat(Enumerable.Repeat(" END", n)),
+        n => "SELECT " + string.Concat(Enumerable.Repeat("(SELECT ", n)) + "1" + new string(')', n),
+        n => "IF 1=1 SELECT 1 " + string.Concat(Enumerable.Repeat("ELSE IF 1=1 SELECT 1 ", n)),
+        n => "SELECT * FROM Orders o WHERE " + string.Join(" AND ", Enumerable.Range(0, n).Select(i => "o.Total <> " + i)),
+        n => "SELECT " + string.Join(" + ", Enumerable.Range(0, n)),
+        n => string.Join(" UNION ALL ", Enumerable.Range(0, n).Select(i => "SELECT " + i)),
+        n => "DELETE FROM Orders WHERE " + string.Join(" OR ", Enumerable.Range(0, n).Select(i => "OrderId = " + i)),
+    };
+    Exception? failure = null;
+    var thread = new System.Threading.Thread(() =>
+    {
+        try
+        {
+            foreach (var shape in shapes)
+            foreach (int n in new[] { 600, 3000 })
+            {
+                string sql = shape(n);
+                int mid = sql.Length / 2;
+                void Run(Action action) { try { action(); } catch (Exception e) when (e is FormatException || e is InvalidOperationException) { } }
+                Run(() => SqlCompletion.Complete(sql, sql.Length, cat));
+                Run(() => SqlAnalysis.Analyze(sql));
+                Run(() => SqlAnalysis.UnfilteredChanges(sql, true, true, true));
+                Run(() => SqlFormatting.Format(sql));
+                Run(() => { SqlNavigation.Blocks(sql); SqlNavigation.Unmatched(sql); });
+                Run(() => SqlAssist.Describe(sql, mid, cat, null));
+                Run(() => SqlNavigation.FindDefinition(sql, mid));
+                Run(() => SqlNavigation.StatementAt(sql, mid));
+                Run(() => SqlAssist.FillStatement(sql, sql.Length, cat, null));
+                Run(() => SqlAssist.ParameterHintAt(sql, mid, null));
+                Run(() => SqlAnalysis.FixAll(sql, cat));
+                Run(() => SqlRefactoring.AddSemicolons(sql));
+                Run(() => SqlRefactoring.QualifyObjectNames(sql));
+                Run(() => SqlRefactoring.UnusedDeclarationItems(sql));
+            }
+        }
+        catch (Exception e) { failure = e; }
+    }, 1024 * 1024);
+    thread.Start(); thread.Join();
+    Check(failure == null, "stress shapes on a 1 MB stack: " + failure);
+}
+
+// Fuzz: seeded random edits of real statements; what runs while typing must never throw.
+{
+    var cat = new[] { new SchemaTable("dbo", "Customers", "CustId", "CustName", "City"), new SchemaTable("dbo", "Orders", "OrderId", "CustId", "Total"), new SchemaTable("dbo", "we]ird name", "col 1", "[x]", "select") };
+    var fuzzProcs = new[] { new SchemaProcedure("dbo", "GetOrders", new[] { new SchemaParameter("@id", "int", false, false) }) };
+    string[] corpus =
+    {
+        "SELECT c.CustName, SUM(o.Total) FROM dbo.Customers c JOIN dbo.Orders o ON o.CustId = c.CustId WHERE c.City = N'x' GROUP BY c.CustName;",
+        "IF @x = 1 BEGIN UPDATE dbo.Orders SET Total = 0 WHERE OrderId = @id; END ELSE BEGIN DELETE FROM dbo.Orders; END",
+        "DECLARE @n int = 1; WITH cte AS (SELECT * FROM Orders) SELECT CASE WHEN Total > 1 THEN 'a' ELSE 'b' END FROM cte;",
+        "CREATE PROCEDURE dbo.p @a int AS BEGIN TRY EXEC dbo.GetOrders @id = @a; END TRY BEGIN CATCH THROW; END CATCH\nGO\n--region x\nSELECT 1\n--endregion",
+        "INSERT INTO dbo.Orders (OrderId, CustId) SELECT 1, 2 UNION ALL SELECT 3, 4; MERGE dbo.Orders t USING dbo.Customers s ON t.CustId = s.CustId WHEN NOT MATCHED THEN INSERT (CustId) VALUES (s.CustId);",
+    };
+    const string pieces = "'\"[]()*,.;@#-/\n\r\t N'x' /* */ -- GO BEGIN END CASE WHEN SELECT FROM JOIN ON WHERE ( ) \u00e9\ud83d\ude00 0x 1e5 $ ";
+    var random = new Random(1);
+    var failures = new List<string>();
+    for (int m = 0; m < 300; m++)
+    {
+        string sql = corpus[random.Next(corpus.Length)];
+        for (int k = random.Next(1, 4); k > 0; k--)
+        {
+            int at = random.Next(sql.Length);
+            if (random.Next(2) == 0) sql = sql.Remove(at, Math.Min(random.Next(1, 6), sql.Length - at));
+            else { int p = random.Next(pieces.Length); sql = sql.Insert(at, pieces.Substring(p, Math.Min(random.Next(1, 8), pieces.Length - p))); }
+        }
+        void Try(string what, Action action) { try { action(); } catch (Exception e) { failures.Add(what + " " + e.GetType().Name + ": " + sql); } }
+        Try("Analyze", () => SqlAnalysis.Analyze(sql));
+        Try("UnfilteredChanges", () => SqlAnalysis.UnfilteredChanges(sql, true, true, true));
+        Try("DatabaseSwitchChanges", () => SqlAnalysis.DatabaseSwitchChanges(sql));
+        Try("Blocks", () => { SqlNavigation.Blocks(sql); SqlNavigation.Unmatched(sql); SqlNavigation.Regions(sql); });
+        for (int pos = 0; pos <= sql.Length; pos += 7)
+        {
+            int p = pos;
+            Try("Complete", () => SqlCompletion.Complete(sql, p, cat, "dbo", false, new[] { "master" }, fuzzProcs, false));
+            Try("Describe", () => SqlAssist.Describe(sql, p, cat, fuzzProcs));
+            Try("ParameterHintAt", () => SqlAssist.ParameterHintAt(sql, p, fuzzProcs));
+            Try("FindDefinition", () => SqlNavigation.FindDefinition(sql, p));
+            Try("StatementAt", () => SqlNavigation.StatementAt(sql, p));
+            Try("ShortcutBefore", () => SnippetFiles.ShortcutBefore(sql, p));
+        }
+    }
+    Check(failures.Count == 0, "fuzzed typing paths never throw: " + string.Join("\n", failures.Distinct().Take(5)));
+}
+{
+    var tables = new[]
+    {
+        new SchemaTable("dbo", "Orders", new[] { "Id", "Cust\tId", "Note%" }, new[] { "int", null, "nvarchar(10)" },
+            new[] { new SchemaForeignKey(new[] { "Cust\tId" }, "sales", "Cust omers", new[] { "Id\n" }) }, new[] { true, false, false }, false, new[] { "NOT NULL", null, "NULL DEFAULT ('')" }),
+        new SchemaTable("sales", "Cust omers", new[] { "Id\n" }, null, null, null, true),
+    };
+    var text = new System.IO.StringWriter();
+    SchemaDiskCache.Write(text, tables);
+    var back = SchemaDiskCache.Read(new System.IO.StringReader(text.ToString()));
+    Check(back != null && back.Length == 2 && text.ToString().Split('\n').Length == 9, "schema disk cache round-trips");
+    var o = back!.Single(t => t.Name == "Orders"); var c = back!.Single(t => t.Name == "Cust omers");
+    Check(o.Columns.SequenceEqual(tables[0].Columns) && o.ColumnTypes!.SequenceEqual(tables[0].ColumnTypes!) && o.Generated!.SequenceEqual(tables[0].Generated!)
+        && o.ColumnNotes!.SequenceEqual(tables[0].ColumnNotes!) && !o.IsView && c.IsView && c.Columns.Single() == "Id\n", "schema disk cache keeps columns, types, flags and notes");
+    Check(o.ForeignKeys.Single().ReferencedTable == "Cust omers" && o.ForeignKeys.Single().Columns.Single() == "Cust\tId" && o.ForeignKeys.Single().ReferencedColumns.Single() == "Id\n", "schema disk cache keeps foreign keys");
+    Check(SchemaDiskCache.Read(new System.IO.StringReader("junk")) == null && SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 1\nC")) == null
+        && SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 1\nX\ty")) == null && SchemaDiskCache.Read(new System.IO.StringReader("")) == null, "unreadable schema cache yields null");
+}
+Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes, object refactors, stress, fuzz and the schema cache. SSMS integration not tested.");

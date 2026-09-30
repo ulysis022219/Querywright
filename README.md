@@ -33,7 +33,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`.
 
 **Writing SQL**
 - Suggestions as you type: tables, views, columns and joins from the connected database. Columns are grouped per table in the current query scope (innermost subquery first), including UPDATE aliases, INSERT column lists and MERGE inserts.
-  Press **Ctrl+Shift+D** to reload them after schema changes.
+  Press **Ctrl+Shift+D** to reload them after schema changes. Names and types are cached on disk (hashed file names, never credentials or data) so suggestions work right after a restart; turn it off with "Cache schema on disk".
 - Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`. Lowercase `$name$` placeholders in a template are fields: Tab selects the next one, then goes to `$CURSOR$`; Esc stops.
   56 built in; add your own `.sql` files or share a team folder.
 - Typing `'` inserts `''` with the cursor inside; typing `'` again steps over the closing quote (turn off under Tools > Options > Querywright).
@@ -44,6 +44,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`.
 - **Folding**: `--region name` / `--endregion` sections and multi-line BEGIN/END blocks collapse from the margin.
 - **Shift+F5** runs only the statement under the caret (only when you press it).
 - Executing a **DELETE or UPDATE without WHERE** asks first ("Execute anyway" / "Don't execute"); turn it off in the prompt or under Tools > Options > Querywright.
+- **Production servers**: list patterns such as `prod;live` in Tools > Options > Querywright; on a matching connection, executing DROP, ALTER, TRUNCATE or an unfiltered DELETE/UPDATE always asks first.
 
 **Formatting**
 - Format a selection, a whole document, or every `.sql` file in a folder.
@@ -52,7 +53,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`.
 
 **Checking code**
 - Hovering a column shows its type, NULL/NOT NULL and default from the cached metadata.
-- 46 analysis rules, shown as squiggles while you type and in the Error List.
+- 46 analysis rules, shown as squiggles while you type and in the Error List. Turn rules off or change their severity in **Formatting style and rules...** > Analysis rules (saved to the shared settings file).
 - Quick fixes for common issues, one at a time or all at once.
 - Find unused variables and parameters, and invalid objects in the database (read-only).
 
@@ -72,7 +73,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`.
 - Results grid right-click: copy as `IN (...)`, script rows as `INSERT`, open in Excel, save as CSV.
 
 All commands are in the **Tools** menu under "Querywright". Settings are under
-**Tools > Options > Querywright**. Full list: [features](docs/features.md) and [analysis rules](docs/analysis-rules.md).
+**Tools > Options > Querywright**; every feature above can be switched off there. Full list: [features](docs/features.md) and [analysis rules](docs/analysis-rules.md).
 
 ## Build from source
 
@@ -93,7 +94,7 @@ The package is written to `src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssm
 - `scripts/Test-Ssms.ps1`: the end-to-end tests that drive a real SSMS 22 in CI.
 
 Every push builds the extension and runs the SSMS tests on GitHub Actions. To publish a release,
-run the **Build VSIX** workflow with a tag such as `v0.4.0`; it is published only if the tests pass.
+run the **Build VSIX** workflow with a tag such as `v0.4.0`; it is published only if the tests pass, with SHA-256 checksums of the zip and .vsix in the release notes.
 
 ## Contributing
 

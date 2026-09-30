@@ -153,5 +153,6 @@ jobs:
           # Versioned names; the updater looks for QueryWright_<tag>.zip.
           mv Querywright-ssms22.zip "QueryWright_$TAG.zip"
           unzip -p "QueryWright_$TAG.zip" Querywright.Ssms.vsix > "QueryWright_$TAG.vsix"
+          printf '\n## SHA-256\n\n```\n%s\n```\n' "$(sha256sum "QueryWright_$TAG.zip" "QueryWright_$TAG.vsix")" >> notes.md
           gh release create "$TAG" "QueryWright_$TAG.zip" "QueryWright_$TAG.vsix" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Querywright $TAG" --notes-file notes.md

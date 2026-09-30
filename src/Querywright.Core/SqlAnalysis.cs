@@ -114,13 +114,13 @@ namespace Querywright.Core
                 (settings == null || settings.Severity(d.Rule) != RuleSeverity.Disabled) && !suppression.Suppressed(d)));
         }
 
-        /// <summary>Rules with a mechanical fix.</summary>
-        /// <summary>Targets of DELETE/UPDATE statements without WHERE, e.g. "DELETE LC.StatusHdr". Empty when none or the SQL does not parse.</summary>
-        public static IReadOnlyList<string> UnfilteredChanges(string sql, bool unfiltered = true, bool dropTruncate = false)
+        /// <summary>Targets of DELETE/UPDATE statements without WHERE, e.g. "DELETE LC.StatusHdr"; with <paramref name="schema"/> also every other DROP and ALTER statement (first line).
+        /// Empty when none or the SQL does not parse.</summary>
+        public static IReadOnlyList<string> UnfilteredChanges(string sql, bool unfiltered = true, bool dropTruncate = false, bool schema = false)
         {
             var fragment = new TSql170Parser(true).ParseSafe(sql ?? "", out var errors);
             if (errors.Count > 0) return Array.Empty<string>();
-            var found = new Unfiltered(sql!, unfiltered, dropTruncate);
+            var found = new Unfiltered(sql!, unfiltered, dropTruncate, schema);
             fragment.Accept(found);
             return found.Targets;
         }
@@ -152,15 +152,24 @@ namespace Querywright.Core
         {
             private readonly string sql;
             internal readonly List<string> Targets = new List<string>();
-            private readonly bool unfiltered, dropTruncate;
-            internal Unfiltered(string sql, bool unfiltered, bool dropTruncate) { this.sql = sql; this.unfiltered = unfiltered; this.dropTruncate = dropTruncate; }
+            private readonly bool unfiltered, dropTruncate, schema;
+            internal Unfiltered(string sql, bool unfiltered, bool dropTruncate, bool schema) { this.sql = sql; this.unfiltered = unfiltered; this.dropTruncate = dropTruncate; this.schema = schema; }
             private void Add(string verb, TSqlFragment target) => Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength));
             public override void Visit(DeleteSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null) Add("DELETE", node.Target); }
             public override void Visit(UpdateSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null) Add("UPDATE", node.Target); }
             public override void Visit(TruncateTableStatement node) { if (dropTruncate && node.TableName != null) Add("TRUNCATE TABLE", node.TableName); }
             public override void Visit(DropTableStatement node) { if (dropTruncate) foreach (var name in node.Objects) Add("DROP TABLE", name); }
+            // ponytail: ScriptDom names every DROP/ALTER statement type Drop*/Alter*, so the type name covers them all.
+            public override void Visit(TSqlStatement node)
+            {
+                string type = node.GetType().Name;
+                if (!schema || node is DropTableStatement || !(type.StartsWith("Drop", StringComparison.Ordinal) || type.StartsWith("Alter", StringComparison.Ordinal))) return;
+                string text = sql.Substring(node.StartOffset, node.FragmentLength).Split('\n')[0].Trim().TrimEnd(';');
+                Targets.Add(text.Length > 80 ? text.Substring(0, 77) + "..." : text);
+            }
         }
 
+        /// <summary>Rules with a mechanical fix.</summary>
         public static readonly IReadOnlyCollection<string> FixableRules =new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };
 
         /// <summary>The edit that resolves one diagnostic, or null when the rule has no safe fix here. The result must still parse.</summary>

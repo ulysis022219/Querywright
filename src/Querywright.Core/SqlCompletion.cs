@@ -257,7 +257,7 @@ namespace Querywright.Core
                 while (batchEnd < tokens.Count && tokens[batchEnd].Type != TSqlTokenType.Go) batchEnd++;
                 int from = batchStart == 0 ? 0 : tokens[batchStart - 1].Offset + tokens[batchStart - 1].Text.Length;
                 int to = batchEnd < tokens.Count ? tokens[batchEnd].Offset : sql.Length;
-                var fragment = parser.Parse(new StringReader(sql.Substring(from, start - from) + Marker + sql.Substring(end, to - end)), out var errors);
+                var fragment = parser.ParseSafe(sql.Substring(from, start - from) + Marker + sql.Substring(end, to - end), out var errors);
                 if (errors.Count == 0) { resolver = new Resolver(catalog, defaultSchema, names); fragment.Accept(resolver); }
             }
             var scan = new Scanner(sql, segment, catalog, defaultSchema, names);
@@ -550,7 +550,7 @@ namespace Querywright.Core
 
         private static IEnumerable<string> BodyColumns(string body)
         {
-            var fragment = new TSql170Parser(true).Parse(new StringReader(body), out var errors);
+            var fragment = new TSql170Parser(true).ParseSafe(body, out var errors);
             var statement = errors.Count == 0 ? (fragment as TSqlScript)?.Batches.SelectMany(b => b.Statements).FirstOrDefault() as SelectStatement : null;
             return statement == null ? Array.Empty<string>() : Projection(statement.QueryExpression).ToArray();
         }
@@ -709,7 +709,7 @@ namespace Querywright.Core
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
             if (sql.Length > 1_000_000) throw new ArgumentException("Expansion input exceeds 1,000,000 characters.");
             var parser = new TSql170Parser(true);
-            var fragment = parser.Parse(new StringReader(sql), out var errors);
+            var fragment = parser.ParseSafe(sql, out var errors);
             if (errors.Count > 0) throw new FormatException("Fix SQL syntax errors before expanding a wildcard.");
             var visitor = new Resolver(tables, defaultSchema, caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase, position);
             fragment.Accept(visitor);
@@ -717,7 +717,7 @@ namespace Querywright.Core
             visitor.Expansion = new TextEdit(visitor.Expansion.Start, visitor.Expansion.Length, ColumnList(sql, visitor.Expansion.Start, visitor.Parts));
             string result = sql.Substring(0, visitor.Expansion.Start) + visitor.Expansion.Text +
                 sql.Substring(visitor.Expansion.Start + visitor.Expansion.Length);
-            parser.Parse(new StringReader(result), out var finalErrors);
+            parser.ParseSafe(result, out var finalErrors);
             if (finalErrors.Count > 0) throw new InvalidOperationException("Expansion produced invalid SQL; original text retained.");
             return visitor;
         }

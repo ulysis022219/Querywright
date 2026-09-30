@@ -8,6 +8,65 @@ using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 namespace Querywright.Core
 {
+    /// <summary>
+    /// ScriptDom parses and visits recursively, and a stack overflow cannot be caught: it ends the SSMS process.
+    /// Every parse goes through <see cref="ParseSafe"/>, which reports too-deeply nested SQL as a parse error instead.
+    /// </summary>
+    internal static class SafeParsing
+    {
+        /// <summary>Nesting limit, well under the ~500 levels that overflow a 1 MB thread stack.</summary>
+        internal const int MaxDepth = 200;
+        /// <summary>Binary operators (AND, OR, +, UNION...) per statement; each nests the tree one level. ~4,000 overflow the formatter.</summary>
+        internal const int MaxChain = 2000;
+        private static readonly HashSet<TSqlTokenType> Operators = new HashSet<TSqlTokenType> { TSqlTokenType.And, TSqlTokenType.Or, TSqlTokenType.Union,
+            TSqlTokenType.Except, TSqlTokenType.Intersect, TSqlTokenType.Plus, TSqlTokenType.Minus, TSqlTokenType.Star, TSqlTokenType.Divide,
+            TSqlTokenType.PercentSign, TSqlTokenType.Ampersand, TSqlTokenType.VerticalLine, TSqlTokenType.Circumflex };
+        private static readonly HashSet<TSqlTokenType> StatementStarts = new HashSet<TSqlTokenType> { TSqlTokenType.Semicolon, TSqlTokenType.Insert,
+            TSqlTokenType.Update, TSqlTokenType.Delete, TSqlTokenType.Merge, TSqlTokenType.Declare, TSqlTokenType.Set, TSqlTokenType.If, TSqlTokenType.While,
+            TSqlTokenType.Exec, TSqlTokenType.Execute, TSqlTokenType.Create, TSqlTokenType.Alter, TSqlTokenType.Drop, TSqlTokenType.Print, TSqlTokenType.Return };
+        private static readonly HashSet<string> NotBlocks = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TRAN", "TRANSACTION", "DISTRIBUTED", "DIALOG", "CONVERSATION" };
+
+        internal static TSqlFragment ParseSafe(this TSqlParser parser, string sql, out IList<ParseError> errors)
+        {
+            if (TooDeep(sql))
+            {
+                errors = new[] { new ParseError(0, 0, 1, 1, "SQL is nested too deeply to parse safely (over " + MaxDepth + " levels, or " + MaxChain + " operators in one statement).") };
+                return new TSqlScript();
+            }
+            return parser.Parse(new StringReader(sql), out errors);
+        }
+
+        /// <summary>
+        /// Counts open parentheses, CASE and BEGIN blocks per batch, operator chains per statement, plus ELSE IF chains (each nests the next IF,
+        /// but costs less stack than a parenthesis, hence the quarter weight). Lexing is iterative, so this is safe on any input.
+        /// </summary>
+        internal static bool TooDeep(string sql)
+        {
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql), out _);
+            int depth = 0, elseIf = 0, chain = 0;
+            TSqlParserToken? previous = null;
+            foreach (var token in tokens)
+            {
+                switch (token.TokenType)
+                {
+                    case TSqlTokenType.WhiteSpace: case TSqlTokenType.SingleLineComment: case TSqlTokenType.MultilineComment: continue;
+                    case TSqlTokenType.Go: depth = 0; elseIf = 0; chain = 0; break;
+                    case TSqlTokenType.LeftParenthesis: case TSqlTokenType.Case: case TSqlTokenType.Begin: depth++; break;
+                    case TSqlTokenType.RightParenthesis: case TSqlTokenType.End: if (depth > 0) depth--; break;
+                    case TSqlTokenType.If: if (previous?.TokenType == TSqlTokenType.Else) elseIf++; break;
+                    default:
+                        // BEGIN TRAN / DISTRIBUTED / DIALOG / CONVERSATION open no block.
+                        if (previous?.TokenType == TSqlTokenType.Begin && depth > 0 && NotBlocks.Contains(token.Text)) depth--;
+                        break;
+                }
+                if (Operators.Contains(token.TokenType)) chain++;
+                else if (StatementStarts.Contains(token.TokenType)) chain = 0;
+                if (depth + elseIf / 4 > MaxDepth || chain > MaxChain) return true;
+                previous = token;
+            }
+            return false;
+        }
+    }
     public sealed class SqlDiagnostic
     {
         public string Rule { get; }
@@ -43,7 +102,7 @@ namespace Querywright.Core
             cancellationToken.ThrowIfCancellationRequested();
             // ponytail: SQL Server 2025 grammar with QUOTED_IDENTIFIER ON; add per-connection dialect settings before live analysis.
             var parser = new TSql170Parser(true);
-            var fragment = parser.Parse(new StringReader(sql), out var errors);
+            var fragment = parser.ParseSafe(sql, out var errors);
             cancellationToken.ThrowIfCancellationRequested();
             if (errors.Count > 0)
                 return new AnalysisResult(false, errors.Select(e => new SqlDiagnostic("PARSE" + e.Number,
@@ -59,7 +118,7 @@ namespace Querywright.Core
         /// <summary>Targets of DELETE/UPDATE statements without WHERE, e.g. "DELETE LC.StatusHdr". Empty when none or the SQL does not parse.</summary>
         public static IReadOnlyList<string> UnfilteredChanges(string sql, bool unfiltered = true, bool dropTruncate = false)
         {
-            var fragment = new TSql170Parser(true).Parse(new StringReader(sql ?? ""), out var errors);
+            var fragment = new TSql170Parser(true).ParseSafe(sql ?? "", out var errors);
             if (errors.Count > 0) return Array.Empty<string>();
             var found = new Unfiltered(sql!, unfiltered, dropTruncate);
             fragment.Accept(found);
@@ -69,7 +128,7 @@ namespace Querywright.Core
         /// <summary>"USE [Db]" statements in a script that also changes data or drops tables, so the changes land in another database than the window's. Empty when none or the SQL does not parse.</summary>
         public static IReadOnlyList<string> DatabaseSwitchChanges(string sql)
         {
-            var fragment = new TSql170Parser(true).Parse(new StringReader(sql ?? ""), out var errors);
+            var fragment = new TSql170Parser(true).ParseSafe(sql ?? "", out var errors);
             if (errors.Count > 0) return Array.Empty<string>();
             var found = new Switches();
             fragment.Accept(found);
@@ -111,7 +170,7 @@ namespace Querywright.Core
             if (diagnostic == null) throw new ArgumentNullException(nameof(diagnostic));
             if (sql.Length > 1_000_000 || diagnostic.Offset < 0 || diagnostic.Offset + diagnostic.Length > sql.Length) return null;
             var parser = new TSql170Parser(true);
-            var script = parser.Parse(new StringReader(sql), out var errors);
+            var script = parser.ParseSafe(sql, out var errors);
             if (errors.Count > 0) return null;
             var nodes = new Spans(diagnostic.Offset, diagnostic.Length);
             script.Accept(nodes);
@@ -161,7 +220,7 @@ namespace Querywright.Core
                     break;
             }
             if (edit == null) return null;
-            parser.Parse(new StringReader(Apply(sql, edit)), out var after);
+            parser.ParseSafe(Apply(sql, edit), out var after);
             return after.Count == 0 ? edit : null;
         }
 
@@ -182,7 +241,7 @@ namespace Querywright.Core
                     var edit = Fix(sql, diagnostic, tables, defaultSchema);
                     if (edit == null || edit.Start + edit.Length > limit) continue;
                     string next = Apply(sql, edit);
-                    new TSql170Parser(true).Parse(new StringReader(next), out var errors);
+                    new TSql170Parser(true).ParseSafe(next, out var errors);
                     if (errors.Count > 0) continue;
                     sql = next; limit = edit.Start; applied++;
                 }

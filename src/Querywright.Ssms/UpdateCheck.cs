@@ -45,7 +45,7 @@ namespace Querywright.Ssms
                 using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) })
                 {
                     client.DefaultRequestHeaders.UserAgent.ParseAdd("Querywright-update-check");
-                    json = await client.GetStringAsync("https://api.github.com/repos/ulysis022219/SqlWorkbench/releases/latest").ConfigureAwait(false);
+                    json = await client.GetStringAsync("https://api.github.com/repos/ulysis022219/Querywright/releases/latest").ConfigureAwait(false);
                 }
                 string tag = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"(v[0-9.]+)\"").Groups[1].Value;
                 if (!Updates.IsNewer(tag, installed))

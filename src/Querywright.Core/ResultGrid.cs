@@ -29,7 +29,7 @@ namespace Querywright.Core
         public static string FileName(string? sql, DateTime now)
         {
             string name = "Results";
-            var fragment = new Microsoft.SqlServer.TransactSql.ScriptDom.TSql170Parser(true).Parse(new StringReader(sql ?? ""), out _);
+            var fragment = new Microsoft.SqlServer.TransactSql.ScriptDom.TSql170Parser(true).ParseSafe(sql ?? "", out _);
             var finder = new FirstTable();
             fragment?.Accept(finder);
             if (finder.Name != null)
@@ -178,7 +178,7 @@ namespace Querywright.Core
         /// <summary>"[schema].[table]" of the first table the query reads, else null.</summary>
         public static string? SourceTable(string? sql)
         {
-            var fragment = new Microsoft.SqlServer.TransactSql.ScriptDom.TSql170Parser(true).Parse(new StringReader(sql ?? ""), out _);
+            var fragment = new Microsoft.SqlServer.TransactSql.ScriptDom.TSql170Parser(true).ParseSafe(sql ?? "", out _);
             var finder = new FirstTable();
             fragment?.Accept(finder);
             return finder.Name == null ? null : Bracket(finder.Name.SchemaIdentifier?.Value ?? "dbo") + "." + Bracket(finder.Name.BaseIdentifier.Value);

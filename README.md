@@ -17,8 +17,11 @@ It helps you write, format, check and refactor T-SQL faster, right inside the SS
 3. Start SSMS 22 and open a query window.
 
 Querywright tells you when a newer release is out (once a day; turn it off under
-Tools > Options > Querywright > Updates). To update, install the new zip the same way; your
-settings are kept. To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt](docs/INSTALL.txt).
+Tools > Options > Querywright > Updates). Click **Install update** in the notice: Querywright
+downloads and verifies the release, then waits for you to save your work and close SSMS.
+The updater installs it automatically; reopen SSMS when it reports success. Your settings are kept.
+Older versions that only show **Download** need one manual update to get this feature.
+To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt](docs/INSTALL.txt).
 
 ## What it does
 
@@ -69,6 +72,7 @@ Requires the .NET 10 SDK on Windows.
 dotnet run --project tests/Querywright.Checks                  # core checks
 dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj      # builds the .vsix
 powershell -NoProfile -File scripts/Test-Package.ps1           # checks the package contents
+powershell -NoProfile -File scripts/Test-Update.ps1            # update validation, no installation
 ```
 
 The package is written to `src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix`.

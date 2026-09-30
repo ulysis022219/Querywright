@@ -101,11 +101,12 @@ try {
     Check (@(Nodes $rename.Content | Where-Object { $_ -is [Windows.Controls.TextBlock] -and $_.Text -eq 'Enter a name before previewing.' }).Count -eq 1) 'Blank rename must stop before background work'
     Layout $rename 'rename'
 } finally { $rename.Close() }
-$style = Dialog 'FormattingStyleDialog' @([Querywright.Core.FormattingStyle]::new(), 'test-settings.xml')
+$style = Dialog 'FormattingStyleDialog' @([Querywright.Core.WorkbenchSettings]::new(), 'test-settings.xml')
 try {
     $style.Size = $style.MinimumSize; $style.PerformLayout()
     Check ($style.AcceptButton.Enabled) 'Valid formatting preview must allow Save'
-    Check ($style.Controls[0] -is [Windows.Forms.SplitContainer]) 'Formatting panes should be resizable'
+    Check ($style.Controls[0].TabPages[0].Controls[0] -is [Windows.Forms.SplitContainer]) 'Formatting panes should be resizable'
+    Check ($style.Controls[0].TabPages[1].Controls[0].SelectedObject -is [Querywright.Core.WorkbenchSettings]) 'Rule severities should be editable'
 } finally { $style.Dispose() }
 $history = Dialog 'TabHistoryDialog' @([string](Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())))
 try {

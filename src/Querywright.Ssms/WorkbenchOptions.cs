@@ -18,6 +18,11 @@ namespace Querywright.Ssms
         public bool LiveMetadata { get; set; } = true;
 
         [Category("Completion")]
+        [DisplayName("Cache schema on disk")]
+        [Description("Keep table and column names, types and foreign keys in %LOCALAPPDATA%\\Querywright\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes.")]
+        public bool CacheSchemaOnDisk { get; set; } = true;
+
+        [Category("Completion")]
         [DisplayName("Close quotes")]
         [Description("Typing ' inserts '' with the caret between them; typing ' before the closing quote steps over it, and Backspace in an empty pair removes both.")]
         public bool CloseQuotes { get; set; } = true;
@@ -63,6 +68,11 @@ namespace Querywright.Ssms
         public bool ParameterHints { get; set; } = true;
 
         [Category("Editor")]
+        [DisplayName("Hover info")]
+        [Description("Hovering a column, table, procedure or variable shows its type and details from the cached metadata; hovering an END shows the line that opened it.")]
+        public bool HoverInfo { get; set; } = true;
+
+        [Category("Editor")]
         [DisplayName("Fold regions and BEGIN/END blocks")]
         [Description("Collapse --region / --endregion sections and multi-line BEGIN/END blocks from the margin. Reopen the query window after changing this.")]
         public bool FoldBlocks { get; set; } = true;
@@ -96,6 +106,11 @@ namespace Querywright.Ssms
         [DisplayName("Warn before DROP TABLE/TRUNCATE TABLE")]
         [Description("When you execute DROP TABLE or TRUNCATE TABLE, ask before SSMS runs it.")]
         public bool WarnDropTruncate { get; set; }
+
+        [Category("Environment")]
+        [DisplayName("Production servers")]
+        [Description("Patterns separated by ';' matched against server/database, e.g. \"prod;live\". On a matching connection, executing DROP, ALTER, TRUNCATE or a DELETE/UPDATE without WHERE always asks first.")]
+        public string ProductionServers { get; set; } = "";
 
         [Category("Environment")]
         [DisplayName("Warn before USE then change data")]

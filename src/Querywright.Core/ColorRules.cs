@@ -21,6 +21,10 @@ namespace Querywright.Core
             return string.Join(";", (color == null ? kept : new[] { pattern + "=" + color }.Concat(kept)));
         }
 
+        /// <summary>True when any ';'-separated pattern is a substring of "server/database", e.g. "prod;live".</summary>
+        public static bool Matches(string? patterns, string? server, string? database) =>
+            server != null && (patterns ?? "").Split(';').Select(p => p.Trim()).Any(p => p.Length > 0 && (server + "/" + database).IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0);
+
         private static string[][] Split(string? rules) =>
             (rules ?? "").Split(';').Select(r => r.Split('=')).Where(r => r.Length == 2 && r[0].Trim().Length > 0).ToArray();
     }

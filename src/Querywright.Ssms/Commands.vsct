@@ -238,6 +238,10 @@
         <Parent guid="CommandsGuid" id="SettingsGroup" />
         <Strings><ButtonText>Options...</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="CheckForUpdates" priority="0x0030" type="Button">
+        <Parent guid="CommandsGuid" id="SettingsGroup" />
+        <Strings><ButtonText>Check for updates...</ButtonText></Strings>
+      </Button>
     </Buttons>
   </Commands>
   <CommandPlacements>
@@ -342,6 +346,7 @@
       <IDSymbol name="SearchDatabases" value="0x0129" />
       <IDSymbol name="WrapDynamicSql" value="0x012A" />
       <IDSymbol name="UnwrapDynamicSql" value="0x012B" />
+      <IDSymbol name="CheckForUpdates" value="0x012C" />
       <IDSymbol name="EditorGroup" value="0x1050" />
     </GuidSymbol>
     <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">

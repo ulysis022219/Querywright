@@ -17,7 +17,8 @@ It helps you write, format, check and refactor T-SQL faster, right inside the SS
 3. Start SSMS 22 and open a query window.
 
 Querywright tells you when a newer release is out (once a day; turn it off under
-Tools > Options > Querywright > Updates). Click **Install update** in the notice: Querywright
+Tools > Options > Querywright > Updates; check now with Querywright > **Check for updates...**).
+Click **Install update** in the notice: Querywright
 downloads and verifies the release, then waits for you to save your work and close SSMS.
 The updater installs it automatically; reopen SSMS when it reports success. Your settings are kept.
 Older versions that only show **Download** need one manual update to get this feature.

@@ -312,8 +312,8 @@ namespace Querywright.Core
                 if (context != Context.Table)
                 {
                     foreach (var join in Joins(segment, at, scan, catalog, defaultSchema, names)) items.Add((join, Kind.Join));
-                    // ORDER and GROUP are only ever followed by BY.
-                    foreach (var k in Keywords) Add(Kind.Keyword, k, k.Equals("ORDER", StringComparison.OrdinalIgnoreCase) || k.Equals("GROUP", StringComparison.OrdinalIgnoreCase) ? k + " BY" : k, "keyword");
+                    // ponytail: ORDER and GROUP are only ever followed by BY; name == insert text, as the SSMS list commits reliably then.
+                    foreach (var k in Keywords) { string w = k.Equals("ORDER", StringComparison.OrdinalIgnoreCase) || k.Equals("GROUP", StringComparison.OrdinalIgnoreCase) ? k + " BY" : k; Add(Kind.Keyword, w, w, "keyword"); }
                     foreach (var f in Functions) Add(Kind.Function, f, f + "(", "function");
                     foreach (var s in scan.Sources.Where(s => s.Explicit)) Add(Kind.Alias, s.Alias, QuoteIfNeeded(s.Alias), "alias " + s.Description);
                     // Tables of the caret's own statement first; others in the same batch (no semicolons between) rank after them.

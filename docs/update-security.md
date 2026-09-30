@@ -9,7 +9,7 @@ behavior; an execution policy is not a code-signing guarantee.
 
 The helper retrieves the selected release from the fixed GitHub repository. It
 requires a published, non-prerelease record with an exact matching tag and exactly
-one `Querywright-ssms22.zip` asset at the expected repository download URL. A GitHub
+one `QueryWright_<tag>.zip` asset at the expected repository download URL. A GitHub
 SHA-256 asset digest is mandatory. Downloads use HTTPS with normal certificate
 validation; redirects are limited to github.com and release-assets.githubusercontent.com,
 with at most five redirects, a five-minute total timeout and a 100 MiB limit.

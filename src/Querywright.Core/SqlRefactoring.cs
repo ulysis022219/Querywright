@@ -38,12 +38,12 @@ namespace Querywright.Core
             var parser = new TSql170Parser(true);
             if (string.IsNullOrWhiteSpace(newName) || !newName.StartsWith("@", StringComparison.Ordinal) || newName.StartsWith("@@", StringComparison.Ordinal) || newName.Length > 128)
                 throw new ArgumentException("Enter a local variable name beginning with one @, at most 128 characters.", nameof(newName));
-            var nameScript = (TSqlScript)parser.Parse(new StringReader("DECLARE " + newName + " int;"), out var nameErrors);
+            var nameScript = (TSqlScript)parser.ParseSafe("DECLARE " + newName + " int;", out var nameErrors);
             if (nameErrors.Count != 0 || nameScript.Batches.Count != 1 || nameScript.Batches[0].Statements.Count != 1 ||
                 !(nameScript.Batches[0].Statements[0] is DeclareVariableStatement declaration) || declaration.Declarations.Count != 1 ||
                 declaration.Declarations[0].VariableName.Value != newName)
                 throw new ArgumentException("Invalid local variable name.", nameof(newName));
-            var script = (TSqlScript)parser.Parse(new StringReader(sql), out var errors);
+            var script = (TSqlScript)parser.ParseSafe(sql, out var errors);
             if (errors.Count != 0) throw new FormatException("Fix SQL syntax errors before refactoring.");
             var batch = script.Batches.FirstOrDefault(b => b.StartOffset <= position && position <= b.StartOffset + b.FragmentLength);
             if (batch == null) throw new InvalidOperationException("Place the caret on a declared local variable.");
@@ -64,7 +64,7 @@ namespace Querywright.Core
             var output = new StringBuilder(sql);
             foreach (var reference in matches) output.Remove(reference.StartOffset, reference.FragmentLength).Insert(reference.StartOffset, newName);
             string result = output.ToString();
-            parser.Parse(new StringReader(result), out var finalErrors);
+            parser.ParseSafe(result, out var finalErrors);
             if (finalErrors.Count > 0) throw new InvalidOperationException("Rename produced invalid SQL; original text retained.");
             return new RenameResult(result, oldName, matches.Length);
         }
@@ -74,7 +74,7 @@ namespace Querywright.Core
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (sql.Length > 1_000_000) throw new ArgumentException("Refactoring input exceeds 1,000,000 characters.");
             var parser = new TSql170Parser(true);
-            var script = parser.Parse(new StringReader(sql), out var errors);
+            var script = parser.ParseSafe(sql, out var errors);
             if (errors.Count != 0) throw new FormatException("Fix SQL syntax errors before inserting semicolons.");
             var statements = new Statements();
             script.Accept(statements);
@@ -87,7 +87,7 @@ namespace Querywright.Core
             string result = output.ToString();
             // Guard: the only token change allowed is added semicolons.
             var after = parser.GetTokenStream(new StringReader(result), out var finalErrors);
-            if (finalErrors.Count > 0 || parser.Parse(new StringReader(result), out finalErrors) == null || finalErrors.Count > 0 ||
+            if (finalErrors.Count > 0 || parser.ParseSafe(result, out finalErrors) == null || finalErrors.Count > 0 ||
                 !Significant(after).SequenceEqual(Significant(tokens)))
                 throw new InvalidOperationException("Semicolon insertion changed SQL structure; original text retained.");
             return result;
@@ -174,7 +174,7 @@ namespace Querywright.Core
             var output = new StringBuilder(sql);
             foreach (int offset in offsets.Reverse()) output.Insert(offset, prefix);
             string result = output.ToString();
-            parser.Parse(new StringReader(result), out var finalErrors);
+            parser.ParseSafe(result, out var finalErrors);
             if (finalErrors.Count > 0) throw new InvalidOperationException("Qualifying produced invalid SQL; original text retained.");
             return result;
         }
@@ -186,7 +186,7 @@ namespace Querywright.Core
             var parser = new TSql170Parser(true);
             const string probe = "SELECT 1 FROM t AS ";
             var nameScript = string.IsNullOrWhiteSpace(newName) || newName.Length > 260 ? null
-                : (TSqlScript)parser.Parse(new StringReader(probe + newName + ";"), out var nameErrors) is var parsed && nameErrors.Count == 0 ? parsed : null;
+                : (TSqlScript)parser.ParseSafe(probe + newName + ";", out var nameErrors) is var parsed && nameErrors.Count == 0 ? parsed : null;
             var parsedName = nameScript != null && nameScript.Batches.Count == 1 && nameScript.Batches[0].Statements.Count == 1 &&
                 nameScript.Batches[0].Statements[0] is SelectStatement { QueryExpression: QuerySpecification { FromClause: { TableReferences: { Count: 1 } refs } } } &&
                 refs[0] is NamedTableReference { Alias: { } alias } && alias.StartOffset == probe.Length && alias.FragmentLength == newName.Length ? alias : null;
@@ -223,7 +223,7 @@ namespace Querywright.Core
             var output = new StringBuilder(sql);
             foreach (var identifier in edits) output.Remove(identifier.StartOffset, identifier.FragmentLength).Insert(identifier.StartOffset, newName);
             string result = output.ToString();
-            parser.Parse(new StringReader(result), out var finalErrors);
+            parser.ParseSafe(result, out var finalErrors);
             if (finalErrors.Count > 0) throw new InvalidOperationException("Rename produced invalid SQL; original text retained.");
             return new RenameResult(result, oldName, edits.Length);
         }
@@ -335,7 +335,7 @@ namespace Querywright.Core
             foreach (var dependent in dependents ?? Array.Empty<(string, string, string)>())
             {
                 var parser = new TSql170Parser(true);
-                var fragment = dependent.Definition == null ? null : parser.Parse(new StringReader(dependent.Definition), out var errors) is var f && errors.Count == 0 ? f : null;
+                var fragment = dependent.Definition == null ? null : parser.ParseSafe(dependent.Definition, out var errors) is var f && errors.Count == 0 ? f : null;
                 if (fragment == null)
                 {
                     script.Append("-- ").Append(dependent.Schema).Append('.').Append(dependent.Name).Append(": definition could not be parsed; update it by hand.").Append(newline);
@@ -435,7 +435,7 @@ namespace Querywright.Core
             if (used.Tables.Any(t => !used.Declared.Contains(t)))
                 throw new InvalidOperationException("Table variables declared outside the selection cannot become parameters.");
             var types = new SqlAssist.Declarations();
-            var whole = parser.Parse(new StringReader(sql), out var errors);
+            var whole = parser.ParseSafe(sql, out var errors);
             if (errors.Count == 0) whole.Accept(types);
             var parameters = used.Referenced.Where(v => !used.Declared.Contains(v)).Distinct(names).ToList();
             string Type(string variable) => types.Types.TryGetValue(variable, out var t) && !types.Tables.Contains(variable)
@@ -450,7 +450,7 @@ namespace Querywright.Core
             text.Append("-- EXEC ").Append(SqlCompletion.QuoteIfNeeded(schema)).Append('.').Append(SqlCompletion.QuoteIfNeeded(name));
             text.Append(string.Join(",", parameters.Select(p => " " + p + " = " + p + (used.Assigned.Contains(p) ? " OUTPUT" : "")))).Append(';').Append(newline);
             string result = text.ToString();
-            parser.Parse(new StringReader(result), out var finalErrors);
+            parser.ParseSafe(result, out var finalErrors);
             if (finalErrors.Count > 0) throw new InvalidOperationException("Encapsulating produced invalid SQL; select whole statements.");
             return result;
         }
@@ -514,7 +514,7 @@ namespace Querywright.Core
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (sql.Length > 1_000_000) throw new ArgumentException("Refactoring input exceeds 1,000,000 characters.");
-            var script = (TSqlScript)parser.Parse(new StringReader(sql), out var errors);
+            var script = (TSqlScript)parser.ParseSafe(sql, out var errors);
             if (errors.Count != 0) throw new FormatException("Fix SQL syntax errors before " + action + ".");
             return script;
         }
@@ -540,7 +540,7 @@ namespace Querywright.Core
             foreach (var edit in edits.Reverse())
                 output.Remove(tokens[edit.Key].Offset, tokens[edit.Key].Text.Length).Insert(tokens[edit.Key].Offset, edit.Value.Text);
             string result = output.ToString();
-            var reparsed = parser.Parse(new StringReader(result), out var errors);
+            var reparsed = parser.ParseSafe(result, out var errors);
             var after = reparsed?.ScriptTokenStream;
             if (errors.Count != 0 || reparsed == null || after == null || after.Count != tokens.Count ||
                 Enumerable.Range(0, tokens.Count).Any(i => edits.TryGetValue(i, out var e)

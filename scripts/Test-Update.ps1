@@ -13,14 +13,14 @@ function New-Release {
     return [pscustomobject]@{
         tag_name = 'v1.2.3'; draft = $false; prerelease = $false
         assets = @([pscustomobject]@{
-            name = 'Querywright-ssms22.zip'; state = 'uploaded'; digest = 'sha256:' + ('a' * 64)
-            browser_download_url = 'https://github.com/ulysis022219/SqlWorkbench/releases/download/v1.2.3/Querywright-ssms22.zip'
+            name = 'QueryWright_v1.2.3.zip'; state = 'uploaded'; digest = 'sha256:' + ('a' * 64)
+            browser_download_url = 'https://github.com/ulysis022219/Querywright/releases/download/v1.2.3/QueryWright_v1.2.3.zip'
         })
     }
 }
 $release = New-Release
 $asset = Get-QuerywrightReleaseAsset $release 'v1.2.3'
-if ($asset.name -ne 'Querywright-ssms22.zip') { throw 'Valid release was not selected.' }
+if ($asset.name -ne 'QueryWright_v1.2.3.zip') { throw 'Valid release was not selected.' }
 $script:checks++
 foreach ($tag in @('v1.2.3/other', 'v1.2.3-beta', 'v1.2', 'v1.2.4', 'V1.2.3', "v1.2.3`n", 'v1.2.3";whoami')) {
     Reject { Get-QuerywrightReleaseAsset $release $tag } 'published stable'
@@ -37,7 +37,7 @@ $release = New-Release
 $release.assets += $release.assets[0]
 Reject { Get-QuerywrightReleaseAsset $release 'v1.2.3' } 'exactly one'
 $release = New-Release
-$release.assets[0].browser_download_url = 'https://example.com/Querywright-ssms22.zip'
+$release.assets[0].browser_download_url = 'https://example.com/QueryWright_v1.2.3.zip'
 Reject { Get-QuerywrightReleaseAsset $release 'v1.2.3' } 'download location'
 $release = New-Release
 $release.assets[0].digest = $null

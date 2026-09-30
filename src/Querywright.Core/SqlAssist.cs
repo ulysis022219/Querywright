@@ -202,7 +202,7 @@ namespace Querywright.Core
             string key = defaultSchema + "\0" + batch;
             lock (batchProcedures) if (batchProcedures.TryGetValue(key, out var cached)) return cached;
             var found = new List<SchemaProcedure>();
-            var fragment = new TSql170Parser(true).Parse(new StringReader(batch), out var errors);
+            var fragment = new TSql170Parser(true).ParseSafe(batch, out var errors);
             if (errors.Count == 0)
                 foreach (var body in ((TSqlScript)fragment).Batches.SelectMany(b => b.Statements).OfType<ProcedureStatementBody>())
                 {
@@ -400,7 +400,7 @@ namespace Querywright.Core
             int lineBegin = sql.LastIndexOf('\n', Math.Max(0, offset - 1)) + 1;
             foreach (string text in new[] { sql.Substring(start, end - start), sql.Substring(start, Math.Max(0, lineBegin - start)) })
             {
-                var fragment = new TSql170Parser(true).Parse(new StringReader(text), out var errors);
+                var fragment = new TSql170Parser(true).ParseSafe(text, out var errors);
                 if (errors.Count > 0) continue;
                 var declarations = new Declarations();
                 fragment.Accept(declarations);

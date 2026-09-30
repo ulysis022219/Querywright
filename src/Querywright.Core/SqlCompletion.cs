@@ -252,12 +252,12 @@ namespace Querywright.Core
             Resolver? resolver = null;
             if (!sql.Contains(Marker))
             {
-                // Only the caret's batch is parsed: faster on long scripts, and syntax errors in other batches no longer turn resolution off.
+                // Parse only the caret's batch, so long scripts stay fast and syntax errors elsewhere don't disable resolution.
                 int batchEnd = caret;
                 while (batchEnd < tokens.Count && tokens[batchEnd].Type != TSqlTokenType.Go) batchEnd++;
                 int from = batchStart == 0 ? 0 : tokens[batchStart - 1].Offset + tokens[batchStart - 1].Text.Length;
                 int to = batchEnd < tokens.Count ? tokens[batchEnd].Offset : sql.Length;
-                var fragment = parser.Parse(new StringReader(sql.Substring(from, start - from) + Marker + sql.Substring(end, to - end)), out var errors);
+                var fragment = parser.ParseSafe(sql.Substring(from, start - from) + Marker + sql.Substring(end, to - end), out var errors);
                 if (errors.Count == 0) { resolver = new Resolver(catalog, defaultSchema, names); fragment.Accept(resolver); }
             }
             var scan = new Scanner(sql, segment, catalog, defaultSchema, names);
@@ -360,15 +360,17 @@ namespace Querywright.Core
                     {
                         var seen = new HashSet<string>(names);
                         int group = 0;
+                        bool bare = near.Count(n => n.Columns.Count > 0) == 1 && !qualifySingleTable;
                         // Innermost subquery first, then FROM order.
                         foreach (var s in near.OrderByDescending(s => s.Scope).ThenBy(s => s.Offset).Concat(visible.Except(near).OrderBy(s => s.Offset)).Where(s => s.Columns.Count > 0 && seen.Add(s.Alias)))
                         {
                             group++;
+                            bool isNear = near.Contains(s);
                             foreach (var column in s.Columns)
                             {
                                 var item = new CompletionItem(column, QuoteIfNeeded(s.Alias) + "." + QuoteIfNeeded(column), ColumnDescription(s.Table, column, s.Alias + "." + column));
-                                if (!near.Contains(s)) far.Add(item);
-                                else if (near.Count(n => n.Columns.Count > 0) == 1 && !qualifySingleTable) item = Bare(item);
+                                if (!isNear) far.Add(item);
+                                else if (bare) item = Bare(item);
                                 groups[item] = group;
                                 items.Add((item, Kind.Column));
                             }
@@ -548,7 +550,7 @@ namespace Querywright.Core
 
         private static IEnumerable<string> BodyColumns(string body)
         {
-            var fragment = new TSql170Parser(true).Parse(new StringReader(body), out var errors);
+            var fragment = new TSql170Parser(true).ParseSafe(body, out var errors);
             var statement = errors.Count == 0 ? (fragment as TSqlScript)?.Batches.SelectMany(b => b.Statements).FirstOrDefault() as SelectStatement : null;
             return statement == null ? Array.Empty<string>() : Projection(statement.QueryExpression).ToArray();
         }
@@ -707,7 +709,7 @@ namespace Querywright.Core
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
             if (sql.Length > 1_000_000) throw new ArgumentException("Expansion input exceeds 1,000,000 characters.");
             var parser = new TSql170Parser(true);
-            var fragment = parser.Parse(new StringReader(sql), out var errors);
+            var fragment = parser.ParseSafe(sql, out var errors);
             if (errors.Count > 0) throw new FormatException("Fix SQL syntax errors before expanding a wildcard.");
             var visitor = new Resolver(tables, defaultSchema, caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase, position);
             fragment.Accept(visitor);
@@ -715,7 +717,7 @@ namespace Querywright.Core
             visitor.Expansion = new TextEdit(visitor.Expansion.Start, visitor.Expansion.Length, ColumnList(sql, visitor.Expansion.Start, visitor.Parts));
             string result = sql.Substring(0, visitor.Expansion.Start) + visitor.Expansion.Text +
                 sql.Substring(visitor.Expansion.Start + visitor.Expansion.Length);
-            parser.Parse(new StringReader(result), out var finalErrors);
+            parser.ParseSafe(result, out var finalErrors);
             if (finalErrors.Count > 0) throw new InvalidOperationException("Expansion produced invalid SQL; original text retained.");
             return visitor;
         }

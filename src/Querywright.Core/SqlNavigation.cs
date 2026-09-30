@@ -152,7 +152,7 @@ namespace Querywright.Core
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
             if (sql.Length > 1_000_000) throw new ArgumentException("Navigation input exceeds 1,000,000 characters.");
-            var script = (TSqlScript)new TSql170Parser(true).Parse(new StringReader(sql), out var errors);
+            var script = (TSqlScript)new TSql170Parser(true).ParseSafe(sql, out var errors);
             // Scripts being edited rarely parse; object names still resolve from the tokens around the caret.
             if (errors.Count != 0) return NameAt(sql, position);
             var batch = script.Batches.FirstOrDefault(b => Contains(b, position));
@@ -251,7 +251,7 @@ namespace Querywright.Core
                 else { end = lineStart; break; }
             }
             string region = sql.Substring(start, end - start);
-            var script = (TSqlScript)parser.Parse(new StringReader(region), out var errors);
+            var script = (TSqlScript)parser.ParseSafe(region, out var errors);
             if (errors.Count == 0)
             {
                 var statements = script.Batches.SelectMany(b => b.Statements).ToArray();

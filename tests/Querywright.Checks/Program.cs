@@ -887,6 +887,14 @@ var fileTime = new DateTime(2026, 9, 29, 14, 5, 9);
 Check(ResultGrid.FileName("SELECT * FROM lc.getRefDatabase WHERE descr LIKE '%x%'", fileTime) == "lc.getRefDatabase_20260929_140509", "result file name from FROM table");
 Check(ResultGrid.FileName("select a from Orders o join dbo.Lines l on l.id = o.id", fileTime) == "dbo.Orders_20260929_140509", "result file name defaults schema to dbo");
 Check(ResultGrid.FileName("SELECT 1", fileTime) == "Results_20260929_140509", "result file name without a table");
+Check(ResultGrid.IsNumber("12") && !ResultGrid.IsNumber("12\n") && !ResultGrid.IsNumber("1\n;DROP TABLE t"), "IsNumber rejects a trailing newline");
+// Deep nesting would overflow ScriptDom's recursive parser and end SSMS; it must surface as a parse error instead.
+string deepCase = "SELECT " + string.Concat(Enumerable.Repeat("CASE WHEN 1=1 THEN ", 1000)) + "1" + string.Concat(Enumerable.Repeat(" END", 1000));
+Throws<FormatException>(() => SqlFormatting.Format(deepCase), "deep nesting is a format error, not a crash");
+Check(!SqlAnalysis.Analyze("SELECT " + new string('(', 5000)).Parsed, "deep unclosed parentheses analyze without crashing");
+Throws<FormatException>(() => SqlFormatting.Format("SELECT 1 WHERE " + string.Join(" AND ", Enumerable.Range(0, 5000).Select(i => "1 = " + i))), "long operator chain is a format error");
+Check(SqlFormatting.Format(string.Join(" UNION ALL ", Enumerable.Range(0, 1500).Select(i => "SELECT " + i))).Contains("SELECT 1499"), "1,500 UNION ALL branches still format");
+Check(SqlFormatting.Format("BEGIN TRAN; " + string.Concat(Enumerable.Repeat("SELECT 1; ", 300)) + "COMMIT").Contains("COMMIT"), "BEGIN TRAN does not count as nesting");
 Check(ResultGrid.FileName(null, fileTime) == "Results_20260929_140509", "result file name without query text");
 Check(ResultGrid.InClause(new[] { "3", "1", "3", null, "-2.5" }) == "(3, 1, -2.5)", "IN clause numbers, distinct, NULL dropped");
 Check(ResultGrid.InClause(new[] { "7", "007", "O'Brien" }) == "(N'7', N'007', N'O''Brien')", "IN clause mixed quotes all");
@@ -961,7 +969,7 @@ Check(!Updates.IsNewer("v0.3.0", "0.3.0.57") && !Updates.IsNewer("v0.2.9", "0.3.
     && !Updates.IsNewer("v0.4.0", null) && !Updates.IsNewer(null, "0.3.0") && !Updates.IsNewer("v0.4.0-beta", "0.3.0"), "same, older or malformed versions ignored");
 Check(Updates.ErrorLine("0.3.0.42", "SplitTableAsync", typeof(FormatException)) == "Querywright 0.3.0.42 \u00B7 SplitTable \u00B7 FormatException"
     && Updates.ErrorLine(null, "Format", typeof(IOException)) == "Querywright unknown \u00B7 Format \u00B7 IOException", "error report line");
-Check(Updates.IssueUrl("Querywright 0.3.0 \u00B7 Format \u00B7 IOException") == "https://github.com/ulysis022219/SqlWorkbench/issues/new?template=bug_report.yml&error=Querywright%200.3.0%20%C2%B7%20Format%20%C2%B7%20IOException", "issue link escapes the line");
+Check(Updates.IssueUrl("Querywright 0.3.0 \u00B7 Format \u00B7 IOException") == "https://github.com/ulysis022219/Querywright/issues/new?template=bug_report.yml&error=Querywright%200.3.0%20%C2%B7%20Format%20%C2%B7%20IOException", "issue link escapes the line");
 var scriptColumns = new[]
 {
     new ScriptColumn("Id", "int", null, false) { Identity = "1, 1" },

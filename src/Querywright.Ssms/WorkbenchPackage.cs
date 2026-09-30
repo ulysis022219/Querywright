@@ -852,8 +852,8 @@ namespace Querywright.Ssms
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 var cause = (error as System.Reflection.TargetInvocationException)?.InnerException ?? error;
-                // ponytail: commands throw InvalidOperationException for user-facing messages ("select a table"); anything else is a bug worth reporting.
-                if (cause is InvalidOperationException) { ShowWarning(cause.Message); return; }
+                // ponytail: InvalidOperationException ("select a table") and Core's FormatException ("fix SQL syntax errors first") are user-facing messages; anything else is a bug worth reporting.
+                if (cause is InvalidOperationException || cause is FormatException) { ShowWarning(cause.Message); return; }
                 string line = Updates.ErrorLine(UpdateCheck.InstalledVersion(), command, cause.GetType());
                 int answer = VsShellUtilities.ShowMessageBox(this,
                     cause.Message + "\r\n\r\n" + line + "\r\n\r\nOpen a GitHub issue with this line? Only the line above is sent; the error message, your query and connection are not.",

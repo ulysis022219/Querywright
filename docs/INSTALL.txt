@@ -17,8 +17,14 @@ Try
 
 Update
   Querywright shows a notice in SSMS when a newer release is published (once a day; turn off under
-  Tools > Options > Querywright > Updates). Download the new zip and repeat the Install steps:
-  the newer version replaces the installed one and keeps your settings, snippets and tab history.
+  Tools > Options > Querywright > Updates). Click Install update in the notice.
+  The updater downloads the release and verifies its checksum, extension identity and version.
+  When prompted, save your work and close all windows of that SSMS installation. The updater
+  waits for you; it never closes SSMS itself. Reopen SSMS after it reports successful installation.
+  Your settings, snippets and tab history are kept. Close the updater before installation to cancel.
+  If the update fails, its window shows the error and a link to the manual installer.
+  Stable releases must include Querywright-ssms22.zip with a GitHub SHA-256 asset digest.
+  Older versions with only a Download link need one manual update to enable direct updates.
 
 Report a problem
   When a command fails unexpectedly, the error box shows a line like

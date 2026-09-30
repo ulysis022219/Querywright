@@ -211,6 +211,7 @@ namespace Querywright.Ssms
             Add(0x0129, SearchDatabasesAsync);
             Add(0x012A, () => TransformSelectionAsync(sql => SqlRefactoring.WrapAsDynamicSql(sql), "Wrap in dynamic SQL"));
             Add(0x012B, () => TransformSelectionAsync(SqlRefactoring.UnwrapDynamicSql, "Unwrap dynamic SQL"));
+            Add(0x012C, () => Task.Run(() => UpdateCheck.RunAsync(this, manual: true)));
             Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             Instance = this;
             ServerColorMenu.Start();

@@ -11,7 +11,7 @@ using Querywright.Core;
 
 namespace Querywright.Ssms
 {
-    /// <summary>At most daily, asks GitHub for the latest release and shows an info bar when it is newer. Sends no user data.</summary>
+    /// <summary>At most daily (or on demand from the menu), asks GitHub for the latest release and shows an info bar when it is newer. Sends no user data.</summary>
     internal sealed class UpdateCheck : IVsInfoBarUIEvents
     {
         private const string Releases = Updates.Repository + "releases/";
@@ -31,12 +31,12 @@ namespace Querywright.Ssms
             catch (UnauthorizedAccessException) { return null; }
         }
 
-        internal static async Task RunAsync(WorkbenchPackage package)
+        internal static async Task RunAsync(WorkbenchPackage package, bool manual = false)
         {
             try
             {
                 string stamp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "update-check.txt");
-                if (File.Exists(stamp) && DateTime.UtcNow - File.GetLastWriteTimeUtc(stamp) < TimeSpan.FromDays(1)) return;
+                if (!manual && File.Exists(stamp) && DateTime.UtcNow - File.GetLastWriteTimeUtc(stamp) < TimeSpan.FromDays(1)) return;
                 Directory.CreateDirectory(Path.GetDirectoryName(stamp));
                 File.WriteAllText(stamp, "");
 
@@ -48,7 +48,11 @@ namespace Querywright.Ssms
                     json = await client.GetStringAsync("https://api.github.com/repos/ulysis022219/SqlWorkbench/releases/latest").ConfigureAwait(false);
                 }
                 string tag = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"(v[0-9.]+)\"").Groups[1].Value;
-                if (!Updates.IsNewer(tag, installed)) return;
+                if (!Updates.IsNewer(tag, installed))
+                {
+                    if (manual) await ShowAsync(package, "You have the latest version (" + installed + ").", OLEMSGICON.OLEMSGICON_INFO);
+                    return;
+                }
 
                 await package.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var shell = await package.GetServiceAsync(typeof(SVsShell)) as IVsShell;
@@ -64,7 +68,14 @@ namespace Querywright.Ssms
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
                 ActivityLog.TryLogWarning("Querywright", "Update check skipped: " + error.GetType().Name);
+                if (manual) await ShowAsync(package, "Could not check for updates: " + error.Message, OLEMSGICON.OLEMSGICON_WARNING);
             }
+        }
+
+        private static async Task ShowAsync(WorkbenchPackage package, string message, OLEMSGICON icon)
+        {
+            await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+            VsShellUtilities.ShowMessageBox(package, message, "Querywright update", icon, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }
 
         public void OnActionItemClicked(IVsInfoBarUIElement element, IVsInfoBarActionItem item)

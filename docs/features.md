@@ -80,3 +80,5 @@ parity claim. This initial package is not a completed SQL Prompt replacement.
 | Warn before USE then change data | Execution prompt when a script switches database with USE and then modifies data (Options, on by default). |
 
 Completion after `OtherDb.` offers that database's schemas, then tables, then columns. The other database's catalog loads in the background on first use, so the list appears on a later keystroke.
+
+Column suggestions list only the tables visible at the caret: a derived table or CTE body does not leak its inner FROM into the outer query. Columns are grouped per table, nearest scope first, and are never dropped by the item cap. `"quoted"` names resolve like `[bracketed]` ones.

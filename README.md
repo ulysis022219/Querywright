@@ -27,7 +27,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt
 ## What it does
 
 **Writing SQL**
-- Suggestions as you type: tables, views, columns and joins from the connected database.
+- Suggestions as you type: tables, views, columns and joins from the connected database. Columns are grouped per table in the current query scope (innermost subquery first), including UPDATE aliases, INSERT column lists and MERGE inserts.
   Press **Ctrl+Shift+D** to reload them after schema changes.
 - Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`. Lowercase `$name$` placeholders in a template are fields: Tab selects the next one, then goes to `$CURSOR$`; Esc stops.
   56 built in; add your own `.sql` files or share a team folder.

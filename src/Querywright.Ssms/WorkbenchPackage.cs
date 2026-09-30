@@ -1345,6 +1345,22 @@ namespace Querywright.Ssms
             }
         }
 
+        /// <summary>Format on save: the whole document, silently skipped when it does not parse, so a save is never blocked.</summary>
+        internal void FormatBeforeSave(IWpfTextView view)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var span = new SnapshotSpan(view.TextSnapshot, 0, view.TextSnapshot.Length);
+            string original = span.GetText();
+            // ponytail: synchronous; the save waits for the formatter, which is fine for ordinary scripts and skipped past 1 MB.
+            if (original.Length > 1_000_000) return;
+            string path = options.SettingsFile;
+            var style = (string.IsNullOrWhiteSpace(path) ? new WorkbenchSettings() : WorkbenchSettings.Load(path)).Formatting;
+            string formatted;
+            try { formatted = SqlFormatting.Format(original, style); }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { return; }
+            if (formatted != original) ReplaceText(view, span, formatted, 0, 0, 0, "Format SQL on save");
+        }
+
         private void ReplaceText(IWpfTextView view, SnapshotSpan span, string text, int caret, int selectionStart, int selectionLength, string name,
             IReadOnlyList<(int Start, int Length)> fields = null)
         {

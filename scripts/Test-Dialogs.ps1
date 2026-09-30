@@ -107,6 +107,7 @@ try {
     Check ($style.AcceptButton.Enabled) 'Valid formatting preview must allow Save'
     Check ($style.Controls[0].TabPages[0].Controls[0] -is [Windows.Forms.SplitContainer]) 'Formatting panes should be resizable'
     Check ($style.Controls[0].TabPages[1].Controls[0].SelectedObject -is [Querywright.Core.WorkbenchSettings]) 'Rule severities should be editable'
+    Check ($style.CancelButton -and $style.Controls[0].AccessibleName) 'Esc should cancel and the tabs should have a name'
 } finally { $style.Dispose() }
 $history = Dialog 'TabHistoryDialog' @([string](Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())))
 try {

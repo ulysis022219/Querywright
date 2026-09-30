@@ -120,6 +120,30 @@ namespace Querywright.Ssms
                             }
                             view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- keys " + string.Join("; ", bound));
                             break;
+                        case "set": // an option for this session only (not saved), e.g. set:FormatOnSave=True
+                            var property = typeof(WorkbenchOptions).GetProperty(arg.Substring(0, arg.IndexOf('='))) ?? throw new ArgumentException("unknown option " + arg);
+                            property.SetValue(package.Options, Convert.ChangeType(arg.Substring(arg.IndexOf('=') + 1), property.PropertyType, System.Globalization.CultureInfo.InvariantCulture));
+                            break;
+                        case "save": // File > Save through the shell's routing, as Ctrl+S is
+                            Exec((IOleCommandTarget)await package.GetServiceAsync(typeof(SUIHostCommandDispatcher)), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.SaveProjectItem);
+                            break;
+                        case "prompt": // the next Querywright warning is answered with its Cancel button; its text is appended
+                            var answered = view;
+                            _ = package.JoinableTaskFactory.RunAsync(async () =>
+                            {
+                                for (int i = 0; i < 40; i++)
+                                {
+                                    await Task.Delay(500);
+                                    await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+                                    var form = System.Windows.Forms.Application.OpenForms.Cast<System.Windows.Forms.Form>().FirstOrDefault(f => f.Text.StartsWith("Querywright"));
+                                    if (form == null) continue;
+                                    string shown = string.Join(" ", Descendants(form).OfType<System.Windows.Forms.Label>().Select(l => l.Text));
+                                    form.DialogResult = System.Windows.Forms.DialogResult.Cancel;
+                                    answered.TextBuffer.Insert(answered.TextSnapshot.Length, "\r\n-- prompt " + shown.Replace("\r", " ").Replace("\n", " "));
+                                    return;
+                                }
+                            });
+                            break;
                         case "note": view.TextBuffer.Insert(view.TextSnapshot.Length, "\r\n-- note " + (Note ?? "(none)")); break;
                         case "latest": // follow the newest SQL window, e.g. one a command opened
                             if (View == null || Adapter == null) throw new InvalidOperationException("no SQL editor");
@@ -165,6 +189,9 @@ namespace Querywright.Ssms
             grid.Focus();
             if (ResultsGridReader.FocusedGrid() != grid) throw new InvalidOperationException("results grid did not take focus");
         }
+
+        private static System.Collections.Generic.IEnumerable<System.Windows.Forms.Control> Descendants(System.Windows.Forms.Control parent) =>
+            parent.Controls.Cast<System.Windows.Forms.Control>().SelectMany(c => new[] { c }.Concat(Descendants(c)));
 
         private static void Move(IWpfTextView view, int position)
         {

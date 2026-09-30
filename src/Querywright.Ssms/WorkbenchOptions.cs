@@ -19,7 +19,7 @@ namespace Querywright.Ssms
 
         [Category("Completion")]
         [DisplayName("Cache schema on disk")]
-        [Description("Keep table and column names, types and foreign keys in %LOCALAPPDATA%\\Querywright\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes.")]
+        [Description("Keep table and column names, types and foreign keys in %LOCALAPPDATA%\\Querywright\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes. Turning this off deletes the cached files.")]
         public bool CacheSchemaOnDisk { get; set; } = true;
 
         [Category("Completion")]
@@ -71,6 +71,11 @@ namespace Querywright.Ssms
         [DisplayName("Hover info")]
         [Description("Hovering a column, table, procedure or variable shows its type and details from the cached metadata; hovering an END shows the line that opened it.")]
         public bool HoverInfo { get; set; } = true;
+
+        [Category("Editor")]
+        [DisplayName("Format on save")]
+        [Description("File > Save (Ctrl+S) formats the whole SQL document with your formatting style first. One Undo reverts it. Scripts that do not parse are saved unchanged. Off by default.")]
+        public bool FormatOnSave { get; set; }
 
         [Category("Editor")]
         [DisplayName("Fold regions and BEGIN/END blocks")]
@@ -191,6 +196,12 @@ namespace Querywright.Ssms
         /// <summary>Databases ticked last time in Script for multiple databases, one per line.</summary>
         [Browsable(false)]
         public string MultiDatabaseSelection { get; set; } = "";
+
+        protected override void OnApply(PageApplyEventArgs e)
+        {
+            base.OnApply(e);
+            if (e.ApplyBehavior == ApplyKind.Apply && !CacheSchemaOnDisk) Querywright.Ssms.LiveMetadata.ClearDiskCache();
+        }
 
         [Category("Snippets")]
         [DisplayName("Tab expands snippets")]

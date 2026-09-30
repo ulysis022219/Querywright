@@ -1059,4 +1059,24 @@ Check(noted.Single().ColumnNotes!.SequenceEqual(new[] { "NOT NULL", "NOT NULL DE
 Check(SqlAssist.Describe("SELECT Name FROM dbo.N;", 8, noted, null) == "Name: column nvarchar(20) NOT NULL DEFAULT (N'x') N.Name", "column hover shows type, nullability and default");
 Check(asm_catB.ColumnNotes![0] == "NOT NULL DEFAULT ((0))", "catalog keeps live column notes");
 
+// Column suggestions per table: scope, grouping, cap and INSERT/MERGE targets.
+{
+    var shop = new[] { new SchemaTable("dbo", "Customers", "CustId", "CustName", "City"), new SchemaTable("dbo", "Orders", "OrderId", "CustId", "Total") };
+    string[] Cols(string text)
+    {
+        int at = text.IndexOf('|');
+        return SqlCompletion.Complete(text.Remove(at, 1), at, shop).Items.Where(i => i.Description.StartsWith("column")).Select(i => i.InsertText).ToArray();
+    }
+    Check(string.Join(",", Cols("SELECT | FROM Customers c JOIN Orders o ON c.CustId = o.CustId")) == "c.City,c.CustId,c.CustName,o.CustId,o.OrderId,o.Total", "columns grouped per table in FROM order");
+    Check(Cols("SELECT * FROM Customers c JOIN Orders o ON c.CustId = o.CustId WHERE |").Length == 6, "scanner lists every joined table");
+    Check(Cols("UPDATE c SET | FROM Customers c JOIN Orders o ON o.CustId = c.CustId").Contains("c.City"), "UPDATE alias keeps its FROM table columns");
+    Check(Cols("SELECT TOP 10 | FROM Orders").Length == 3 && Cols("SELECT TOP (1000) | FROM Orders o").Length == 3, "TOP n expects columns");
+    Check(string.Join(",", Cols("INSERT INTO Customers (|) VALUES (1)")) == "City,CustId,CustName" && Cols("INSERT dbo.Customers (CustId, |").Length == 3, "INSERT column list");
+    Check(Cols("MERGE INTO Customers AS t USING Orders AS s ON t.CustId = s.CustId WHEN NOT MATCHED THEN INSERT (|").Contains("CustName"), "MERGE INSERT column list");
+    Check(string.Join(",", Cols("SELECT * FROM Orders o JOIN (SELECT CustId AS K, City FROM Customers) d ON d.K = o.CustId WHERE |")) == "o.CustId,o.OrderId,o.Total,d.City,d.K", "derived table body stays out of scope");
+    Check(Cols("SELECT * FROM Customers c WHERE c.CustId IN (SELECT o.CustId FROM Orders o WHERE |)")[0] == "o.CustId", "innermost subquery columns first");
+    Check(Cols("SELECT * FROM \"dbo\".\"Customers\" WHERE |").All(c => c.StartsWith("Customers.")), "double-quoted table names resolve");
+    var manyTables = Enumerable.Range(0, 300).Select(n => new SchemaTable("dbo", "T" + n, "C" + n)).Concat(shop).ToArray();
+    Check(SqlCompletion.Complete("SELECT * FROM Orders o WHERE o.Total > 1 AND o.CustId = 1 ORDER BY o.Total ", 75, manyTables).Items.Count(i => i.Description.StartsWith("column")) == 3, "item cap keeps in-scope columns");
+}
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes and object refactors. SSMS integration not tested.");

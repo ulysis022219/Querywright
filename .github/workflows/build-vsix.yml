@@ -57,7 +57,13 @@ jobs:
         run: dotnet run --project tests/Querywright.Checks
       - name: Update validation checks
         shell: powershell
-        run: scripts/Test-Update.ps1
+        run: |
+          try { scripts/Test-Update.ps1 }
+          catch {
+            $message = ($_.Exception.Message + ' ' + $_.ScriptStackTrace).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error::$message"
+            throw
+          }
       - name: Stamp version
         # major.minor.patch from the release tag (else the manifest) plus the run number, so every build installs over the last.
         shell: powershell

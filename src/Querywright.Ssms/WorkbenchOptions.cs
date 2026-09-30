@@ -73,6 +73,11 @@ namespace Querywright.Ssms
         public bool HoverInfo { get; set; } = true;
 
         [Category("Editor")]
+        [DisplayName("Format on save")]
+        [Description("File > Save (Ctrl+S) formats the whole SQL document with your formatting style first. One Undo reverts it. Scripts that do not parse are saved unchanged. Off by default.")]
+        public bool FormatOnSave { get; set; }
+
+        [Category("Editor")]
         [DisplayName("Fold regions and BEGIN/END blocks")]
         [Description("Collapse --region / --endregion sections and multi-line BEGIN/END blocks from the margin. Reopen the query window after changing this.")]
         public bool FoldBlocks { get; set; } = true;

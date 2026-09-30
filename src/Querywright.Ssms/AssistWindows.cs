@@ -559,7 +559,7 @@ namespace Querywright.Ssms
             var split = new System.Windows.Forms.SplitContainer { Dock = System.Windows.Forms.DockStyle.Fill, Width = 950, SplitterDistance = 340, Panel1MinSize = 240, Panel2MinSize = 240 };
             split.Panel1.Controls.Add(grid); split.Panel2.Controls.Add(preview);
             var rules = new System.Windows.Forms.PropertyGrid { SelectedObject = Settings, Dock = System.Windows.Forms.DockStyle.Fill, ToolbarVisible = false, PropertySort = System.Windows.Forms.PropertySort.Alphabetical, AccessibleName = "Analysis rule severities" };
-            var tabs = new System.Windows.Forms.TabControl { Dock = System.Windows.Forms.DockStyle.Fill };
+            var tabs = new System.Windows.Forms.TabControl { Dock = System.Windows.Forms.DockStyle.Fill, AccessibleName = "Formatting and analysis rules (Ctrl+Tab switches)" };
             tabs.TabPages.Add("Formatting"); tabs.TabPages.Add("Analysis rules");
             tabs.TabPages[0].Controls.Add(split); tabs.TabPages[1].Controls.Add(rules);
             Controls.Add(tabs); Controls.Add(buttons);
@@ -572,6 +572,7 @@ namespace Querywright.Ssms
                 try { preview.Text = Querywright.Core.SqlFormatting.Format(Sample, Style); }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { preview.Text = error.Message; ok.Enabled = false; }
             }
+            ActiveControl = grid; // keyboard users start in the options, not on the tab strip
             grid.PropertyValueChanged += (s, e) => Render();
             Render();
         }

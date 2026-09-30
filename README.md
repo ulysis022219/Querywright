@@ -47,7 +47,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`.
 - **Production servers**: list patterns such as `prod;live` in Tools > Options > Querywright; on a matching connection, executing DROP, ALTER, TRUNCATE or an unfiltered DELETE/UPDATE always asks first.
 
 **Formatting**
-- Format a selection, a whole document, or every `.sql` file in a folder.
+- Format a selection, a whole document, or every `.sql` file in a folder. Optional **Format on save** (off by default) formats the document on Ctrl+S.
 - 13 style options with a live preview, saved to a file your team can share.
 - Keyword casing, add/remove square brackets, qualify object names, insert semicolons.
 

@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using static Querywright.Core.ObjectScript;
 
 namespace Querywright.Core
 {
@@ -14,8 +15,8 @@ namespace Querywright.Core
     /// </summary>
     public static class ResultGrid
     {
-        private static readonly Regex TypeShape = new Regex(@"^\s*([A-Za-z][A-Za-z0-9_ ]*?)\s*(\(\s*(max|\d+)\s*(,\s*\d+\s*)?\))?\s*$", RegexOptions.CultureInvariant);
-        private static readonly Regex SqlDateTime = new Regex(@"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(\.\d+)?)$", RegexOptions.CultureInvariant);
+        private static readonly Regex TypeShape = new Regex(@"^\s*([A-Za-z][A-Za-z0-9_ ]*?)\s*(\(\s*(max|\d+)\s*(,\s*\d+\s*)?\))?\s*\z", RegexOptions.CultureInvariant);
+        private static readonly Regex SqlDateTime = new Regex(@"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(\.\d+)?)\z", RegexOptions.CultureInvariant);
         private static readonly HashSet<string> NumericTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "bit", "tinyint", "smallint", "int", "bigint", "decimal", "numeric", "float", "real", "money", "smallmoney" };
         private static readonly HashSet<string> BinaryTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -49,7 +50,7 @@ namespace Querywright.Core
 
         /// <summary>A plain decimal number (no leading zeros, so codes like 007 stay strings).</summary>
         public static bool IsNumber(string? value) =>
-            value != null && Regex.IsMatch(value, @"^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?$", RegexOptions.CultureInvariant);
+            value != null && Regex.IsMatch(value, @"^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?\z", RegexOptions.CultureInvariant);
 
         /// <summary>Status bar text for selected cells: count of non-NULL cells, and sum/avg/min/max over the numeric ones.</summary>
         public static string SelectionSummary(IEnumerable<string?> values)
@@ -102,7 +103,6 @@ namespace Querywright.Core
             return names;
         }
 
-        private static string Bracket(string name) => "[" + name.Replace("]", "]]") + "]";
 
         private static string? BaseType(string? type)
         {
@@ -134,7 +134,7 @@ namespace Querywright.Core
         {
             if (value == null) return "NULL";
             if (baseType == null ? IsNumber(value) : NumericTypes.Contains(baseType) && IsNumber(value)) return value;
-            if (baseType != null && BinaryTypes.Contains(baseType) && Regex.IsMatch(value, "^0x[0-9A-Fa-f]*$")) return value;
+            if (baseType != null && BinaryTypes.Contains(baseType) && Regex.IsMatch(value, @"^0x[0-9A-Fa-f]*\z")) return value;
             // Grid shows datetime as "yyyy-MM-dd HH:mm:ss.fff", which some DATEFORMAT settings misread; the T form is language-neutral.
             if ((baseType == "datetime" || baseType == "smalldatetime") && SqlDateTime.IsMatch(value))
                 return "'" + SqlDateTime.Replace(value, "$1T$2") + "'";
@@ -311,7 +311,7 @@ namespace Querywright.Core
                     string value = cells[c] ?? "";
                     // Cells a spreadsheet would evaluate as a formula get a leading apostrophe; plain numbers such as -5 are left alone.
                     if (value.Length > 0 && "=+-@\t\r".IndexOf(value[0]) >= 0 && !IsNumber(value)) value = "'" + value;
-                    if (value.IndexOf(separator) >= 0 || value.IndexOfAny(new[] { '"', '\r', '\n' }) >= 0)
+                    if (value.IndexOf(separator) >= 0 || value.IndexOfAny(CsvSpecial) >= 0)
                         value = "\"" + value.Replace("\"", "\"\"") + "\"";
                     builder.Append(value);
                 }
@@ -322,7 +322,8 @@ namespace Querywright.Core
             return builder.ToString();
         }
 
-        private static readonly Regex PlainDecimal = new Regex(@"^-?(0|[1-9]\d*)(\.(\d+))?$", RegexOptions.CultureInvariant);
+        private static readonly char[] CsvSpecial = { '"', '\r', '\n' };
+        private static readonly Regex PlainDecimal = new Regex(@"^-?(0|[1-9]\d*)(\.(\d+))?\z", RegexOptions.CultureInvariant);
         private static readonly Regex XmlInvalid = new Regex(@"[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]", RegexOptions.CultureInvariant);
 
         private static string Xml(string value) => System.Security.SecurityElement.Escape(XmlInvalid.Replace(value, ""));

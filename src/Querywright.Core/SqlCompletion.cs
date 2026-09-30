@@ -252,7 +252,7 @@ namespace Querywright.Core
             Resolver? resolver = null;
             if (!sql.Contains(Marker))
             {
-                // Only the caret's batch is parsed: faster on long scripts, and syntax errors in other batches no longer turn resolution off.
+                // Parse only the caret's batch, so long scripts stay fast and syntax errors elsewhere don't disable resolution.
                 int batchEnd = caret;
                 while (batchEnd < tokens.Count && tokens[batchEnd].Type != TSqlTokenType.Go) batchEnd++;
                 int from = batchStart == 0 ? 0 : tokens[batchStart - 1].Offset + tokens[batchStart - 1].Text.Length;
@@ -360,15 +360,17 @@ namespace Querywright.Core
                     {
                         var seen = new HashSet<string>(names);
                         int group = 0;
+                        bool bare = near.Count(n => n.Columns.Count > 0) == 1 && !qualifySingleTable;
                         // Innermost subquery first, then FROM order.
                         foreach (var s in near.OrderByDescending(s => s.Scope).ThenBy(s => s.Offset).Concat(visible.Except(near).OrderBy(s => s.Offset)).Where(s => s.Columns.Count > 0 && seen.Add(s.Alias)))
                         {
                             group++;
+                            bool isNear = near.Contains(s);
                             foreach (var column in s.Columns)
                             {
                                 var item = new CompletionItem(column, QuoteIfNeeded(s.Alias) + "." + QuoteIfNeeded(column), ColumnDescription(s.Table, column, s.Alias + "." + column));
-                                if (!near.Contains(s)) far.Add(item);
-                                else if (near.Count(n => n.Columns.Count > 0) == 1 && !qualifySingleTable) item = Bare(item);
+                                if (!isNear) far.Add(item);
+                                else if (bare) item = Bare(item);
                                 groups[item] = group;
                                 items.Add((item, Kind.Column));
                             }

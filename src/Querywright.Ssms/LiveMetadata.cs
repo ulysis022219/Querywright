@@ -581,14 +581,14 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 if (string.IsNullOrEmpty(connection.Server)) return null;
                 if (authentication == 1)
                 {
-                    var secure = Property(info, type, "InMemoryPassword") as SecureString;
-                    if (secure == null && Property(info, type, "Password") is string plain)
+                    // Copy SSMS's SecureString; never dispose it, SSMS owns it.
+                    if (Property(info, type, "InMemoryPassword") is SecureString secure) connection.Password = secure.Copy();
+                    else if (Property(info, type, "Password") is string plain)
                     {
-                        secure = new SecureString();
-                        foreach (char c in plain) secure.AppendChar(c);
+                        connection.Password = new SecureString();
+                        foreach (char c in plain) connection.Password.AppendChar(c);
                     }
-                    if (secure == null) return null;
-                    connection.Password = secure.Copy();
+                    else return null;
                     connection.Password.MakeReadOnly();
                 }
                 else if (authentication != 0)

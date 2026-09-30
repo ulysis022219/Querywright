@@ -188,6 +188,8 @@ namespace Querywright.Core
             internal SchemaTable? Table;
             internal IReadOnlyList<string> Columns = Array.Empty<string>();
             internal string Description = "";
+            internal int Scope = -1, ScopeEnd = int.MaxValue; // enclosing parenthesis token indices
+            internal bool Visible(int at) => Scope < 0 || Scope < at && at <= ScopeEnd;
         }
 
         private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '@' || c == '#' || c == '$';
@@ -212,7 +214,9 @@ namespace Querywright.Core
                 last = token;
                 if (token.TokenType == TSqlTokenType.WhiteSpace || token.TokenType == TSqlTokenType.SingleLineComment ||
                     token.TokenType == TSqlTokenType.MultilineComment) continue;
-                result.Add(new Tok(token.TokenType, token.Offset + shift, token.Text ?? ""));
+                // "name" lexes as AsciiStringOrQuotedIdentifier; with QUOTED_IDENTIFIER on (the SSMS default) it is a name.
+                result.Add(new Tok(token.TokenType == TSqlTokenType.AsciiStringOrQuotedIdentifier ? TSqlTokenType.QuotedIdentifier : token.TokenType,
+                    token.Offset + shift, token.Text ?? ""));
             }
             return result;
         }
@@ -259,6 +263,8 @@ namespace Querywright.Core
             var scan = new Scanner(sql, segment, catalog, defaultSchema, names);
             var items = new List<(CompletionItem Item, Kind Kind)>();
             var far = new HashSet<CompletionItem>(); // columns of other statements in the batch
+            var groups = new Dictionary<CompletionItem, int>(); // columns list per source, in FROM order
+            bool unscoped = false; // every catalog column is listed: keep the item cap for them
             void Add(Kind kind, string name, string insert, string description) => items.Add((new CompletionItem(name, insert, description), kind));
 
             var context = Context.General;
@@ -285,13 +291,18 @@ namespace Querywright.Core
             else if (qualifier != null && CrossDatabase(qualifier)) { }
             else if (qualifier != null)
             {
-                bool alias = qualifier.Count == 1 && scan.Sources.Any(s => names.Equals(s.Alias, qualifier[0]));
+                bool alias = qualifier.Count == 1 && scan.Sources.Any(s => s.Visible(at) && names.Equals(s.Alias, qualifier[0]));
                 if (resolver != null && resolver.Handled && (alias || resolver.TableMarker || resolver.Items.Count > 0))
                     items.AddRange(resolver.Items.Select(i => (i, Kind.Column)));
                 else if (qualifier.Count > 0) Qualified(qualifier);
             }
             else if (at > 0 && segment[at - 1].Is("USE"))
                 foreach (var database in databases ?? Array.Empty<string>()) Add(Kind.Table, database, QuoteIfNeeded(database), "database");
+            else if (InsertTarget() is Source target)
+            {
+                context = Context.Column;
+                foreach (var column in target.Columns) Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(target.Table, column, target.Alias + "." + column));
+            }
             else
             {
                 Tok? prev = at > 0 ? segment[at - 1] : (Tok?)null;
@@ -306,7 +317,7 @@ namespace Querywright.Core
                     p.Is("TABLE") && at > 1 && (segment[at - 2].Is("TRUNCATE") || segment[at - 2].Is("DROP") || segment[at - 2].Is("ALTER")) ||
                     p.Type == TSqlTokenType.Comma && clause == "FROM"))
                     context = Context.Table;
-                else if (clause != null && ColumnClauses.Contains(clause) && prev is Tok o && ExpectsOperand(o, at > 1 ? segment[at - 2] : (Tok?)null))
+                else if (clause != null && ColumnClauses.Contains(clause) && prev is Tok o && (ExpectsOperand(o, at > 1 ? segment[at - 2] : (Tok?)null) || AfterTop()))
                     context = Context.Column;
 
                 var variables = Variables(tokens, batchStart, caret, names);
@@ -327,26 +338,85 @@ namespace Querywright.Core
                     foreach (var s in scan.Sources.Where(s => s.Explicit)) Add(Kind.Alias, s.Alias, QuoteIfNeeded(s.Alias), "alias " + s.Description);
                     // Tables of the caret's own statement first; others in the same batch (no semicolons between) rank after them.
                     var (statementStart, statementEnd) = StatementAround(segment, at);
-                    var near = scan.Sources.Where(s => s.Offset >= statementStart && s.Offset < statementEnd).ToList();
+                    // Sources inside a subquery or derived table the caret is not in are out of scope; a column-less
+                    // duplicate (UPDATE c ... FROM T c) yields to the aliased table.
+                    var visible = scan.Sources.Where(s => s.Visible(at)).OrderBy(s => s.Columns.Count == 0).ToList();
+                    var near = visible.Where(s => s.Offset >= statementStart && s.Offset < statementEnd).ToList();
                     if (near.Count == 0 && context == Context.Column)
+                    {
+                        unscoped = true;
                         foreach (var table in catalog)
                             foreach (var column in table.Columns)
                                 Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(table, column, table.Schema + "." + table.Name));
+                    }
                     else if (resolver != null && resolver.Handled && !resolver.TableMarker)
-                        items.AddRange(resolver.Items.Select(i => (resolver.Sources == 1 && !qualifySingleTable ? Bare(i) : i, Kind.Column)));
+                        foreach (var i in resolver.Items)
+                        {
+                            var item = resolver.Sources == 1 && !qualifySingleTable ? Bare(i) : i;
+                            groups[item] = resolver.Groups[i];
+                            items.Add((item, Kind.Column));
+                        }
                     else
                     {
                         var seen = new HashSet<string>(names);
-                        foreach (var s in near.Concat(scan.Sources.Except(near)).Where(s => seen.Add(s.Alias)))
+                        int group = 0;
+                        // Innermost subquery first, then FROM order.
+                        foreach (var s in near.OrderByDescending(s => s.Scope).ThenBy(s => s.Offset).Concat(visible.Except(near).OrderBy(s => s.Offset)).Where(s => s.Columns.Count > 0 && seen.Add(s.Alias)))
+                        {
+                            group++;
                             foreach (var column in s.Columns)
                             {
                                 var item = new CompletionItem(column, QuoteIfNeeded(s.Alias) + "." + QuoteIfNeeded(column), ColumnDescription(s.Table, column, s.Alias + "." + column));
                                 if (!near.Contains(s)) far.Add(item);
-                                else if (near.Count == 1 && !qualifySingleTable) item = Bare(item);
+                                else if (near.Count(n => n.Columns.Count > 0) == 1 && !qualifySingleTable) item = Bare(item);
+                                groups[item] = group;
                                 items.Add((item, Kind.Column));
                             }
+                        }
                     }
                 }
+            }
+
+            // INSERT [INTO] t (| and MERGE ... INSERT (| list the target's columns.
+            Source? InsertTarget()
+            {
+                int open = -1;
+                for (int i = at - 1, depth = 0; i >= 0; i--)
+                {
+                    if (segment[i].Type == TSqlTokenType.RightParenthesis) depth++;
+                    else if (segment[i].Type == TSqlTokenType.LeftParenthesis && depth-- == 0) { open = i; break; }
+                    else if (depth == 0 && !segment[i].IsName && segment[i].Type != TSqlTokenType.Comma) return null;
+                }
+                if (open < 1) return null;
+                int k = open - 1;
+                if (segment[k].Is("INSERT"))
+                {
+                    int merge = segment.FindLastIndex(k, t => t.Is("MERGE"));
+                    return merge < 0 ? null : scan.Sources.Where(s => s.Offset >= segment[merge].Offset).OrderBy(s => s.Offset).FirstOrDefault();
+                }
+                var parts = new List<string>();
+                for (; k >= 0 && segment[k].IsName; k -= 2)
+                {
+                    parts.Insert(0, segment[k].Name);
+                    if (k == 0 || segment[k - 1].Type != TSqlTokenType.Dot) { k--; break; }
+                }
+                if (parts.Count == 0 || parts.Count > 2 || k < 0 || !(segment[k].Is("INTO") || segment[k].Is("INSERT"))) return null;
+                var table = catalog.FirstOrDefault(t => names.Equals(t.Name, parts[parts.Count - 1]) && names.Equals(t.Schema, parts.Count == 2 ? parts[0] : defaultSchema));
+                return table == null ? null : new Source { Alias = table.Name, Table = table, Columns = table.Columns };
+            }
+
+            // SELECT TOP 10 | and SELECT TOP (10) | expect a column.
+            bool AfterTop()
+            {
+                int k = at - 1;
+                if (k >= 1 && segment[k].Type == TSqlTokenType.Integer) return segment[k - 1].Is("TOP");
+                if (k < 3 || segment[k].Type != TSqlTokenType.RightParenthesis) return false;
+                for (int depth = 0; k >= 0; k--)
+                {
+                    if (segment[k].Type == TSqlTokenType.RightParenthesis) depth++;
+                    else if (segment[k].Type == TSqlTokenType.LeftParenthesis && --depth == 0) return k > 0 && segment[k - 1].Is("TOP");
+                }
+                return false;
             }
 
             // OtherDb. lists schemas, OtherDb.sch. tables, OtherDb.sch.tbl. columns; null catalog (still loading) offers nothing.
@@ -369,7 +439,8 @@ namespace Querywright.Core
 
             void Qualified(List<string> parts)
             {
-                var source = parts.Count == 1 ? scan.Sources.Where(s => names.Equals(s.Alias, parts[0])).OrderBy(s => s.Columns.Count == 0).FirstOrDefault() : null;
+                var source = parts.Count == 1 ? scan.Sources.Where(s => names.Equals(s.Alias, parts[0]))
+                    .OrderBy(s => s.Visible(at) ? 0 : 1).ThenBy(s => s.Columns.Count == 0).FirstOrDefault() : null;
                 var table = parts.Count > 2 ? null : catalog.FirstOrDefault(t => names.Equals(t.Name, parts[parts.Count - 1]) &&
                     names.Equals(t.Schema, parts.Count == 2 ? parts[0] : defaultSchema));
                 if (source != null || table != null)
@@ -387,14 +458,16 @@ namespace Querywright.Core
 
             int Rank(Kind kind) => kind == Kind.Join ? -1 : context == Context.Table ? 0
                 : context == Context.Column ? (kind == Kind.Column ? 0 : kind == Kind.Alias || kind == Kind.Table ? 1 : kind == Kind.Variable ? 2 : kind == Kind.Function ? 3 : 4)
-                : (kind == Kind.Keyword ? 0 : kind == Kind.Variable ? 1 : kind == Kind.Alias || kind == Kind.Function ? 2 : 3);
+                : (kind == Kind.Keyword ? 0 : kind == Kind.Variable ? 1 : kind == Kind.Alias || kind == Kind.Function ? 2 : kind == Kind.Column ? 3 : 4);
             var ordered = items
                 .Where(i => i.Item.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 .GroupBy(i => i.Item.InsertText, StringComparer.Ordinal).Select(g => g.OrderBy(i => Rank(i.Kind)).First())
                 .OrderBy(i => i.Kind == Kind.Join ? 0 : 1)
                 .ThenBy(i => prefix.Length > 0 && string.Equals(i.Item.Name, prefix, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                .ThenBy(i => Rank(i.Kind)).ThenBy(i => far.Contains(i.Item) ? 1 : 0).ThenBy(i => i.Item.Name, StringComparer.OrdinalIgnoreCase)
-                .Take(MaxItems).Select(i => i.Item);
+                .ThenBy(i => Rank(i.Kind)).ThenBy(i => far.Contains(i.Item) ? 1 : 0)
+                .ThenBy(i => groups.TryGetValue(i.Item, out int g) ? g : 0).ThenBy(i => i.Item.Name, StringComparer.OrdinalIgnoreCase)
+                // In-scope columns are never cut: after a TOP n or a name the list leads with keywords and functions.
+                .Where((i, index) => index < MaxItems || i.Kind == Kind.Column && !unscoped).Select(i => i.Item);
             return new CompletionResult(start, end - start, ordered);
         }
 
@@ -507,13 +580,18 @@ namespace Querywright.Core
                 Ctes = new Dictionary<string, IReadOnlyList<string>>(names);
                 for (int i = 0; i + 1 < seg.Count; i++)
                     if (seg[i].Is("WITH") && seg[i + 1].IsName) ReadCtes(i + 1);
+                var open = new Stack<int>();
                 for (int i = 0; i < seg.Count; i++)
                 {
+                    if (seg[i].Type == TSqlTokenType.LeftParenthesis) open.Push(i);
+                    else if (seg[i].Type == TSqlTokenType.RightParenthesis && open.Count > 0) open.Pop();
                     if (!seg[i].IsAny(SourceKeywords)) continue;
-                    int j = i + 1;
+                    int j = i + 1, scope = open.Count > 0 ? open.Peek() : -1, scopeEnd = scope < 0 ? int.MaxValue : Match(scope);
                     while (true)
                     {
+                        int before = Sources.Count;
                         j = ReadSource(j, seg[i].Offset);
+                        for (int n = before; n < Sources.Count; n++) { Sources[n].Scope = scope; Sources[n].ScopeEnd = scopeEnd < 0 ? int.MaxValue : scopeEnd; }
                         if (!seg[i].Is("FROM") || j >= seg.Count || seg[j].Type != TSqlTokenType.Comma) break;
                         j++;
                     }
@@ -645,6 +723,7 @@ namespace Querywright.Core
         private sealed class Resolver : TSqlFragmentVisitor
         {
             internal readonly List<CompletionItem> Items = new List<CompletionItem>();
+            internal readonly Dictionary<CompletionItem, int> Groups = new Dictionary<CompletionItem, int>(); // source order per column
             internal TextEdit? Expansion;
             internal readonly List<string> Parts = new List<string>();
             internal bool Handled, TableMarker;
@@ -737,10 +816,14 @@ namespace Querywright.Core
                         if (alias == null) continue;
                         if (!seen.Add(alias) || (qualifier != null && !names.Equals(alias, qualifier))) continue;
                         var table = reference is NamedTableReference named && !IsCte(named) ? Find(named) : null;
-                        foreach (string column in Columns(reference!))
-                            Items.Add(new CompletionItem(column, qualifier == null ? QuoteIfNeeded(alias) + "." + QuoteIfNeeded(column) : QuoteIfNeeded(column),
-                                ColumnDescription(table, column, alias + "." + column)));
                         Sources++;
+                        foreach (string column in Columns(reference!))
+                        {
+                            var item = new CompletionItem(column, qualifier == null ? QuoteIfNeeded(alias) + "." + QuoteIfNeeded(column) : QuoteIfNeeded(column),
+                                ColumnDescription(table, column, alias + "." + column));
+                            Items.Add(item);
+                            Groups[item] = Sources;
+                        }
                         if (qualifier != null) return; // Inner aliases shadow outer aliases, even when metadata is missing.
                     }
                 }

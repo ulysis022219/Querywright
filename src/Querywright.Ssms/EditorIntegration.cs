@@ -348,8 +348,9 @@ namespace Querywright.Ssms
             // Snippets insert their shortcut; Tab then expands it (see EditorCommandFilter).
             var items = snippets.Select(s => new VsCompletionItem(s.Key, this, null!, ImmutableArray<CompletionFilter>.Empty,
                     "snippet: " + s.Value, s.Key, "\uFFFF" + s.Key, s.Key, ImmutableArray<ImageElement>.Empty))
-                .Concat((result?.Items ?? Array.Empty<Querywright.Core.CompletionItem>()).Select(i => new VsCompletionItem(i.Name, this, null!, ImmutableArray<CompletionFilter>.Empty,
-                    i.Description, i.InsertText, i.Name, i.Name, ImmutableArray<ImageElement>.Empty))).ToImmutableArray();
+                // Sort text keeps the core ranking (in-scope columns grouped per table) instead of the editor's alphabetical default.
+                .Concat((result?.Items ?? Array.Empty<Querywright.Core.CompletionItem>()).Select((i, n) => new VsCompletionItem(i.Name, this, null!, ImmutableArray<CompletionFilter>.Empty,
+                    i.Description, i.InsertText, n.ToString("D6"), i.Name, ImmutableArray<ImageElement>.Empty))).ToImmutableArray();
             // Soft selection after a space so Enter still inserts a new line.
             return new CompletionContext(items, null, applicableTo.IsEmpty ? InitialSelectionHint.SoftSelection : InitialSelectionHint.RegularSelection);
         }

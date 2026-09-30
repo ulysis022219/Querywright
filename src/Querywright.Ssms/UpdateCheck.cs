@@ -15,7 +15,9 @@ namespace Querywright.Ssms
     internal sealed class UpdateCheck : IVsInfoBarUIEvents
     {
         private const string Releases = Updates.Repository + "releases/";
-        private string url = Releases + "latest";
+        private string tag;
+        private WorkbenchPackage package;
+        private bool started;
 
         /// <summary>Version from the installed extension.vsixmanifest (CI stamps the build number there); null when unreadable.</summary>
         internal static string InstalledVersion()
@@ -53,10 +55,10 @@ namespace Querywright.Ssms
                 var factory = await package.GetServiceAsync(typeof(SVsInfoBarUIFactory)) as IVsInfoBarUIFactory;
                 if (shell == null || factory == null
                     || shell.GetProperty((int)__VSSPROPID7.VSSPROPID_MainWindowInfoBarHost, out object host) != 0 || !(host is IVsInfoBarHost bar)) return;
-                var model = new InfoBarModel("Querywright " + tag + " is available (installed " + installed + "). Close SSMS and run Install.cmd from the new zip.",
-                    new[] { new InfoBarHyperlink("Download") }, KnownMonikers.StatusInformation);
+                var model = new InfoBarModel("Querywright " + tag + " is available (installed " + installed + "). Install the update, then save your work and close SSMS when prompted.",
+                    new[] { new InfoBarHyperlink("Install update"), new InfoBarHyperlink("Release notes") }, KnownMonikers.StatusInformation);
                 var element = factory.CreateInfoBar(model);
-                element.Advise(new UpdateCheck { url = Releases + "tag/" + tag }, out _);
+                element.Advise(new UpdateCheck { tag = tag, package = package }, out _);
                 bar.AddInfoBar(element);
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
@@ -68,8 +70,39 @@ namespace Querywright.Ssms
         public void OnActionItemClicked(IVsInfoBarUIElement element, IVsInfoBarActionItem item)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            Process.Start(url);
-            element.Close();
+            try
+            {
+                if (item.Text == "Release notes")
+                {
+                    Process.Start(Releases + "tag/" + tag);
+                    return;
+                }
+                if (started) return;
+                if (!Regex.IsMatch(tag, @"\Av[0-9]+\.[0-9]+\.[0-9]+\z"))
+                    throw new InvalidOperationException("This release does not support direct updates. Open Release notes to install it.");
+
+                // Stage our installed helper scripts outside the extension directory: VSIXInstaller replaces it.
+                string source = Path.Combine(Path.GetDirectoryName(typeof(UpdateCheck).Assembly.Location), "Updater");
+                string staging = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Querywright", "Updates", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(staging);
+                foreach (string name in new[] { "Update-Querywright.ps1", "Update-Release.ps1", "Install-Development.ps1", "Test-Package.ps1" })
+                    File.Copy(Path.Combine(source, name), Path.Combine(staging, name));
+                string ssmsDirectory;
+                using (var current = Process.GetCurrentProcess()) ssmsDirectory = Path.GetDirectoryName(current.MainModule.FileName);
+                string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+                Process.Start(new ProcessStartInfo(powershell,
+                    "-NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(staging, "Update-Querywright.ps1")
+                    + "\" -Tag \"" + tag + "\" -SsmsDirectory \"" + ssmsDirectory + "\"") { UseShellExecute = true });
+                started = true;
+                element.Close();
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                VsShellUtilities.ShowMessageBox(package, "Could not start the update: " + error.Message
+                    + "\r\nYou can retry or open Release notes for the manual installer.", "Querywright update",
+                    OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+            }
         }
 
         public void OnClosed(IVsInfoBarUIElement element) { }

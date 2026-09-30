@@ -55,6 +55,9 @@ jobs:
           dotnet-version: 10.0.x
       - name: Core checks
         run: dotnet run --project tests/Querywright.Checks
+      - name: Update validation checks
+        shell: powershell
+        run: scripts/Test-Update.ps1
       - name: Stamp version
         # major.minor.patch from the release tag (else the manifest) plus the run number, so every build installs over the last.
         shell: powershell

@@ -37,5 +37,9 @@
     <None Include="source.extension.vsixmanifest" />
     <Content Include="../../LICENSE" Link="LICENSE" IncludeInVSIX="true" />
     <Content Include="../../THIRD-PARTY-LICENSES/ScriptDOM.txt" Link="THIRD-PARTY-LICENSES/ScriptDOM.txt" IncludeInVSIX="true" />
+    <Content Include="../../scripts/Update-Querywright.ps1" Link="Updater/Update-Querywright.ps1" IncludeInVSIX="true" />
+    <Content Include="../../scripts/Update-Release.ps1" Link="Updater/Update-Release.ps1" IncludeInVSIX="true" />
+    <Content Include="../../scripts/Install-Development.ps1" Link="Updater/Install-Development.ps1" IncludeInVSIX="true" />
+    <Content Include="../../scripts/Test-Package.ps1" Link="Updater/Test-Package.ps1" IncludeInVSIX="true" />
   </ItemGroup>
 </Project>

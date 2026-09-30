@@ -1240,15 +1240,15 @@ namespace Querywright.Ssms
             if (created) path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "settings.xml");
             var settings = File.Exists(path) ? await Task.Run(() => WorkbenchSettings.Load(path)) : new WorkbenchSettings();
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            using (var dialog = new FormattingStyleDialog(settings.Formatting, path))
+            using (var dialog = new FormattingStyleDialog(settings, path))
             {
                 if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-                settings.Formatting = dialog.Style;
+                settings = dialog.Settings;
             }
             await Task.Run(() => settings.Save(path));
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             if (created) { options.SettingsFile = path; options.SaveSettingsToStorage(); }
-            (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: formatting style saved to " + path);
+            (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: formatting style and rules saved to " + path);
         });
 
         /// <summary>Formats every .sql file under a folder after a preview count and confirmation. Never touches a database.</summary>

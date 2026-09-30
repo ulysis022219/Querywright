@@ -385,6 +385,7 @@ namespace Querywright.Ssms
                 session.TextView.Properties.RemoveProperty(EditorCommandFilter.HintKey);
                 if (hintAt == position) return await HintAsync(package, snapshot, position, token);
             }
+            if (package.Options?.HoverInfo == false) return null;
             // END: which block it closes, when the opening line is off screen.
             var block = BlockCache.For(snapshot.TextBuffer).Latest is { } cached && cached.Snapshot == snapshot
                 ? cached.Blocks.FirstOrDefault(b => BlockCache.On(position, b.CloseStart, b.CloseLength)) : null;

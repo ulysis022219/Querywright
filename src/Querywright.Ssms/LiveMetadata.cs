@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Data;
 using System.Data.SqlClient;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Security;
@@ -454,6 +455,9 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
 
         private static IReadOnlyList<SchemaTable> Load(ActiveConnection connection, int attempt = 0)
         {
+            if (attempt == 0 && !stale.ContainsKey(connection.Key) && DiskCachePath(connection) is string cached && File.Exists(cached))
+                try { using (var reader = File.OpenText(cached)) if (SchemaDiskCache.Read(reader) is SchemaTable[] saved) stale[connection.Key] = saved; }
+                catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
             try
             {
                 Progress = (0, "connecting");
@@ -507,6 +511,14 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + built.Tables.Length + " tables"
                     + (capped ? " (column cap reached)" : "") + (problems.Count == 0 ? "" : " (" + LastProblem + ")"));
                 stale.TryRemove(connection.Key, out _);
+                if (!capped && DiskCachePath(connection) is string path)
+                    try
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(path));
+                        using (var writer = File.CreateText(path + ".tmp")) SchemaDiskCache.Write(writer, built.Tables);
+                        File.Copy(path + ".tmp", path, true); File.Delete(path + ".tmp");
+                    }
+                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
                 return built.Tables;
             }
             catch (SqlException error) when (attempt < MaxAttempts - 1 && Transient(error) && (error.Number != -2 || attempt == 0))
@@ -526,6 +538,15 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                             new KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>(connection.Key, failed)), TaskScheduler.Default);
                 return null;
             }
+        }
+
+        /// <summary>Schema cache file for a connection, named by a hash so no server, database or login appears on disk; null when the option is off.</summary>
+        private static string DiskCachePath(ActiveConnection connection)
+        {
+            if (WorkbenchPackage.Instance?.Options?.CacheSchemaOnDisk != true) return null;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "SchemaCache",
+                    BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(connection.Key))).Replace("-", "") + ".txt");
         }
 
         private static bool IsRecoverable(Exception error) => !(error is OutOfMemoryException);

@@ -149,6 +149,10 @@
         <Parent guid="CommandsGuid" id="RefactorGroup" />
         <Strings><ButtonText>Find object or column in all databases...</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="SearchCode" priority="0x0088" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Find in database code / usages...</ButtonText></Strings>
+      </Button>
       <Button guid="CommandsGuid" id="WrapDynamicSql" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
         <Strings><ButtonText>Wrap in dynamic SQL</ButtonText></Strings>
@@ -347,6 +351,7 @@
       <IDSymbol name="WrapDynamicSql" value="0x012A" />
       <IDSymbol name="UnwrapDynamicSql" value="0x012B" />
       <IDSymbol name="CheckForUpdates" value="0x012C" />
+      <IDSymbol name="SearchCode" value="0x012D" />
       <IDSymbol name="EditorGroup" value="0x1050" />
     </GuidSymbol>
     <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">

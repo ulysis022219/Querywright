@@ -121,12 +121,12 @@ WHERE p.is_ms_shipped = 0
 ORDER BY fk.object_id, k.constraint_column_id;";
 
         private static readonly string ProceduresQuery = @"SET LOCK_TIMEOUT 3000;
-SELECT s.name, o.name, p.name, " + TypeSql("p", "t") + @", p.is_output, p.has_default_value
+SELECT s.name, o.name, p.name, " + TypeSql("p", "t") + @", p.is_output, p.has_default_value, CAST(CASE WHEN o.type IN ('P', 'PC') THEN 0 ELSE 1 END AS bit)
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 LEFT JOIN sys.parameters AS p ON p.object_id = o.object_id AND p.parameter_id > 0
 LEFT JOIN sys.types AS t ON t.user_type_id = p.user_type_id
-WHERE o.type IN ('P', 'PC') AND o.is_ms_shipped = 0
+WHERE o.type IN ('P', 'PC', 'FN', 'IF', 'TF', 'FS', 'FT') AND o.is_ms_shipped = 0
 ORDER BY o.object_id, p.parameter_id;";
 
         private const string DatabasesQuery = "SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;";
@@ -456,7 +456,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 var problems = new List<string>();
                 var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View)>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
-                List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default)> parameters = null;
+                List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default, bool Function)> parameters = null;
                 List<string> databases = null;
                 bool capped;
                 using (var sql = connection.Open())
@@ -475,7 +475,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
                     catch (Exception error) when (IsRecoverable(error)) { problems.Add("foreign keys " + Describe(error)); }
                     Progress = (70, "reading procedures");
-                    try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5)), out _); }
+                    try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), !r.IsDBNull(6) && r.GetBoolean(6)), out _); }
                     catch (Exception error) when (IsRecoverable(error)) { problems.Add("procedures " + Describe(error)); }
                     Progress = (85, "reading databases");
                     try { databases = ReadAll(sql, DatabasesQuery, 15, r => r.GetString(0), out _); }
@@ -494,7 +494,11 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
                 if (databases != null) databaseCache[connection.Key] = databases;
                 if (parameters != null)
-                    procedureCache[connection.Key] = CatalogAssembler.Procedures(parameters.Select(p => ((string)p.Schema, (string)p.Procedure, (string)p.Name, (string)p.Type, p.Output, p.Default)));
+                {
+                    IEnumerable<SchemaProcedure> Build(bool function) => CatalogAssembler.Procedures(parameters.Where(p => p.Function == function)
+                        .Select(p => ((string)p.Schema, (string)p.Procedure, (string)p.Name, (string)p.Type, p.Output, p.Default)));
+                    procedureCache[connection.Key] = Build(false).Concat(Build(true).Select(f => new SchemaProcedure(f.Schema, f.Name, f.Parameters.ToArray(), isFunction: true))).ToArray();
+                }
                 LastProblem = problems.Count == 0 ? "" : "partial: " + string.Join(", ", problems);
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + built.Tables.Length + " tables"
                     + (capped ? " (column cap reached)" : "") + (problems.Count == 0 ? "" : " (" + LastProblem + ")"));

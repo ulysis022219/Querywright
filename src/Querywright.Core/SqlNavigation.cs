@@ -181,6 +181,21 @@ namespace Querywright.Core
             return new DefinitionTarget(schema, name.BaseIdentifier.Value, name.DatabaseIdentifier?.Value);
         }
 
+        private static readonly Regex RegionLine = new Regex(@"^[ \t]*--[ \t]*#?(end)?region\b[^\r\n]*", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+        /// <summary>--region name ... --endregion spans (start of the region line to the end of the endregion line); unmatched lines are left out.</summary>
+        public static IReadOnlyList<(int Start, int End, string Label)> Regions(string sql)
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            var result = new List<(int, int, string)>();
+            var open = new Stack<Match>();
+            // ponytail: plain line match, so a --region inside a block comment or string still counts.
+            foreach (Match m in RegionLine.Matches(sql))
+                if (!m.Groups[1].Success) open.Push(m);
+                else if (open.Count > 0) { var start = open.Pop(); result.Add((start.Index, m.Index + m.Length, start.Value.Trim())); }
+            return result.OrderBy(r => r.Item1).ToList();
+        }
+
         public static StatementSpan? StatementAt(string sql, int position)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));

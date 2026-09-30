@@ -167,6 +167,7 @@ namespace Querywright.Ssms
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0106)));
             commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(ExpandWildcardAsync); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0107)));
+            GridTotals.Start(() => options?.GridTotals != false, text => (GetService(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText(text));
             void Add(int id, Func<Task> handler) => commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id)));
             void AddGrid(int id, Func<bool> shown, Func<Task> handler)
@@ -211,6 +212,8 @@ namespace Querywright.Ssms
             Add(0x0129, SearchDatabasesAsync);
             Add(0x012A, () => TransformSelectionAsync(sql => SqlRefactoring.WrapAsDynamicSql(sql), "Wrap in dynamic SQL"));
             Add(0x012B, () => TransformSelectionAsync(SqlRefactoring.UnwrapDynamicSql, "Unwrap dynamic SQL"));
+            Add(0x012D, SearchCodeAsync);
+            Add(0x012C, () => Task.Run(() => UpdateCheck.RunAsync(this, manual: true)));
             Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             Instance = this;
             ServerColorMenu.Start();
@@ -388,7 +391,7 @@ namespace Querywright.Ssms
         /// <summary>SQL Prompt's F12: a table opens as CREATE TABLE, a procedure/view/function/trigger as ALTER, in a new query. Never executed.</summary>
         private readonly Dictionary<string, (IWpfTextView View, IVsWindowFrame Frame)> scriptTabs = new Dictionary<string, (IWpfTextView, IVsWindowFrame)>(StringComparer.OrdinalIgnoreCase);
 
-        private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name, string key)
+        private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name, string key, int line = 0)
         {
             Exception failure = null;
             try
@@ -410,8 +413,17 @@ namespace Querywright.Ssms
                 }
                 string owner = details.Schema ?? schema ?? "dbo";
                 // Like SSMS Modify / Script as: USE (so the new window targets the object's database), the Object comment and SET options.
-                string text = Header(details, owner, name) + (table ? ScriptOf(details, owner, name) : SqlRefactoring.CreateToAlter(details.Definition));
+                string header = Header(details, owner, name);
+                string text = header + (table ? ScriptOf(details, owner, name) : SqlRefactoring.CreateToAlter(details.Definition));
                 var view = await OpenInNewQueryAsync(text, "Script " + name);
+                if (line > 0 && view != null)
+                {
+                    // ponytail: assumes CREATE -> ALTER keeps the line count, which it does for the keyword swap.
+                    var snapshot = view.TextSnapshot;
+                    int target = Math.Min(snapshot.LineCount - 1, header.Split('\n').Length - 2 + line);
+                    view.Caret.MoveTo(snapshot.GetLineFromLineNumber(target).Start);
+                    view.ViewScroller.EnsureSpanVisible(snapshot.GetLineFromLineNumber(target).Extent, EnsureSpanVisibleOptions.AlwaysCenter);
+                }
                 if (await GetServiceAsync(typeof(SVsShellMonitorSelection)) is IVsMonitorSelection selection
                     && ErrorHandler.Succeeded(selection.GetCurrentElementValue((uint)VSConstants.VSSELELEMID.SEID_WindowFrame, out object frame)) && frame is IVsWindowFrame opened)
                     scriptTabs[key] = (view, opened);
@@ -663,7 +675,7 @@ namespace Querywright.Ssms
             var problem = LiveMetadata.LastProblem;
             status?.SetText(tables == null ? "Querywright: metadata refresh failed (" + problem + "); the last good metadata stays in use. See the SSMS activity log."
                 : "Querywright: metadata refreshed (" + tables.Count + " tables and views, "
-                    + (LiveMetadata.Procedures(connection)?.Count ?? 0) + " procedures)" + (problem.Length == 0 ? "." : "; " + problem + "."));
+                    + (LiveMetadata.Procedures(connection)?.Count(p => !p.IsFunction) ?? 0) + " procedures)" + (problem.Length == 0 ? "." : "; " + problem + "."));
         }
 
         /// <summary>Shift+F5: selects the statement under the caret and runs SSMS's own Execute. Only on this explicit command.</summary>
@@ -989,6 +1001,37 @@ namespace Querywright.Ssms
             var table = await Task.Run(() => DatabaseTools.Search(connection, databases, text, errors));
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             DatabaseTools.Show("Querywright: \"" + text + "\" in " + databases.Count + " databases", table, errors);
+        });
+
+        /// <summary>Procedures, views, functions and triggers in the current database whose code contains the text. Explicit command only;
+        /// capped, low lock priority, and a table or view name goes through the dependency catalog instead of scanning every definition.</summary>
+        private Task SearchCodeAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server to search, and turn on Read live metadata under Tools > Options > Querywright.");
+            string initial = null;
+            try
+            {
+                var view = GetSqlView();
+                var caret = view.Caret.Position.BufferPosition;
+                var line = caret.GetContainingLine();
+                int column = caret.Position - line.Start.Position;
+                initial = !view.Selection.IsEmpty ? view.Selection.StreamSelectionSpan.GetText()
+                    : System.Text.RegularExpressions.Regex.Matches(line.GetText(), @"[\w@#$]+").Cast<System.Text.RegularExpressions.Match>().FirstOrDefault(m => m.Index <= column && column <= m.Index + m.Length)?.Value;
+            }
+            catch (InvalidOperationException) { }
+            string text = DatabaseTools.Ask("Querywright: find in database code", "Code contains (a table or view name finds its usages):", initial);
+            if (text == null) return;
+            var errors = new List<string>();
+            var table = await Task.Run(() => DatabaseTools.SearchCode(connection, text, errors));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            DatabaseTools.Show("Querywright: \"" + text + "\" in " + (connection.Database ?? "database") + " code", table, errors, row =>
+            {
+                string key = connection.Key + "\0" + row["Schema"] + "." + row["Object"];
+                scriptTabs[key] = default;
+                _ = JoinableTaskFactory.RunAsync(() => ScriptObjectAsync(connection, (string)row["Schema"], (string)row["Object"], key, row["Line"] as int? ?? 0));
+            });
         });
 
         private Task EncapsulateAsync() => RunCommandAsync(async () =>

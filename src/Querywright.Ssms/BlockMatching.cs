@@ -21,6 +21,9 @@ namespace Querywright.Ssms
         private CancellationTokenSource pending;
         private (ITextSnapshot Snapshot, IReadOnlyList<SqlBlock> Blocks)? latest;
         internal event Action<ITextSnapshot> Updated;
+        /// <summary>--region spans of the Latest snapshot.</summary>
+        internal IReadOnlyList<(int Start, int End, string Label)> Regions => regions;
+        private volatile IReadOnlyList<(int Start, int End, string Label)> regions = Array.Empty<(int, int, string)>();
 
         private BlockCache(ITextBuffer buffer)
         {
@@ -41,7 +44,10 @@ namespace Querywright.Ssms
                 try
                 {
                     await Task.Delay(delay, cancellation.Token);
-                    latest = (snapshot, Compute(snapshot));
+                    var blocks = Compute(snapshot);
+                    try { regions = snapshot.Length > 2_000_000 ? Array.Empty<(int, int, string)>() : SqlNavigation.Regions(snapshot.GetText()); }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { regions = Array.Empty<(int, int, string)>(); }
+                    latest = (snapshot, blocks);
                     Updated?.Invoke(snapshot);
                 }
                 catch (OperationCanceledException) { }
@@ -172,6 +178,46 @@ namespace Querywright.Ssms
             if (block == null) yield break;
             foreach (var span in BlockCache.Spans(block))
                 yield return new TagSpan<TextMarkerTag>(new SnapshotSpan(snapshot, span).TranslateTo(target, SpanTrackingMode.EdgeExclusive), Marker);
+        }
+    }
+
+    [Export(typeof(ITaggerProvider))]
+    [ContentType("text")]
+    [TagType(typeof(IOutliningRegionTag))]
+    internal sealed class FoldingTaggerProvider : ITaggerProvider
+    {
+        public ITagger<T> CreateTagger<T>(ITextBuffer buffer) where T : ITag =>
+            !EditorListener.IsSql(buffer.ContentType) || WorkbenchPackage.Instance?.Options?.FoldBlocks == false ? null
+                : buffer.Properties.GetOrCreateSingletonProperty(() => new FoldingTagger(buffer)) as ITagger<T>;
+    }
+
+    /// <summary>Collapsible --region sections and multi-line BEGIN/END blocks (collapsed from the end of BEGIN through END).</summary>
+    internal sealed class FoldingTagger : ITagger<IOutliningRegionTag>
+    {
+        private readonly BlockCache cache;
+        public event EventHandler<SnapshotSpanEventArgs> TagsChanged;
+
+        internal FoldingTagger(ITextBuffer buffer)
+        {
+            cache = BlockCache.For(buffer);
+            cache.Updated += snapshot => TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length)));
+        }
+
+        public IEnumerable<ITagSpan<IOutliningRegionTag>> GetTags(NormalizedSnapshotSpanCollection spans)
+        {
+            if (spans.Count == 0 || !(cache.Latest is { } latest)) yield break;
+            var (snapshot, blocks) = latest;
+            var target = spans[0].Snapshot;
+            var folds = cache.Regions.Where(r => r.End <= snapshot.Length)
+                .Select(r => (Start: snapshot.GetLineFromPosition(r.Start).End.Position, r.End, Label: r.Label.TrimStart('-', ' ', '\t', '#').Substring(6).Trim()))
+                .Concat(blocks.Select(b => (Start: b.OpenStart + b.OpenLength, End: b.CloseStart + b.CloseLength, Label: "...")));
+            foreach (var (start, end, label) in folds)
+            {
+                if (end > snapshot.Length || start >= end || snapshot.GetLineNumberFromPosition(start) == snapshot.GetLineNumberFromPosition(end)) continue;
+                var span = new SnapshotSpan(snapshot, start, end - start).TranslateTo(target, SpanTrackingMode.EdgeExclusive);
+                if (!spans.IntersectsWith(new NormalizedSnapshotSpanCollection(span))) continue;
+                yield return new TagSpan<IOutliningRegionTag>(span, new OutliningRegionTag(false, false, label.Length == 0 ? "region" : label, span.Length > 500 ? span.GetText().Substring(0, 500) + "..." : span.GetText()));
+            }
         }
     }
 

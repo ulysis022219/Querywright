@@ -66,7 +66,7 @@ namespace Querywright.Ssms
         /// value per row. Otherwise the selected rows x columns, where a selection of one cell or less means the whole
         /// grid, since a single click always selects a cell.
         /// </summary>
-        internal static GridCells Read(object grid, bool valuesOnly)
+        internal static GridCells Read(object grid, bool valuesOnly, long maxCells = MaxCells)
         {
             object storage = Member(grid, "GridStorage") ?? throw Unsupported("its data");
             var cell = Method(storage, "GetCellDataAsString", typeof(long), typeof(int)) ?? throw Unsupported("cell text");
@@ -103,7 +103,7 @@ namespace Querywright.Ssms
                     for (long row = block.Top; row <= block.Bottom; row++)
                         for (int column = block.Left; column <= block.Right; column++)
                         {
-                            if (result.Rows.Count >= MaxCells) { result.Truncated = true; return result; }
+                            if (result.Rows.Count >= maxCells) { result.Truncated = true; return result; }
                             result.Rows.Add(new[] { Text(row, column) });
                         }
                 return result;
@@ -136,6 +136,40 @@ namespace Querywright.Ssms
                 catch (TargetInvocationException) { result.Types = null; }
             foreach (long row in rows) result.Rows.Add(columns.Select(c => Text(row, c)).ToArray());
             return result;
+        }
+    }
+
+    /// <summary>Count, sum, average, min and max of the selected grid cells in the status bar, after each mouse or key selection.
+    /// Cell values are only summed in memory; never logged.</summary>
+    internal static class GridTotals
+    {
+        private const long MaxCells = 100_000;
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Control, object> Hooked = new System.Runtime.CompilerServices.ConditionalWeakTable<Control, object>();
+        private static Timer? timer;
+
+        /// <summary>UI thread. Looks for a newly focused grid once a second and hooks it; <paramref name="enabled"/> is read on every selection.</summary>
+        internal static void Start(Func<bool> enabled, Action<string> status)
+        {
+            if (timer != null) return;
+            timer = new Timer { Interval = 1000 };
+            timer.Tick += (sender, args) =>
+            {
+                if (!(ResultsGridReader.FocusedGrid() is Control grid) || Hooked.TryGetValue(grid, out _)) return;
+                Hooked.Add(grid, grid);
+                void Update()
+                {
+                    if (!enabled()) return;
+                    try
+                    {
+                        var cells = ResultsGridReader.Read(grid, valuesOnly: true, MaxCells);
+                        if (cells.Rows.Count > 1) status(Querywright.Core.ResultGrid.SelectionSummary(cells.Rows.Select(r => r[0])) + (cells.Truncated ? "    (first " + MaxCells + " cells)" : ""));
+                    }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { } // ponytail: totals are a nicety; an odd grid just shows none.
+                }
+                grid.MouseUp += (s, e) => Update();
+                grid.KeyUp += (s, e) => { if (e.Shift || e.Control) Update(); };
+            };
+            timer.Start();
         }
     }
 }

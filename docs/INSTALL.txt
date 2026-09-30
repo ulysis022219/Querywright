@@ -17,7 +17,8 @@ Try
 
 Update
   Querywright shows a notice in SSMS when a newer release is published (once a day; turn off under
-  Tools > Options > Querywright > Updates). Click Install update in the notice.
+  Tools > Options > Querywright > Updates; check now with Querywright > Check for updates...).
+  Click Install update in the notice.
   The updater downloads the release and verifies its checksum, extension identity and version.
   When prompted, save your work and close all windows of that SSMS installation. The updater
   waits for you; it never closes SSMS itself. Reopen SSMS after it reports successful installation.

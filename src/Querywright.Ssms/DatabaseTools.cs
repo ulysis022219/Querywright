@@ -51,7 +51,7 @@ ELSE
                 using (var sql = connection.Open())
                 using (var command = new SqlCommand(CodeSql, sql) { CommandTimeout = 60 })
                 {
-                    command.Parameters.Add("@name", SqlDbType.NVarChar, 128).Value = Regex.IsMatch(word, @"^[\w@#$ ]{1,128}$") ? word : (object)DBNull.Value;
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 128).Value = Regex.IsMatch(word, @"^[\w@#$ ]{1,128}\z") ? word : (object)DBNull.Value;
                     command.Parameters.Add("@p", SqlDbType.NVarChar, 4000).Value = "%" + Regex.Replace(text, @"[%_\[\\]", "\\$0") + "%";
                     using (var reader = command.ExecuteReader())
                         while (reader.Read())

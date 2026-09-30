@@ -887,6 +887,7 @@ var fileTime = new DateTime(2026, 9, 29, 14, 5, 9);
 Check(ResultGrid.FileName("SELECT * FROM lc.getRefDatabase WHERE descr LIKE '%x%'", fileTime) == "lc.getRefDatabase_20260929_140509", "result file name from FROM table");
 Check(ResultGrid.FileName("select a from Orders o join dbo.Lines l on l.id = o.id", fileTime) == "dbo.Orders_20260929_140509", "result file name defaults schema to dbo");
 Check(ResultGrid.FileName("SELECT 1", fileTime) == "Results_20260929_140509", "result file name without a table");
+Check(ResultGrid.IsNumber("12") && !ResultGrid.IsNumber("12\n") && !ResultGrid.IsNumber("1\n;DROP TABLE t"), "IsNumber rejects a trailing newline");
 Check(ResultGrid.FileName(null, fileTime) == "Results_20260929_140509", "result file name without query text");
 Check(ResultGrid.InClause(new[] { "3", "1", "3", null, "-2.5" }) == "(3, 1, -2.5)", "IN clause numbers, distinct, NULL dropped");
 Check(ResultGrid.InClause(new[] { "7", "007", "O'Brien" }) == "(N'7', N'007', N'O''Brien')", "IN clause mixed quotes all");

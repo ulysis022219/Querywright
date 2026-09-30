@@ -1021,5 +1021,5 @@ var asm_procs = CatalogAssembler.Procedures(new (string?, string?, string?, stri
 Check(asm_procs.Length == 2 && asm_procs[0].Name == "p1" && asm_procs[0].Parameters.Count == 0 && asm_procs[1].Parameters.Count == 1, "catalog procedures tolerate bad rows");
 Check(CatalogAssembler.Procedures(null!).Length == 0, "catalog procedures null input");
 var ob_items = Complete("SELECT * FROM People ORD|").Items;
-Check(ob_items.Any(i => i.Name == "ORDER" && i.InsertText == "ORDER BY"), "ORDER completes to ORDER BY");
+Check(ob_items.Any(i => i.Name == "ORDER BY" && i.InsertText == "ORDER BY"), "ORDER completes to ORDER BY");
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes and object refactors. SSMS integration not tested.");

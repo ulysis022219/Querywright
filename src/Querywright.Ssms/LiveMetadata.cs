@@ -456,7 +456,15 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         private static IReadOnlyList<SchemaTable> Load(ActiveConnection connection, int attempt = 0)
         {
             if (attempt == 0 && !stale.ContainsKey(connection.Key) && DiskCachePath(connection) is string cached && File.Exists(cached))
-                try { using (var reader = File.OpenText(cached)) if (SchemaDiskCache.Read(reader) is SchemaTable[] saved) stale[connection.Key] = saved; }
+                try
+                {
+                    using (var reader = File.OpenText(cached))
+                    if (SchemaDiskCache.Read(reader) is var (tables, procedures))
+                    {
+                        stale[connection.Key] = tables;
+                        procedureCache.TryAdd(connection.Key, procedures);
+                    }
+                }
                 catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
             try
             {
@@ -515,7 +523,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     try
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(path));
-                        using (var writer = File.CreateText(path + ".tmp")) SchemaDiskCache.Write(writer, built.Tables);
+                        using (var writer = File.CreateText(path + ".tmp")) SchemaDiskCache.Write(writer, built.Tables, procedureCache.TryGetValue(connection.Key, out var saved) ? saved : null);
                         File.Copy(path + ".tmp", path, true); File.Delete(path + ".tmp");
                     }
                     catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
@@ -541,12 +549,20 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         }
 
         /// <summary>Schema cache file for a connection, named by a hash so no server, database or login appears on disk; null when the option is off.</summary>
+        private static string DiskCacheFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "SchemaCache");
+
+        /// <summary>Removes every cached schema file; called when "Cache schema on disk" is turned off.</summary>
+        internal static void ClearDiskCache()
+        {
+            try { if (Directory.Exists(DiskCacheFolder)) Directory.Delete(DiskCacheFolder, true); }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { ActivityLog.TryLogWarning("Querywright", "Schema cache not cleared: " + error.GetType().Name); }
+        }
+
         private static string DiskCachePath(ActiveConnection connection)
         {
             if (WorkbenchPackage.Instance?.Options?.CacheSchemaOnDisk != true) return null;
             using (var sha = System.Security.Cryptography.SHA256.Create())
-                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "SchemaCache",
-                    BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(connection.Key))).Replace("-", "") + ".txt");
+                return Path.Combine(DiskCacheFolder, BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(connection.Key))).Replace("-", "") + ".txt");
         }
 
         private static bool IsRecoverable(Exception error) => !(error is OutOfMemoryException);

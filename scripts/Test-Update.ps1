@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/Update-Release.ps1"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression
 $script:checks = 0
 function Reject([scriptblock]$Action, [string]$Expected) {
     $caught = $null

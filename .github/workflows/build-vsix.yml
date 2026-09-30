@@ -90,12 +90,9 @@ jobs:
         run: |
           $out = New-Item -ItemType Directory -Force dist/Querywright
           Copy-Item src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix $out
-          Copy-Item scripts/Install-Development.ps1 (Join-Path $out 'Install-Querywright.ps1')
-          Copy-Item scripts/Test-Package.ps1 $out
-          Copy-Item scripts/Install.cmd $out
+          # One installer file: Install.cmd's batch header runs the PowerShell installer appended to it.
+          (Get-Content -Raw scripts/Install.cmd) + (Get-Content -Raw scripts/Install-Development.ps1) | Set-Content -NoNewline -Encoding ascii (Join-Path $out 'Install.cmd')
           Copy-Item scripts/Uninstall.cmd $out
-          Copy-Item examples/offline-schema.sql $out
-          Copy-Item docs/INSTALL.txt $out
           Compress-Archive -Path "$out/*" -DestinationPath dist/Querywright-ssms22.zip -Force
       - uses: actions/upload-artifact@v4
         with:
@@ -113,7 +110,7 @@ jobs:
           gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
           gh release create "$tag" dist/Querywright-ssms22.zip --prerelease --target "$GITHUB_SHA" \
             --title "Querywright dev build ($GITHUB_REF_NAME)" \
-            --notes "Untested development build from ${GITHUB_SHA}. See INSTALL.txt inside the zip."
+            --notes "Untested development build from ${GITHUB_SHA}. Close SSMS 22, unzip and double-click Install.cmd."
       - name: SSMS 22 end-to-end
         if: steps.prior.outputs.e2e != 'skip'
         shell: powershell
@@ -152,6 +149,9 @@ jobs:
             previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA^" 2>/dev/null || true)
             NOTES=$(git log --no-merges --format='- %s' ${previous:+"$previous.."}"$GITHUB_SHA")
           fi
-          printf '## What changed\n\n%s\n\n## Install or update\n\nClose SSMS 22, unzip, double-click Install.cmd (see INSTALL.txt). To remove it, double-click Uninstall.cmd. Free and open source (MIT).\n' "$NOTES" > notes.md
-          gh release create "$TAG" Querywright-ssms22.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          printf '## What changed\n\n%s\n\n## Install or update\n\nClose SSMS 22, unzip QueryWright_%s.zip, double-click Install.cmd. To remove it, double-click Uninstall.cmd.\nOr install QueryWright_%s.vsix yourself. Free and open source (MIT).\n' "$NOTES" "$TAG" "$TAG" > notes.md
+          # Versioned names; the updater looks for QueryWright_<tag>.zip.
+          mv Querywright-ssms22.zip "QueryWright_$TAG.zip"
+          unzip -p "QueryWright_$TAG.zip" Querywright.Ssms.vsix > "QueryWright_$TAG.vsix"
+          gh release create "$TAG" "QueryWright_$TAG.zip" "QueryWright_$TAG.vsix" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Querywright $TAG" --notes-file notes.md

@@ -21,7 +21,9 @@ if (-not (Test-Path -LiteralPath $installer)) { throw 'SSMS VSIX installer not f
 if (-not $Uninstall -and -not (Test-Path -LiteralPath $package)) { throw 'Build the VSIX first.' }
 $running = Get-Process ssms -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $SsmsDirectory 'SSMS.exe') }
 if ($running) { throw 'Close SSMS 22 after saving your work before installation. No processes were stopped.' }
-if (-not $Uninstall) { & "$PSScriptRoot\Test-Package.ps1" -Path $package }
+# ponytail: the release zip ships no Test-Package.ps1 (VSIXInstaller verifies the package); the source tree and updater still run it.
+$check = Join-Path $PSScriptRoot 'Test-Package.ps1'
+if (-not $Uninstall -and (Test-Path -LiteralPath $check)) { & $check -Path $package }
 $log = Join-Path $env:TEMP 'Querywright-vsix-install.log'
 $target = if ($Uninstall) { '/uninstall:SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450' } else { '"' + $package + '"' }
 $arguments = @('/quiet', ('/instanceIds:' + $instance[0].instanceId), ('/logFile:"' + $log + '"'), $target)

@@ -3,16 +3,21 @@
 A free, open-source productivity extension for **SQL Server Management Studio 22**.
 It helps you write, format, check and refactor T-SQL faster, right inside the SSMS query editor.
 
+**Looking for a free alternative to Redgate SQL Prompt?** Querywright is a free SQL Prompt alternative
+for SSMS 22: SQL IntelliSense and autocomplete, a T-SQL formatter / SQL beautifier, snippets,
+code analysis, refactoring, tab history and server colors, with no license or subscription.
+
 - **No AI.** Everything is plain, predictable code.
 - **Never runs your SQL on its own.** Generated scripts open in a new window for you to review.
 - **Private by default.** Credentials, query text and result data are never logged.
 - **MIT licensed.**
 
-> Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/SqlWorkbench/issues).
+> Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/Querywright/issues).
 
 ## Install
 
-1. Download `Querywright-ssms22.zip` from the [latest release](https://github.com/ulysis022219/SqlWorkbench/releases/latest).
+1. Download `QueryWright_v<version>.zip` from the [latest release](https://github.com/ulysis022219/Querywright/releases/latest)
+   (or just the `.vsix` next to it if you prefer installing it yourself).
 2. Close SSMS 22, unzip, and double-click **Install.cmd**.
 3. Start SSMS 22 and open a query window.
 
@@ -22,7 +27,7 @@ Click **Install update** in the notice: Querywright
 downloads and verifies the release, then waits for you to save your work and close SSMS.
 The updater installs it automatically; reopen SSMS when it reports success. Your settings are kept.
 Older versions that only show **Download** need one manual update to get this feature.
-To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt](docs/INSTALL.txt).
+To uninstall, close SSMS and double-click `Uninstall.cmd`.
 
 ## What it does
 
@@ -100,4 +105,10 @@ and no logging of credentials, query text or result data.
 
 ## License
 
-[MIT](LICENSE). Querywright is an independent project, not affiliated with Microsoft.
+[MIT](LICENSE). Querywright is an independent project, not affiliated with or endorsed by Microsoft or Redgate.
+SQL Prompt is a trademark of Redgate Software Ltd; SQL Server Management Studio is a trademark of Microsoft.
+Names are used only to describe compatibility and comparison.
+
+<sub>Keywords: free SQL Prompt alternative, SQL Prompt free, SSMS extension, SSMS 22 add-in, SSMS plugin,
+SQL IntelliSense, SQL autocomplete, T-SQL formatter, SQL formatter for SSMS, SQL beautifier, SQL snippets,
+SQL code analysis, T-SQL linter, SQL refactoring, SSMS tab history, SSMS server colors, open source.</sub>

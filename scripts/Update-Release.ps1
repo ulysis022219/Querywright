@@ -5,11 +5,13 @@ function Get-QuerywrightReleaseAsset {
         $Release.tag_name -cne $Tag -or $Release.draft -ne $false -or $Release.prerelease -ne $false) {
         throw 'Expected a published stable Querywright release matching the requested version.'
     }
-    $assets = @($Release.assets | Where-Object { $_.name -ceq 'Querywright-ssms22.zip' })
-    if ($assets.Count -ne 1) { throw 'The release must contain exactly one Querywright-ssms22.zip asset.' }
+    $name = "QueryWright_$Tag.zip"
+    $assets = @($Release.assets | Where-Object { $_.name -ceq $name })
+    if ($assets.Count -ne 1) { throw "The release must contain exactly one $name asset." }
     $asset = $assets[0]
-    $expected = "https://github.com/ulysis022219/SqlWorkbench/releases/download/$Tag/Querywright-ssms22.zip"
-    if ($asset.browser_download_url -cne $expected -or $asset.state -ne 'uploaded') {
+    # The repository was renamed from SqlWorkbench; GitHub may report either name.
+    $expected = @('Querywright', 'SqlWorkbench') | ForEach-Object { "https://github.com/ulysis022219/$_/releases/download/$Tag/$name" }
+    if ($asset.browser_download_url -cnotin $expected -or $asset.state -ne 'uploaded') {
         throw 'Unexpected release download location or incomplete asset.'
     }
     if ($asset.digest -cnotmatch '\Asha256:[a-fA-F0-9]{64}\z') {
@@ -85,5 +87,5 @@ function Expand-QuerywrightUpdate {
         if ($entries.Count -ne 1 -or $entries[0].Length -gt 200MB) { throw 'Invalid release package.' }
         [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], $Destination, $false)
     } finally { $zip.Dispose() }
-    & "$PSScriptRoot/Test-Package.ps1" -Path $Destination -ExpectedVersion $Tag.Substring(1)
+    & "$PSScriptRoot/Test-Package.ps1" -Path $Destination -ExpectedVersion $Tag.Substring(1) | Out-Null
 }

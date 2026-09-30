@@ -19,7 +19,7 @@ namespace Querywright.Ssms
 
         [Category("Completion")]
         [DisplayName("Cache schema on disk")]
-        [Description("Keep table and column names, types and foreign keys in %LOCALAPPDATA%\\Querywright\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes.")]
+        [Description("Keep table and column names, types and foreign keys in %LOCALAPPDATA%\\Querywright\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes. Turning this off deletes the cached files.")]
         public bool CacheSchemaOnDisk { get; set; } = true;
 
         [Category("Completion")]
@@ -191,6 +191,12 @@ namespace Querywright.Ssms
         /// <summary>Databases ticked last time in Script for multiple databases, one per line.</summary>
         [Browsable(false)]
         public string MultiDatabaseSelection { get; set; } = "";
+
+        protected override void OnApply(PageApplyEventArgs e)
+        {
+            base.OnApply(e);
+            if (e.ApplyBehavior == ApplyKind.Apply && !CacheSchemaOnDisk) Querywright.Ssms.LiveMetadata.ClearDiskCache();
+        }
 
         [Category("Snippets")]
         [DisplayName("Tab expands snippets")]

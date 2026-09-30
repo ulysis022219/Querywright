@@ -1195,14 +1195,20 @@ Check(typeof(WorkbenchSettings).GetProperties().Where(p => p.PropertyType == typ
         new SchemaTable("sales", "Cust omers", new[] { "Id\n" }, null, null, null, true),
     };
     var text = new System.IO.StringWriter();
-    SchemaDiskCache.Write(text, tables);
-    var back = SchemaDiskCache.Read(new System.IO.StringReader(text.ToString()));
-    Check(back != null && back.Length == 2 && text.ToString().Split('\n').Length == 9, "schema disk cache round-trips");
+    var cachedProcs = new[] { new SchemaProcedure("dbo", "p\tx", new[] { new SchemaParameter("@a", "int", true, false), new SchemaParameter("@b", null, false, true) }, false), new SchemaProcedure("dbo", "f", new SchemaParameter[0], true) };
+    SchemaDiskCache.Write(text, tables, cachedProcs);
+    var read = SchemaDiskCache.Read(new System.IO.StringReader(text.ToString()));
+    var back = read?.Tables;
+    Check(back != null && back.Length == 2 && text.ToString().Split('\n').Length == 13, "schema disk cache round-trips");
+    var bp = read!.Value.Procedures;
+    Check(bp.Length == 2 && bp[0].Name == "p\tx" && !bp[0].IsFunction && bp[1].IsFunction && bp[1].Parameters.Count == 0
+        && bp[0].Parameters[0].IsOutput && bp[0].Parameters[0].Type == "int" && bp[0].Parameters[1].HasDefault && bp[0].Parameters[1].Type == null, "schema disk cache keeps procedures");
+    Check(SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 2\nA\t@a\tint\t0\t0")) == null, "parameter before procedure yields null");
     var o = back!.Single(t => t.Name == "Orders"); var c = back!.Single(t => t.Name == "Cust omers");
     Check(o.Columns.SequenceEqual(tables[0].Columns) && o.ColumnTypes!.SequenceEqual(tables[0].ColumnTypes!) && o.Generated!.SequenceEqual(tables[0].Generated!)
         && o.ColumnNotes!.SequenceEqual(tables[0].ColumnNotes!) && !o.IsView && c.IsView && c.Columns.Single() == "Id\n", "schema disk cache keeps columns, types, flags and notes");
     Check(o.ForeignKeys.Single().ReferencedTable == "Cust omers" && o.ForeignKeys.Single().Columns.Single() == "Cust\tId" && o.ForeignKeys.Single().ReferencedColumns.Single() == "Id\n", "schema disk cache keeps foreign keys");
-    Check(SchemaDiskCache.Read(new System.IO.StringReader("junk")) == null && SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 1\nC")) == null
-        && SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 1\nX\ty")) == null && SchemaDiskCache.Read(new System.IO.StringReader("")) == null, "unreadable schema cache yields null");
+    Check(SchemaDiskCache.Read(new System.IO.StringReader("junk")) == null && SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 2\nC")) == null
+        && SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 2\nX\ty")) == null && SchemaDiskCache.Read(new System.IO.StringReader("")) == null, "unreadable schema cache yields null");
 }
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes, object refactors, stress, fuzz and the schema cache. SSMS integration not tested.");

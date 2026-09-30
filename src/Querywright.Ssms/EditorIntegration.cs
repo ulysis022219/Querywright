@@ -305,11 +305,18 @@ namespace Querywright.Ssms
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }
             }, token).ConfigureAwait(false);
             bool member = applicableTo.Start.Position > 0 && location.Snapshot[applicableTo.Start.Position - 1] == '.';
-            var snippets = applicableTo.IsEmpty || member ? Array.Empty<KeyValuePair<string, string>>() : package.SnippetList();
+            // After FROM/JOIN/INTO/UPDATE/TABLE the user wants a table, not a snippet.
+            int back = applicableTo.Start.Position;
+            while (back > 0 && char.IsWhiteSpace(location.Snapshot[back - 1])) back--;
+            int wordStart = back;
+            while (wordStart > 0 && char.IsLetter(location.Snapshot[wordStart - 1])) wordStart--;
+            bool expectsTable = back < applicableTo.Start.Position && System.Array.IndexOf(new[] { "FROM", "JOIN", "INTO", "UPDATE", "TABLE" },
+                location.Snapshot.GetText(wordStart, back - wordStart).ToUpperInvariant()) >= 0;
+            var snippets = applicableTo.IsEmpty || member || expectsTable ? Array.Empty<KeyValuePair<string, string>>() : package.SnippetList();
             if ((result == null || result.Items.Count == 0) && snippets.Count == 0) return CompletionContext.Empty;
             // Snippets insert their shortcut; Tab then expands it (see EditorCommandFilter).
             var items = snippets.Select(s => new VsCompletionItem(s.Key, this, null!, ImmutableArray<CompletionFilter>.Empty,
-                    "snippet: " + s.Value, s.Key, s.Key, s.Key, ImmutableArray<ImageElement>.Empty))
+                    "snippet: " + s.Value, s.Key, "\uFFFF" + s.Key, s.Key, ImmutableArray<ImageElement>.Empty))
                 .Concat((result?.Items ?? Array.Empty<Querywright.Core.CompletionItem>()).Select(i => new VsCompletionItem(i.Name, this, null!, ImmutableArray<CompletionFilter>.Empty,
                     i.Description, i.InsertText, i.Name, i.Name, ImmutableArray<ImageElement>.Empty))).ToImmutableArray();
             // Soft selection after a space so Enter still inserts a new line.

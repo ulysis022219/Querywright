@@ -25,12 +25,23 @@ namespace Querywright.Core
         public string Schema { get; }
         public string Name { get; }
         public IReadOnlyList<SchemaParameter> Parameters { get; }
-        public SchemaProcedure(string schema, string name, SchemaParameter[] parameters)
+        /// <summary>A user-defined function: shown in parameter hints for name(, never offered after EXEC.</summary>
+        public bool IsFunction { get; }
+        public SchemaProcedure(string schema, string name, SchemaParameter[] parameters, bool isFunction = false)
         {
             if (string.IsNullOrWhiteSpace(schema) || string.IsNullOrWhiteSpace(name) || parameters == null || parameters.Any(p => p == null))
                 throw new ArgumentException("Procedures need a schema, a name and parameters.");
-            Schema = schema; Name = name; Parameters = Array.AsReadOnly((SchemaParameter[])parameters.Clone());
+            Schema = schema; Name = name; Parameters = Array.AsReadOnly((SchemaParameter[])parameters.Clone()); IsFunction = isFunction;
         }
+    }
+
+    /// <summary>Signature shown while typing arguments; Current is the argument at the caret, -1 when past the last one.</summary>
+    public sealed class ParameterHint
+    {
+        public string Name { get; }
+        public IReadOnlyList<string> Parameters { get; }
+        public int Current { get; }
+        internal ParameterHint(string name, IReadOnlyList<string> parameters, int current) { Name = name; Parameters = parameters; Current = current; }
     }
 
     /// <summary>INSERT/EXEC fill and quick info; everything here only produces text.</summary>
@@ -108,7 +119,7 @@ namespace Querywright.Core
                 text.Append(newline).Append(indent).Append(')');
                 return new TextEdit(position, caret - position, text.ToString());
             }
-            var procedure = Find(procedures ?? Array.Empty<SchemaProcedure>(), p => p.Schema, p => p.Name, parts, defaultSchema);
+            var procedure = Find((procedures ?? Array.Empty<SchemaProcedure>()).Where(p => !p.IsFunction).ToList(), p => p.Schema, p => p.Name, parts, defaultSchema);
             if (procedure == null || procedure.Parameters.Count == 0) return null;
             // Continuation lines line up under the first argument; tabs in the line prefix are kept so the column matches.
             string hang = new string(sql.Substring(lineStart, position - lineStart).Select(c => c == '\t' ? '\t' : ' ').ToArray()) + " ";
@@ -223,6 +234,108 @@ namespace Querywright.Core
             yield return sql.Substring(start);
         }
 
+        /// <summary>Lines of a module definition containing <paramref name="text"/> (case-insensitive; whole word when it is a plain name), 1-based, trimmed to 200 chars.</summary>
+        public static IReadOnlyList<(int Line, string Text)> MatchingLines(string definition, string text, int max = 50)
+        {
+            if (definition == null || string.IsNullOrEmpty(text)) return Array.Empty<(int, string)>();
+            bool word = text.All(IsWordChar);
+            var pattern = new System.Text.RegularExpressions.Regex((word ? @"(?<![\w@#$])" : "") + System.Text.RegularExpressions.Regex.Escape(text) + (word ? @"(?![\w@#$])" : ""),
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            var result = new List<(int, string)>();
+            string[] lines = definition.Split('\n');
+            for (int i = 0; i < lines.Length && result.Count < max; i++)
+                if (pattern.IsMatch(lines[i]))
+                {
+                    string line = lines[i].Trim();
+                    result.Add((i + 1, line.Length > 200 ? line.Substring(0, 200) + "..." : line));
+                }
+            return result;
+        }
+
+        /// <summary>
+        /// Parameters of the procedure after EXEC (caret past the name) or of the function whose ( is still open at the caret.
+        /// Null when neither applies or the name is unknown.
+        /// </summary>
+        public static ParameterHint? ParameterHintAt(string sql, int position, IReadOnlyList<SchemaProcedure>? procedures, string defaultSchema = "dbo")
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
+            if (procedures == null || procedures.Count == 0) return null;
+            // ponytail: only the 4000 characters before the caret are looked at; longer argument lists get no hint.
+            int from = Math.Max(0, position - 4000);
+            string before = sql.Substring(from, position - from);
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(before), out _).Where(t => !Trivia(t)).ToList();
+            bool endsInWord = before.Length > 0 && IsWordChar(before[before.Length - 1]);
+            int depth = 0, commas = 0;
+            for (int i = tokens.Count - 1; i >= 0; i--)
+            {
+                var t = tokens[i];
+                if (t.TokenType == TSqlTokenType.RightParenthesis) depth++;
+                else if (t.TokenType == TSqlTokenType.LeftParenthesis)
+                {
+                    if (depth-- > 0) continue;
+                    var parts = NameBefore(tokens, i - 1);
+                    var function = parts == null ? null : Find(procedures.Where(p => p.IsFunction).ToList(), p => p.Schema, p => p.Name, parts, defaultSchema);
+                    return function == null ? null : Hint(function, commas, null);
+                }
+                else if (depth > 0) continue;
+                else if (t.TokenType == TSqlTokenType.Comma) commas++;
+                else if (t.TokenType == TSqlTokenType.Semicolon || t.TokenType == TSqlTokenType.Go) return null;
+                else if (t.Text.Equals("EXEC", StringComparison.OrdinalIgnoreCase) || t.Text.Equals("EXECUTE", StringComparison.OrdinalIgnoreCase))
+                {
+                    int n = i + 1;
+                    if (n + 1 < tokens.Count && tokens[n].TokenType == TSqlTokenType.Variable && tokens[n + 1].TokenType == TSqlTokenType.EqualsSign) n += 2;
+                    var parts = new List<string>();
+                    while (n < tokens.Count && (tokens[n].TokenType == TSqlTokenType.Identifier || tokens[n].TokenType == TSqlTokenType.QuotedIdentifier))
+                    {
+                        parts.Add(Unquote(tokens[n].Text));
+                        if (n + 1 < tokens.Count && tokens[n + 1].TokenType == TSqlTokenType.Dot) n += 2; else { n++; break; }
+                    }
+                    // Still typing the name: completion's job, not a hint.
+                    if (parts.Count == 0 || (n == tokens.Count && endsInWord)) return null;
+                    var procedure = Find(procedures.Where(p => !p.IsFunction).ToList(), p => p.Schema, p => p.Name, parts, defaultSchema);
+                    if (procedure == null) return null;
+                    // A named argument (@x = ...) picks its parameter; otherwise the comma count does.
+                    int last = tokens.FindLastIndex(k => k.TokenType == TSqlTokenType.Comma);
+                    int argStart = last > n ? last + 1 : n;
+                    string? named = argStart + 1 < tokens.Count && tokens[argStart].TokenType == TSqlTokenType.Variable && tokens[argStart + 1].TokenType == TSqlTokenType.EqualsSign
+                        ? tokens[argStart].Text : null;
+                    return Hint(procedure, commas, named);
+                }
+                else if (t.TokenType != TSqlTokenType.Identifier && t.TokenType != TSqlTokenType.QuotedIdentifier && t.TokenType != TSqlTokenType.Variable &&
+                    t.TokenType != TSqlTokenType.Dot && t.TokenType != TSqlTokenType.EqualsSign && t.TokenType != TSqlTokenType.Integer &&
+                    t.TokenType != TSqlTokenType.Numeric && t.TokenType != TSqlTokenType.Real && t.TokenType != TSqlTokenType.Money &&
+                    t.TokenType != TSqlTokenType.AsciiStringLiteral && t.TokenType != TSqlTokenType.UnicodeStringLiteral &&
+                    t.TokenType != TSqlTokenType.Minus && t.TokenType != TSqlTokenType.Null && t.TokenType != TSqlTokenType.Default &&
+                    !t.Text.Equals("OUTPUT", StringComparison.OrdinalIgnoreCase) && !t.Text.Equals("OUT", StringComparison.OrdinalIgnoreCase))
+                    return null; // another statement or clause: not in an EXEC argument list
+            }
+            return null;
+        }
+
+        private static string Unquote(string part) =>
+            part.Length >= 2 && part[0] == '[' && part[part.Length - 1] == ']' ? part.Substring(1, part.Length - 2).Replace("]]", "]") : part;
+
+        // schema.name ending at token index i (identifiers and dots), or null.
+        private static List<string>? NameBefore(List<TSqlParserToken> tokens, int i)
+        {
+            var parts = new List<string>();
+            while (i >= 0 && (tokens[i].TokenType == TSqlTokenType.Identifier || tokens[i].TokenType == TSqlTokenType.QuotedIdentifier))
+            {
+                parts.Insert(0, Unquote(tokens[i].Text));
+                if (i > 0 && tokens[i - 1].TokenType == TSqlTokenType.Dot) i -= 2; else break;
+            }
+            return parts.Count == 0 ? null : parts;
+        }
+
+        private static ParameterHint Hint(SchemaProcedure p, int commas, string? named)
+        {
+            var parameters = p.Parameters.Select(x => x.Name + " " + (x.Type ?? "?") + (x.HasDefault ? " = default" : "") + (x.IsOutput ? " OUTPUT" : "")).ToList();
+            int current = named != null ? p.Parameters.ToList().FindIndex(x => x.Name.Equals(named, StringComparison.OrdinalIgnoreCase))
+                : commas < parameters.Count ? commas : -1;
+            return new ParameterHint(p.Schema + "." + p.Name, parameters, current);
+        }
+
         /// <summary>Quick info for the word at the caret: a variable's type, a procedure's parameters, a table's columns, or a column/alias.</summary>
         public static string? Describe(string sql, int position, IReadOnlyList<SchemaTable>? tables, IReadOnlyList<SchemaProcedure>? procedures,
             string defaultSchema = "dbo")
@@ -250,7 +363,7 @@ namespace Querywright.Core
             var procedure = qualified || item == null || item.Description.StartsWith("table ", StringComparison.Ordinal)
                 ? Find(procedures ?? Array.Empty<SchemaProcedure>(), p => p.Schema, p => p.Name, QualifiedName(sql, start, end), defaultSchema) : null;
             if (procedure != null && (item == null || !item.Description.StartsWith("column", StringComparison.Ordinal)))
-                return "procedure " + procedure.Schema + "." + procedure.Name + (procedure.Parameters.Count == 0 ? "" : Environment.NewLine +
+                return (procedure.IsFunction ? "function " : "procedure ") + procedure.Schema + "." + procedure.Name + (procedure.Parameters.Count == 0 ? "" : Environment.NewLine +
                     string.Join(Environment.NewLine, procedure.Parameters.Select(p => "  " + p.Name + " " + (p.Type ?? "?") + (p.IsOutput ? " OUTPUT" : "") + (p.HasDefault ? " = default" : ""))));
             if (item == null) return null;
             if (!item.Description.StartsWith("table ", StringComparison.Ordinal)) return item.Name + ": " + item.Description;

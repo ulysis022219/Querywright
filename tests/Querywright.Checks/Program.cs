@@ -1022,4 +1022,28 @@ Check(asm_procs.Length == 2 && asm_procs[0].Name == "p1" && asm_procs[0].Paramet
 Check(CatalogAssembler.Procedures(null!).Length == 0, "catalog procedures null input");
 var ob_items = Complete("SELECT * FROM People ORD|").Items;
 Check(ob_items.Any(i => i.Name == "ORDER BY" && i.InsertText == "ORDER BY"), "ORDER completes to ORDER BY");
+var ph_procs = new[]
+{
+    new SchemaProcedure("dbo", "Load", new[] { new SchemaParameter("@id", "int", false, false), new SchemaParameter("@name", "nvarchar(50)", false, true), new SchemaParameter("@out", "int", true, false) }),
+    new SchemaProcedure("dbo", "Tax", new[] { new SchemaParameter("@amount", "money", false, false), new SchemaParameter("@rate", "decimal(5,2)", false, false) }, isFunction: true),
+};
+ParameterHint? Hint(string text) { int at = text.IndexOf('|'); return SqlAssist.ParameterHintAt(text.Remove(at, 1), at, ph_procs); }
+Check(Hint("EXEC dbo.Load |") is { Name: "dbo.Load", Current: 0 } h1 && h1.Parameters.Count == 3 && h1.Parameters[2].Contains("OUTPUT"), "parameter hint after EXEC");
+Check(Hint("EXEC Load 1, |") is { Current: 1 }, "parameter hint second argument");
+Check(Hint("EXEC dbo.Load @out = |") is { Current: 2 }, "parameter hint named argument");
+Check(Hint("EXEC dbo.Load 1, 2, 3, |") is { Current: -1 }, "parameter hint past last parameter");
+Check(Hint("EXEC dbo.Lo|") == null, "no parameter hint while typing the name");
+Check(Hint("SELECT dbo.Tax(|") is { Name: "dbo.Tax", Current: 0 }, "function parameter hint");
+Check(Hint("SELECT dbo.Tax(1, |") is { Current: 1 }, "function hint second argument");
+Check(Hint("SELECT dbo.Tax(1); SELECT |") == null, "no hint after statement end");
+Check(Hint("EXEC dbo.Tax |") == null, "EXEC hint ignores functions");
+var ph_exec = SqlCompletion.Complete("EXEC dbo.", 9, catalog, procedures: ph_procs).Items;
+Check(ph_exec.Any(i => i.Name == "Load") && !ph_exec.Any(i => i.Name == "Tax"), "EXEC completion excludes functions");
+var ml = SqlAssist.MatchingLines("CREATE PROC p AS\nSELECT * FROM Orders;\nSELECT * FROM OrdersArchive;\n-- orders", "Orders");
+Check(ml.Count == 2 && ml[0].Line == 2 && ml[1].Line == 4, "matching lines whole word: " + string.Join(",", ml.Select(m => m.Line)));
+Check(SqlAssist.MatchingLines("a\nx.Orders_Id = 1", "rs_Id =").Count == 1, "matching lines substring for fragments");
+var rg = SqlNavigation.Regions("--region Load\nSELECT 1;\n  -- #region inner\nSELECT 2;\n--endregion\n--endregion\n--region open");
+Check(rg.Count == 2 && rg[0].Start == 0 && rg[0].Label == "--region Load" && rg[1].Label == "-- #region inner", "regions pair and nest");
+Check(ResultGrid.SelectionSummary(new[] { "1", "2.5", null, "x" }) == "Count: 3    Sum: 3.5    Avg: 1.75    Min: 1    Max: 2.5", "selection totals: " + ResultGrid.SelectionSummary(new[] { "1", "2.5", null, "x" }));
+Check(ResultGrid.SelectionSummary(new[] { "a", "b" }) == "Count: 2", "selection totals without numbers");
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes and object refactors. SSMS integration not tested.");

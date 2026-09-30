@@ -33,6 +33,7 @@ namespace Querywright.Ssms
     {
         [Import] internal IVsEditorAdaptersFactoryService Adapters = null!;
         [Import] internal IAsyncCompletionBroker Completion = null!;
+        [Import] internal IAsyncQuickInfoBroker QuickInfo = null!;
 
         internal static bool IsSql(IContentType type) =>
             type.IsOfType("SQL") || type.IsOfType("T-SQL") || type.TypeName.IndexOf("SQL", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -83,7 +84,7 @@ namespace Querywright.Ssms
             };
             view.TextBuffer.Changed += (s, e) => { history.Stop(); history.Start(); };
             view.Closed += (s, e) => { history.Stop(); SaveHistory(false); };
-            var filter = new EditorCommandFilter(view, Completion);
+            var filter = new EditorCommandFilter(view, Completion, QuickInfo);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
             SelfTest.Adapter = adapter;
             SelfTest.View = view;
@@ -94,8 +95,31 @@ namespace Querywright.Ssms
     {
         private readonly IWpfTextView view;
         private readonly IAsyncCompletionBroker completion;
+        private readonly IAsyncQuickInfoBroker quickInfo;
         internal IOleCommandTarget? Next;
-        internal EditorCommandFilter(IWpfTextView view, IAsyncCompletionBroker completion) { this.view = view; this.completion = completion; }
+        internal EditorCommandFilter(IWpfTextView view, IAsyncCompletionBroker completion, IAsyncQuickInfoBroker quickInfo) { this.view = view; this.completion = completion; this.quickInfo = quickInfo; }
+
+        internal const string HintKey = "QuerywrightParameterHint";
+
+        /// <summary>Space, ( or , typed in an EXEC or call: show the parameter hint through quick info.</summary>
+        private void TryParameterHint(Guid group, uint id, IntPtr input)
+        {
+            if (group != VSConstants.VSStd2K || id != (uint)VSConstants.VSStd2KCmdID.TYPECHAR || input == IntPtr.Zero ||
+                WorkbenchPackage.Instance?.Options?.ParameterHints == false) return;
+            char typed = (char)(ushort)System.Runtime.InteropServices.Marshal.GetObjectForNativeVariant(input);
+            if (typed != ' ' && typed != '(' && typed != ',') return;
+            var caret = view.Caret.Position.BufferPosition;
+            string line = caret.GetContainingLine().GetText();
+            // ponytail: cheap gate; the real check (tokens, known procedure) runs in the quick info source.
+            if (typed == ' ' && line.IndexOf("EXEC", StringComparison.OrdinalIgnoreCase) < 0) return;
+            view.Properties[HintKey] = caret.Position;
+            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                var open = quickInfo.GetSession(view);
+                if (open != null) await open.DismissAsync();
+                await quickInfo.TriggerQuickInfoAsync(view, caret.Snapshot.CreateTrackingPoint(caret.Position, PointTrackingMode.Positive), QuickInfoSessionOptions.None);
+            });
+        }
 
         /// <summary>The closing quote this filter inserted; typing ' right before it steps over it.</summary>
         private ITrackingPoint? closer;
@@ -196,6 +220,11 @@ namespace Querywright.Ssms
             {
                 Swallowed(error);
                 return VSConstants.S_OK;
+            }
+            if (ErrorHandler.Succeeded(result) && view.TextSnapshot != before)
+            {
+                try { TryParameterHint(group, id, input); }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { Swallowed(error); }
             }
             if (key && ErrorHandler.Succeeded(result) && !completion.IsCompletionActive(view) && (committing || view.TextSnapshot != before))
             {
@@ -348,6 +377,11 @@ namespace Querywright.Ssms
             if (package == null || point == null) return null;
             var snapshot = point.Value.Snapshot;
             int position = point.Value.Position;
+            if (session.TextView.Properties.TryGetProperty(EditorCommandFilter.HintKey, out int hintAt))
+            {
+                session.TextView.Properties.RemoveProperty(EditorCommandFilter.HintKey);
+                if (hintAt == position) return await HintAsync(package, snapshot, position, token);
+            }
             // END: which block it closes, when the opening line is off screen.
             var block = BlockCache.For(snapshot.TextBuffer).Latest is { } cached && cached.Snapshot == snapshot
                 ? cached.Blocks.FirstOrDefault(b => BlockCache.On(position, b.CloseStart, b.CloseLength)) : null;
@@ -400,6 +434,31 @@ namespace Querywright.Ssms
             }
             return new QuickInfoItem(span, new ContainerElement(ContainerElementStyle.Stacked,
                 text.Split('\n').Select(line => (object)new ClassifiedTextElement(new ClassifiedTextRun("text", line.TrimEnd('\r'))))));
+        }
+
+        private static async Task<QuickInfoItem?> HintAsync(WorkbenchPackage package, ITextSnapshot snapshot, int position, CancellationToken token)
+        {
+            await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+            var live = package.CurrentProcedures("");
+            string sql = snapshot.GetText();
+            var hint = await Task.Run(() =>
+            {
+                try
+                {
+                    var procedures = sql.Length > 1_000_000 || sql.IndexOf("CREATE", StringComparison.OrdinalIgnoreCase) < 0 ? live
+                        : SqlAssist.ProceduresFromScript(sql).Concat(live).ToArray();
+                    return SqlAssist.ParameterHintAt(sql, position, procedures);
+                }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { return null; }
+            }, token).ConfigureAwait(false);
+            if (hint == null) return null;
+            var runs = new List<ClassifiedTextRun> { new ClassifiedTextRun("text", hint.Name + (hint.Parameters.Count == 0 ? " (no parameters)" : " ")) };
+            for (int i = 0; i < hint.Parameters.Count; i++)
+            {
+                if (i > 0) runs.Add(new ClassifiedTextRun("text", ", "));
+                runs.Add(new ClassifiedTextRun("text", hint.Parameters[i], i == hint.Current ? ClassifiedTextRunStyle.Bold : ClassifiedTextRunStyle.Plain));
+            }
+            return new QuickInfoItem(snapshot.CreateTrackingSpan(position, 0, SpanTrackingMode.EdgeInclusive), new ClassifiedTextElement(runs));
         }
 
         public void Dispose() { }

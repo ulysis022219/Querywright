@@ -52,6 +52,16 @@ namespace Querywright.Ssms
         [Description("Give each BEGIN/END, CASE/END and TRY/CATCH pair a color by nesting level. Colors are under Fonts and Colors, \"Querywright BEGIN/END level\". The pair at the caret is always highlighted; Ctrl+] jumps to its partner.")]
         public bool ColorBlocks { get; set; } = true;
 
+        [Category("Editor")]
+        [DisplayName("Parameter hints")]
+        [Description("After EXEC procedure, or ( after a user function, show its parameters with the current one in bold. Uses the cached metadata; never queries while typing.")]
+        public bool ParameterHints { get; set; } = true;
+
+        [Category("Editor")]
+        [DisplayName("Fold regions and BEGIN/END blocks")]
+        [Description("Collapse --region / --endregion sections and multi-line BEGIN/END blocks from the margin. Reopen the query window after changing this.")]
+        public bool FoldBlocks { get; set; } = true;
+
         [Category("Tab history")]
         [DisplayName("Keep tab history")]
         [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab and 200 tabs kept, so any version can be reopened. Turn off to save nothing.")]
@@ -96,6 +106,11 @@ namespace Querywright.Ssms
         [DisplayName("CSV column headers")]
         [Description("Write the column names as the first line of Save as CSV.")]
         public bool CsvHeaders { get; set; } = true;
+
+        [Category("Results grid")]
+        [DisplayName("Selection totals in status bar")]
+        [Description("When more than one cell is selected, show count, sum, average, min and max of the numbers in the status bar. Values are never logged.")]
+        public bool GridTotals { get; set; } = true;
 
         [Category("Results grid menu")]
         [DisplayName("Show copy as IN clause")]

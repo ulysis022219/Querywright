@@ -270,7 +270,7 @@ namespace Querywright.Core
                 (qualifier == null || qualifier.Count == 1))
             {
                 context = Context.Table;
-                foreach (var p in procedures.Where(p => qualifier == null || names.Equals(p.Schema, qualifier[0])))
+                foreach (var p in procedures.Where(p => !p.IsFunction && (qualifier == null || names.Equals(p.Schema, qualifier[0]))))
                     Add(Kind.Table, p.Name, (qualifier == null ? QuoteIfNeeded(p.Schema) + "." : "") + QuoteIfNeeded(p.Name), "procedure " + p.Schema + "." + p.Name);
             }
             else if (qualifier != null && CrossDatabase(qualifier)) { }

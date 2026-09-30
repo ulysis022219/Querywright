@@ -138,6 +138,13 @@ namespace Querywright.Ssms
                 catch (InvalidOperationException) { return pass; }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return pass; }
             }
+            if (pguidCmdGroup == VSConstants.GUID_VSStandardCommandSet97 && nCmdID == (uint)VSConstants.VSStd97CmdID.SaveProjectItem && package.Options?.FormatOnSave == true)
+            {
+                try { package.FormatBeforeSave(package.GetSqlView()); }
+                catch (InvalidOperationException) { }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
+                return pass;
+            }
             if (pguidCmdGroup != group || nCmdID != id) return pass;
             try
             {

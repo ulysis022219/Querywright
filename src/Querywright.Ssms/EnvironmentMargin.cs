@@ -102,8 +102,11 @@ namespace Querywright.Ssms
             {
                 var c = color.Value;
                 text.Foreground = 0.299 * c.R + 0.587 * c.G + 0.114 * c.B > 150 ? Brushes.Black : Brushes.White;
+                // High Contrast: the server color stays as the band around the text, the text itself uses the theme colors.
+                if (SystemParameters.HighContrast) { text.Foreground = SystemColors.WindowTextBrush; text.Background = SystemColors.WindowBrush; text.Opacity = 1; }
+                else text.ClearValue(TextBlock.BackgroundProperty);
             }
-            else text.ClearValue(TextBlock.ForegroundProperty);
+            else { text.ClearValue(TextBlock.ForegroundProperty); text.ClearValue(TextBlock.BackgroundProperty); }
         }
 
         public FrameworkElement VisualElement => this;

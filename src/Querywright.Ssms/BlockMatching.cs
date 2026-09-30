@@ -240,7 +240,8 @@ namespace Querywright.Ssms
         protected BlockFormat(int level, byte r, byte g, byte b)
         {
             DisplayName = "Querywright BEGIN/END level " + level;
-            ForegroundColor = Color.FromRgb(r, g, b);
+            // ponytail: High Contrast (read once at startup) gets the theme text color; bold still marks the pair words.
+            ForegroundColor = System.Windows.SystemParameters.HighContrast ? System.Windows.SystemColors.WindowTextColor : Color.FromRgb(r, g, b);
             IsBold = true;
         }
     }

@@ -79,7 +79,7 @@ namespace Querywright.Core
             if (style.IndentSize < 1 || style.IndentSize > 16) throw new ArgumentException("Indent size must be between 1 and 16.", nameof(style));
             cancellation.ThrowIfCancellationRequested();
             var parser = new TSql170Parser(true);
-            var original = parser.Parse(new StringReader(sql), out var errors);
+            var original = parser.ParseSafe(sql, out var errors);
             if (errors.Count > 0) throw new FormatException($"Cannot format SQL: line {errors[0].Line}, column {errors[0].Column}: {errors[0].Message}");
             if (string.IsNullOrWhiteSpace(sql)) return sql;
             var generator = new Sql170ScriptGenerator(new SqlScriptGeneratorOptions
@@ -104,7 +104,7 @@ namespace Querywright.Core
             });
             generator.GenerateScript(original, out var formatted);
             cancellation.ThrowIfCancellationRequested();
-            var regenerated = parser.Parse(new StringReader(formatted), out var generatedErrors);
+            var regenerated = parser.ParseSafe(formatted, out var generatedErrors);
             if (generatedErrors.Count != 0) throw new InvalidOperationException("Formatter produced invalid SQL; original text retained.");
             // Verify sensitive tokens independently of regeneration so dropped literals/comments cannot pass silently.
             string[] Protected(TSqlFragment fragment)

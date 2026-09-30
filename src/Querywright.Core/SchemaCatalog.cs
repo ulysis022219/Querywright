@@ -34,7 +34,7 @@ namespace Querywright.Core
         {
             if (ddl == null) throw new ArgumentNullException(nameof(ddl));
             if (ddl.Length > 1_000_000) throw new ArgumentException("Schema input exceeds 1,000,000 characters.");
-            var fragment = new TSql170Parser(true).Parse(new StringReader(ddl), out var errors);
+            var fragment = new TSql170Parser(true).ParseSafe(ddl, out var errors);
             if (errors.Count > 0) throw new FormatException("Schema SQL has syntax errors; no partial catalog loaded.");
             var drafts = new List<Draft>();
             var alters = new List<AlterTableAddTableElementStatement>();

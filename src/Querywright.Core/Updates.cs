@@ -4,7 +4,7 @@ namespace Querywright.Core
 {
     public static class Updates
     {
-        public const string Repository = "https://github.com/ulysis022219/SqlWorkbench/";
+        public const string Repository = "https://github.com/ulysis022219/Querywright/";
 
         /// <summary>Line a user can paste into a bug report: version, command, error type. Never the message, query text or connection.</summary>
         public static string ErrorLine(string? version, string command, Type error)

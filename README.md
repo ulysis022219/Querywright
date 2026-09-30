@@ -12,11 +12,12 @@ code analysis, refactoring, tab history and server colors, with no license or su
 - **Private by default.** Credentials, query text and result data are never logged.
 - **MIT licensed.**
 
-> Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/SqlWorkbench/issues).
+> Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/Querywright/issues).
 
 ## Install
 
-1. Download `Querywright-ssms22.zip` from the [latest release](https://github.com/ulysis022219/SqlWorkbench/releases/latest).
+1. Download `QueryWright_v<version>.zip` from the [latest release](https://github.com/ulysis022219/Querywright/releases/latest)
+   (or just the `.vsix` next to it if you prefer installing it yourself).
 2. Close SSMS 22, unzip, and double-click **Install.cmd**.
 3. Start SSMS 22 and open a query window.
 
@@ -26,7 +27,7 @@ Click **Install update** in the notice: Querywright
 downloads and verifies the release, then waits for you to save your work and close SSMS.
 The updater installs it automatically; reopen SSMS when it reports success. Your settings are kept.
 Older versions that only show **Download** need one manual update to get this feature.
-To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt](docs/INSTALL.txt).
+To uninstall, close SSMS and double-click `Uninstall.cmd`.
 
 ## What it does
 

@@ -197,6 +197,8 @@ namespace Querywright.Ssms
                 // SQL Prompt: Tab on a typed snippet shortcut expands it even while the suggestion list is open.
                 if (IsTab(group, id) && completion.IsCompletionActive(view) && (package.HasSnippetShortcut(view) || !SelectionMatches()))
                     completion.GetSession(view)?.Dismiss();
+                if (group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.CANCEL) WorkbenchPackage.EndFields(view);
+                if (IsTab(group, id) && !completion.IsCompletionActive(view) && package.TryNextField(view)) return VSConstants.S_OK;
                 if (IsTab(group, id) && package.Options?.TabExpandSnippets != false && !completion.IsCompletionActive(view))
                 {
                     bool expanded = package.TryTabExpand(view);

@@ -369,7 +369,7 @@ namespace Querywright.Core
             if (!item.Description.StartsWith("table ", StringComparison.Ordinal)) return item.Name + ": " + item.Description;
             var table = (tables ?? Array.Empty<SchemaTable>()).FirstOrDefault(t => "table " + t.Schema + "." + t.Name == item.Description);
             if (table == null) return item.Description;
-            var lines = table.Columns.Take(MaxInfoColumns).Select((c, n) => "  " + OneLine(c) + (table.ColumnTypes?[n] is string type ? " " + type : ""));
+            var lines = table.Columns.Take(MaxInfoColumns).Select((c, n) => "  " + OneLine(c) + (table.ColumnTypes?[n] is string type ? " " + type : "") + (table.ColumnNotes?[n] is string note ? " " + note : ""));
             return item.Description + Environment.NewLine + string.Join(Environment.NewLine, lines) +
                 (table.Columns.Count > MaxInfoColumns ? Environment.NewLine + "  ... " + (table.Columns.Count - MaxInfoColumns) + " more" : "");
         }

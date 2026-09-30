@@ -81,11 +81,11 @@ try
     var fragments = new Dictionary<string, string>
     {
         ["ssf"] = "dbo.T;", ["sst"] = "dbo.T;", ["ss0"] = "dbo.T", ["st100"] = "dbo.T;", ["scf"] = "dbo.T;",
-        ["sd"] = "x", ["smf"] = "x", ["ii"] = "dbo.T", ["df"] = "dbo.T WHERE Id = 1;",
+        ["df"] = "dbo.T WHERE Id = 1;",
         ["cj"] = "dbo.B b", ["gb"] = "x", ["ob"] = "x", ["cte"] = "SELECT 1 AS x", ["ct"] = "Name nvarchar(50) NULL", ["ctt"] = "Name nvarchar(50) NULL",
         ["cv"] = "SELECT 1 AS x;", ["csf"] = "@param + 1", ["af"] = "@param + 1", ["ctf"] = "INSERT @result VALUES (@param);",
         ["citf"] = "SELECT @param AS Id", ["at"] = "dbo.T ADD x int NULL", ["ata"] = "x int NULL", ["atd"] = "x", ["ac"] = "x bigint NOT NULL",
-        ["dt"] = "dbo.X", ["dp"] = "dbo.X", ["dv"] = "dbo.X", ["dfn"] = "dbo.X", ["di"] = "IX_T", ["lk"] = "abc",
+        ["dt"] = "dbo.X", ["dp"] = "dbo.X", ["dv"] = "dbo.X", ["dfn"] = "dbo.X", ["lk"] = "abc",
         ["isns"] = "x", ["isnn"] = "x", ["rnum"] = "x", ["cw"] = "x = 1", ["trim"] = "x", ["ifs"] = "dbo.T", ["sph"] = "dbo.T", ["spt"] = "dbo.T",
     };
     var wraps = new Dictionary<string, string> { ["cj"] = "SELECT * FROM dbo.A a {0};", ["gb"] = "SELECT x, COUNT(*) FROM dbo.T {0};",
@@ -105,6 +105,9 @@ try
         new Microsoft.SqlServer.TransactSql.ScriptDom.TSql170Parser(true).Parse(new StringReader(wraps.GetValueOrDefault(name, "{0}").Replace("{0}", sql)), out var errors);
         Check(errors.Count == 0, "parse seeded " + name);
     }
+
+    var fielded = Snippets.Expand("SELECT $a$ FROM $tbl$;$CURSOR$", snippetContext, now);
+    Check(fielded.Text == "SELECT a FROM tbl;" && fielded.Fields.SequenceEqual(new[] { (7, 1), (14, 3) }) && fielded.Caret == 18, "snippet fields keep names as default text");
 
     var listed = SnippetFiles.List(library);
     Check(listed.Select(p => p.Key).SequenceEqual(shortcuts.Append("Select").Order(StringComparer.Ordinal)), "list valid seeded shortcuts in ordinal order");
@@ -675,8 +678,8 @@ catch (ArgumentException) { checks++; }
 Console.WriteLine($"PASS: {checks} total checks including foreign keys and column types. SSMS integration not tested.");
 
 var nameItem = CompleteAt("SELECT p.| FROM dbo.People p;", fkCatalog).Items.Single(i => i.Name == "Name");
-Check(nameItem.Description == "column nvarchar(100) p.Name" && nameItem.InsertText == "Name", "typed column description");
-Check(CompleteAt("SELECT Na|me FROM dbo.People;", fkCatalog).Items[0].Description == "column nvarchar(100) People.Name", "typed unqualified column");
+Check(nameItem.Description == "column nvarchar(100) NOT NULL p.Name" && nameItem.InsertText == "Name", "typed column description");
+Check(CompleteAt("SELECT Na|me FROM dbo.People;", fkCatalog).Items[0].Description == "column nvarchar(100) NOT NULL People.Name", "typed unqualified column");
 Check(CompleteAt("SELECT * FROM |", fkCatalog).Items.Single(i => i.Name == "Orders").Description == "table dbo.Orders", "table description");
 var noFrom = CompleteAt("SELECT Na|", fkCatalog);
 Check(noFrom.Items[0].Name == "Name" && noFrom.Items[0].InsertText == "Name" && noFrom.Start == 7 && noFrom.Length == 2, "SELECT column without FROM");
@@ -795,7 +798,7 @@ Check(Info("DECLARE @x int;\nSELECT @x| FROM") == "@x: variable int", "quick inf
 Check(Info("SELECT @@IDENT|ITY") == null && Info("SELECT | 1") == null, "quick info nothing");
 var tableInfo = Info("SELECT * FROM dbo.Peo|ple");
 Check(tableInfo != null && tableInfo.StartsWith("table dbo.People") && tableInfo.Contains("  FullName nvarchar(100)") && tableInfo.Contains("  Twice"), "quick info table columns");
-Check(Info("SELECT p.Full|Name FROM dbo.People p") == "FullName: column nvarchar(100) p.FullName", "quick info column");
+Check(Info("SELECT p.Full|Name FROM dbo.People p") == "FullName: column nvarchar(100) NOT NULL p.FullName", "quick info column");
 Check(Info("SELECT p|.FullName FROM dbo.People p")!.StartsWith("p: alias"), "quick info alias");
 var procInfo = Info("EXEC dbo.usp_A|dd");
 Check(procInfo != null && procInfo.StartsWith("procedure dbo.usp_Add") && procInfo.Contains("@NewId int OUTPUT") && procInfo.Contains("@Age int = default"), "quick info procedure");
@@ -985,16 +988,16 @@ Check(ObjectScript.Header("NOAH_BALCOR", "P", "FC", "nsp_BalanceSheet", true, tr
 Check(ObjectScript.Header(null, "IF", "dbo", "f", false, false, "d", "\n").StartsWith("/****** Object:  UserDefinedFunction [dbo].[f]") &&
     ObjectScript.Header(null, "IF", "dbo", "f", false, false, "d", "\n").Contains("SET ANSI_NULLS OFF\nGO\nSET QUOTED_IDENTIFIER OFF"), "script header options");
 // Catalog assembly edge cases: nothing may throw, bad rows are dropped one by one.
-var asm_catEmpty = CatalogAssembler.Tables(new (string?, string?, string?, string?, bool, bool)[0], new (int, string?, string?, string?, string?, string?, string?)[0]);
+var asm_catEmpty = CatalogAssembler.Tables(new (string?, string?, string?, string?, bool, bool, string?)[0], new (int, string?, string?, string?, string?, string?, string?)[0]);
 Check(asm_catEmpty.Tables.Length == 0 && asm_catEmpty.Skipped == 0, "catalog empty");
 var asm_catNull = CatalogAssembler.Tables(null!, null!);
 Check(asm_catNull.Tables.Length == 0, "catalog null input");
-var asm_catCols = new (string?, string?, string?, string?, bool, bool)[]
+var asm_catCols = new (string?, string?, string?, string?, bool, bool, string?)[]
 {
-    ("dbo", "B", "Id", "int", true, false), ("dbo", "B", null, "int", false, false), ("dbo", "B", "  ", null, false, false), ("dbo", "B", "Id", "int", false, false),
-    ("dbo", "B", "Note", null, false, false), ("dbo", "a", "x", "int", false, true), (null, "Orphan", "c", "int", false, false), ("dbo", " ", "c", "int", false, false),
-    ("dbo", "OnlyBlank", null, null, false, false), ("Sales", "C", "a", "int", false, false), ("Sales", "C", "A", "int", false, false),
-    ("dbo", "we]ird'\"[name", "c\u00e9", "nvarchar(5)", false, false),
+    ("dbo", "B", "Id", "int", true, false, "NOT NULL DEFAULT ((0))"), ("dbo", "B", null, "int", false, false, null), ("dbo", "B", "  ", null, false, false, null), ("dbo", "B", "Id", "int", false, false, null),
+    ("dbo", "B", "Note", null, false, false, null), ("dbo", "a", "x", "int", false, true, null), (null, "Orphan", "c", "int", false, false, null), ("dbo", " ", "c", "int", false, false, null),
+    ("dbo", "OnlyBlank", null, null, false, false, null), ("Sales", "C", "a", "int", false, false, null), ("Sales", "C", "A", "int", false, false, null),
+    ("dbo", "we]ird'\"[name", "c\u00e9", "nvarchar(5)", false, false, null),
 };
 var asm_catKeys = new (int, string?, string?, string?, string?, string?, string?)[]
 {
@@ -1046,4 +1049,14 @@ var rg = SqlNavigation.Regions("--region Load\nSELECT 1;\n  -- #region inner\nSE
 Check(rg.Count == 2 && rg[0].Start == 0 && rg[0].Label == "--region Load" && rg[1].Label == "-- #region inner", "regions pair and nest");
 Check(ResultGrid.SelectionSummary(new[] { "1", "2.5", null, "x" }) == "Count: 3    Sum: 3.5    Avg: 1.75    Min: 1    Max: 2.5", "selection totals: " + ResultGrid.SelectionSummary(new[] { "1", "2.5", null, "x" }));
 Check(ResultGrid.SelectionSummary(new[] { "a", "b" }) == "Count: 2", "selection totals without numbers");
+var unmatched = SqlNavigation.Unmatched("BEGIN SELECT (1\nSELECT ')' -- END (\nCASE\nGO\nBEGIN TRAN; END CONVERSATION @h; SELECT 1) END");
+Check(string.Join(",", unmatched.Select(u => u.Message[0])) == "B,(,C,),E" && unmatched[1].Start == 13 && unmatched[3].Length == 1,
+    "flag unmatched BEGIN, (, ), CASE per batch, skipping strings, comments and BEGIN TRAN");
+Check(SqlNavigation.Unmatched("BEGIN TRY SELECT CASE WHEN (1) = 1 THEN 1 END; END TRY BEGIN CATCH END CATCH").Count == 0, "matched TRY/CATCH and CASE are not flagged");
+
+var noted = SchemaCatalog.FromDdl("CREATE TABLE dbo.N (Id int PRIMARY KEY, Name nvarchar(20) NOT NULL DEFAULT (N'x'), Tag int NULL, Plain int);");
+Check(noted.Single().ColumnNotes!.SequenceEqual(new[] { "NOT NULL", "NOT NULL DEFAULT (N'x')", "NULL", null }), "DDL column nullability and default");
+Check(SqlAssist.Describe("SELECT Name FROM dbo.N;", 8, noted, null) == "Name: column nvarchar(20) NOT NULL DEFAULT (N'x') N.Name", "column hover shows type, nullability and default");
+Check(asm_catB.ColumnNotes![0] == "NOT NULL DEFAULT ((0))", "catalog keeps live column notes");
+
 Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes and object refactors. SSMS integration not tested.");

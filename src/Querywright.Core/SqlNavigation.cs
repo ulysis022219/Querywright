@@ -105,6 +105,48 @@ namespace Querywright.Core
             return blocks.OrderBy(b => b.OpenStart).ToList();
         }
 
+        /// <summary>BEGIN, CASE, END and parentheses with no partner, from tokens alone so strings and comments are skipped; each GO starts afresh.</summary>
+        public static IReadOnlyList<(int Start, int Length, string Message)> Unmatched(string sql)
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (sql.Length > 2_000_000) throw new ArgumentException("Navigation input exceeds 2,000,000 characters.");
+            var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql), out _)
+                .Where(t => t.TokenType != TSqlTokenType.WhiteSpace && t.TokenType != TSqlTokenType.SingleLineComment &&
+                    t.TokenType != TSqlTokenType.MultilineComment && t.TokenType != TSqlTokenType.EndOfFile).ToList();
+            var found = new List<(int, int, string)>();
+            var blocks = new Stack<TSqlParserToken>();
+            var parens = new Stack<TSqlParserToken>();
+            void Flush()
+            {
+                found.AddRange(blocks.Select(t => (t.Offset, t.Text.Length, t.Text.ToUpperInvariant() + " has no matching END.")));
+                found.AddRange(parens.Select(t => (t.Offset, 1, "( has no matching ).")));
+                blocks.Clear(); parens.Clear();
+            }
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                var t = tokens[i];
+                string next = i + 1 < tokens.Count && tokens[i + 1].TokenType != TSqlTokenType.QuotedIdentifier ? tokens[i + 1].Text ?? "" : "";
+                switch (t.TokenType)
+                {
+                    case TSqlTokenType.LeftParenthesis: parens.Push(t); break;
+                    case TSqlTokenType.RightParenthesis:
+                        if (parens.Count > 0) parens.Pop(); else found.Add((t.Offset, 1, ") has no matching (."));
+                        break;
+                    case TSqlTokenType.Go: Flush(); break;
+                    case TSqlTokenType.Case: blocks.Push(t); break;
+                    case TSqlTokenType.Begin:
+                        if (!BeginStatements.Contains(next)) blocks.Push(t);
+                        break;
+                    case TSqlTokenType.End:
+                        if (string.Equals(next, "CONVERSATION", StringComparison.OrdinalIgnoreCase)) break;
+                        if (blocks.Count > 0) blocks.Pop(); else found.Add((t.Offset, t.Text.Length, "END has no matching BEGIN or CASE."));
+                        break;
+                }
+            }
+            Flush();
+            return found.OrderBy(f => f.Item1).ToList();
+        }
+
         public static DefinitionTarget? FindDefinition(string sql, int position)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));

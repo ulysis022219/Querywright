@@ -572,7 +572,7 @@ namespace Querywright.Ssms
                 try { preview.Text = Querywright.Core.SqlFormatting.Format(Sample, Style); }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { preview.Text = error.Message; ok.Enabled = false; }
             }
-            ActiveControl = grid; // keyboard users start in the options, not on the tab strip
+            Load += (s, e) => ActiveControl = grid; // keyboard users start in the options, not on the tab strip
             grid.PropertyValueChanged += (s, e) => Render();
             Render();
         }

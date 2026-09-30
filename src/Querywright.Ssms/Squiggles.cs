@@ -25,12 +25,12 @@ namespace Querywright.Ssms
         }
     }
 
-    /// <summary>Analysis rules as squiggles, re-run in the background after typing pauses. Syntax errors are left to SSMS.</summary>
+    /// <summary>Analysis rules and unmatched BEGIN/END/parentheses as squiggles, re-run in the background after typing pauses. Syntax errors are left to SSMS.</summary>
     internal sealed class SquiggleTagger : ITagger<IErrorTag>
     {
         private readonly ITextBuffer buffer;
         private CancellationTokenSource pending;
-        private (ITextSnapshot Snapshot, IReadOnlyList<(SqlDiagnostic Issue, RuleSeverity Severity)> Issues)? latest;
+        private (ITextSnapshot Snapshot, IReadOnlyList<(int Offset, int Length, string Type, string Text)> Issues)? latest;
 
         public event EventHandler<SnapshotSpanEventArgs> TagsChanged;
 
@@ -70,7 +70,8 @@ namespace Querywright.Ssms
                 {
                     await Task.Delay(700, cancellation.Token);
                     if (snapshot.Length > 2_000_000) return;
-                    if (WorkbenchPackage.Instance?.Options?.LiveAnalysis == false)
+                    var options = WorkbenchPackage.Instance?.Options;
+                    if (options?.LiveAnalysis == false && options?.FlagUnmatched == false)
                     {
                         // Clears squiggles already shown when the option is turned off.
                         if (latest != null) { latest = null; TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length))); }
@@ -78,9 +79,18 @@ namespace Querywright.Ssms
                     }
                     string settingsFile = WorkbenchPackage.Instance?.SettingsFile ?? "";
                     var settings = Settings(settingsFile);
-                    var result = SqlAnalysis.Analyze(snapshot.GetText(), cancellation.Token, settings);
-                    latest = (snapshot, result.Diagnostics.Where(d => d.Rule.StartsWith("SW", StringComparison.Ordinal))
-                        .Select(d => (d, settings.Severity(d.Rule))).Where(d => d.Item2 != RuleSeverity.Disabled).ToArray());
+                    string text = snapshot.GetText();
+                    var issues = options?.FlagUnmatched == false ? new List<(int, int, string, string)>()
+                        : SqlNavigation.Unmatched(text).Select(u => (u.Start, u.Length, PredefinedErrorTypeNames.SyntaxError, u.Message)).ToList();
+                    if (options?.LiveAnalysis != false)
+                        issues.AddRange(SqlAnalysis.Analyze(text, cancellation.Token, settings).Diagnostics
+                            .Where(d => d.Rule.StartsWith("SW", StringComparison.Ordinal))
+                            .Select(d => (d, severity: settings.Severity(d.Rule))).Where(d => d.severity != RuleSeverity.Disabled)
+                            .Select(d => (d.d.Offset, d.d.Length,
+                                d.severity == RuleSeverity.Error ? PredefinedErrorTypeNames.SyntaxError
+                                : d.severity == RuleSeverity.Info ? PredefinedErrorTypeNames.HintedSuggestion : PredefinedErrorTypeNames.Warning,
+                                d.d.Rule + ": " + d.d.Message)));
+                    latest = (snapshot, issues);
                     TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length)));
                 }
                 catch (OperationCanceledException) { }
@@ -97,15 +107,13 @@ namespace Querywright.Ssms
             if (current == null || spans.Count == 0) yield break;
             var (snapshot, issues) = current.Value;
             var target = spans[0].Snapshot;
-            foreach (var (issue, severity) in issues)
+            foreach (var issue in issues)
             {
                 if (issue.Offset < 0 || issue.Offset + issue.Length > snapshot.Length) continue;
                 var span = new SnapshotSpan(snapshot, issue.Offset, Math.Min(Math.Max(1, issue.Length), snapshot.Length - issue.Offset))
                     .TranslateTo(target, SpanTrackingMode.EdgeExclusive);
                 if (!spans.IntersectsWith(new NormalizedSnapshotSpanCollection(span))) continue;
-                string type = severity == RuleSeverity.Error ? PredefinedErrorTypeNames.SyntaxError
-                    : severity == RuleSeverity.Info ? PredefinedErrorTypeNames.HintedSuggestion : PredefinedErrorTypeNames.Warning;
-                yield return new TagSpan<IErrorTag>(span, new ErrorTag(type, issue.Rule + ": " + issue.Message));
+                yield return new TagSpan<IErrorTag>(span, new ErrorTag(issue.Type, issue.Text));
             }
         }
     }

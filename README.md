@@ -29,12 +29,12 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt
 **Writing SQL**
 - Suggestions as you type: tables, views, columns and joins from the connected database.
   Press **Ctrl+Shift+D** to reload them after schema changes.
-- Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`.
+- Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`. Lowercase `$name$` placeholders in a template are fields: Tab selects the next one, then goes to `$CURSOR$`; Esc stops.
   56 built in; add your own `.sql` files or share a team folder.
 - Typing `'` inserts `''` with the cursor inside; typing `'` again steps over the closing quote (turn off under Tools > Options > Querywright).
 - Expand `*` into a column list, or pick the columns you want.
 - **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view, function or trigger it opens an ALTER script in a new query and on a table a CREATE TABLE script (also in scripts with syntax errors elsewhere), including three-part names in another database on the same server (`OtherDb.dbo.Proc`).
-- **BEGIN/END pairs** are colored by nesting level (BEGIN/END, BEGIN TRY/END TRY, CASE/END, with their IF, WHILE or ELSE); the pair at the caret is highlighted, **Ctrl+]** jumps between them, and hovering an END shows the line that opened it.
+- **BEGIN/END pairs** are colored by nesting level (BEGIN/END, BEGIN TRY/END TRY, CASE/END, with their IF, WHILE or ELSE); the pair at the caret is highlighted, **Ctrl+]** jumps between them, and hovering an END shows the line that opened it. A BEGIN, CASE, END or parenthesis with no partner is underlined as you type.
 - **Parameter hints**: after `EXEC dbo.Proc ` or `dbo.fn(` a tooltip lists the parameters with the current one in bold.
 - **Folding**: `--region name` / `--endregion` sections and multi-line BEGIN/END blocks collapse from the margin.
 - **Shift+F5** runs only the statement under the caret (only when you press it).
@@ -46,6 +46,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`. Details: [INSTALL.txt
 - Keyword casing, add/remove square brackets, qualify object names, insert semicolons.
 
 **Checking code**
+- Hovering a column shows its type, NULL/NOT NULL and default from the cached metadata.
 - 46 analysis rules, shown as squiggles while you type and in the Error List.
 - Quick fixes for common issues, one at a time or all at once.
 - Find unused variables and parameters, and invalid objects in the database (read-only).

@@ -37,6 +37,11 @@ namespace Querywright.Ssms
         [Description("Underline code-analysis findings (SW rules) as you type. Rule severities come from the shared settings file. Off hides them after the next edit; Analyze document still works.")]
         public bool LiveAnalysis { get; set; } = true;
 
+        [Category("Analysis")]
+        [DisplayName("Flag unmatched BEGIN/END and parentheses")]
+        [Description("Underline a BEGIN, CASE, END, ( or ) that has no partner as you type. Strings and comments are ignored; each GO batch is checked on its own.")]
+        public bool FlagUnmatched { get; set; } = true;
+
         [Category("Editor")]
         [DisplayName("F12 goes to definition")]
         [Description("F12 on a table, view, procedure or function scripts its definition into a new window (never executed). Off leaves F12 to SSMS.")]

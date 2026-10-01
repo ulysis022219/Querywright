@@ -1112,7 +1112,8 @@ Check(SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = N'p''w', CHEC
     && SqlRefactoring.RedactSecrets("SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=sa;Pwd=a b;', 'SELECT 1')") == "SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=sa;Pwd=***;', 'SELECT 1')"
     && SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1") == "CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1"
     && SqlRefactoring.RedactSecrets("SELECT ENCRYPTBYPASSPHRASE(N'p''w', 'data'), DecryptByPassphrase ( 'pw', @c), ENCRYPTBYPASSPHRASE(@k, 'x')") == "SELECT ENCRYPTBYPASSPHRASE(N'***', 'data'), DecryptByPassphrase ( '***', @c), ENCRYPTBYPASSPHRASE(@k, 'x')"
-    && SqlRefactoring.RedactSecrets("BACKUP DATABASE d TO DISK = 'f' WITH MEDIAPASSWORD = 'm'") == "BACKUP DATABASE d TO DISK = 'f' WITH MEDIAPASSWORD = '***'", "tab history redacts secrets");
+    && SqlRefactoring.RedactSecrets("BACKUP DATABASE d TO DISK = 'f' WITH MEDIAPASSWORD = 'm'") == "BACKUP DATABASE d TO DISK = 'f' WITH MEDIAPASSWORD = '***'"
+    && SqlRefactoring.RedactSecrets("SELECT * FROM OPENROWSET('SQLNCLI', 's';'sa';N'p''w', 'SELECT 1')") == "SELECT * FROM OPENROWSET('SQLNCLI', 's';'sa';N'***', 'SELECT 1')", "tab history redacts secrets");
 Check(ColorRules.Matches("dev; PROD ", @"sql-prod01\A", "Sales") && ColorRules.Matches("prod01/Sales", "prod01", "Sales") && !ColorRules.Matches("prod", "dev01", "Sales")
     && !ColorRules.Matches(";;", "x", "y") && !ColorRules.Matches("prod", null, null), "production server patterns");
 Check(typeof(WorkbenchSettings).GetProperties().Where(p => p.PropertyType == typeof(RuleSeverity))

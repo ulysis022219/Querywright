@@ -23,6 +23,11 @@ namespace Querywright.Ssms
         public bool CacheSchemaOnDisk { get; set; } = true;
 
         [Category("Completion")]
+        [DisplayName("Live metadata row limit")]
+        [Description("Most rows read per catalog query (columns, procedure parameters) on each load. Higher loads more tables on very large databases at the cost of load time and memory: roughly 10 s and 600 MB for 360,000 columns. 0 means no limit. Applies from the next refresh.")]
+        public int LiveMetadataRowLimit { get; set; } = 100_000;
+
+        [Category("Completion")]
         [DisplayName("Close quotes")]
         [Description("Typing ' inserts '' with the caret between them; typing ' before the closing quote steps over it, and Backspace in an empty pair removes both.")]
         public bool CloseQuotes { get; set; } = true;

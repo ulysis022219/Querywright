@@ -144,11 +144,11 @@ $text = Session 'definition' "DECLARE @abc int;`r`nSELECT @abc;" @() 'wait:3000|
 Expect 'F12 local variable' $text { param($t) $t -eq "DECLARE Z int;`r`nSELECT @abc;" }
 
 # Typing opens the suggestion list; Tab must still expand the snippet.
-$text = Session 'typed-snippet' '' @() 'wait:3000|type:ssf|wait:2500|tab|wait:1000'
+$text = Session 'typed-snippet' '' @() 'wait:3000|type:ssf|popup|wait:500|tab|wait:1000'
 Expect 'typed ssf + Tab with popup' $text { param($t) $t -eq 'SELECT * FROM ' }
 
 # Keywords come from the popup without metadata.
-$text = Session 'keyword' '' @() 'wait:3000|type:SELECT 1 ORD|wait:2500|tab|wait:1000'
+$text = Session 'keyword' '' @() 'wait:3000|type:SELECT 1 ORD|popup|wait:500|tab|wait:1000'
 Expect 'keyword completion' $text { param($t) $t -match '^SELECT 1 ORDER' }
 
 # Typing ' closes the string; typing ' at the closer steps over it; escapes and N'' prefixes still work.

@@ -22,6 +22,8 @@ namespace Querywright.Ssms
         internal SecureString Password;
         /// <summary>Microsoft Entra: fetches SSMS's token for the window on each open; the token is never logged or kept.</summary>
         internal Func<string> AccessToken;
+        // One credential per window, shared by copies: SqlClient keys its pool by credential reference, so a new one per open would never reuse.
+        private SqlCredential credential;
         internal string Key => Server + "\0" + Database + "\0" + (Integrated ? "" : User);
 
         /// <summary>Traffic stays on this machine (LocalDB, shared memory, local pipe), so TLS adds nothing.</summary>
@@ -64,19 +66,21 @@ namespace Querywright.Ssms
             {
                 DataSource = Server, InitialCatalog = Database ?? "", IntegratedSecurity = Integrated,
                 Encrypt = Encrypt, TrustServerCertificate = TrustServerCertificate, ConnectTimeout = 10,
-                ApplicationName = "Querywright metadata", Pooling = false
+                ApplicationName = "Querywright metadata", Pooling = true
             };
-            // Password travels only as a read-only SecureString, never through the connection string.
+            // Password travels only as a read-only SecureString, never through the connection string. Pooling skips the
+            // login and TLS handshake on refresh, hover and F12; the pool is keyed by server, database, login and token.
             if (AccessToken != null) return new SqlConnection(builder.ConnectionString) { AccessToken = AccessToken() };
             return Integrated ? new SqlConnection(builder.ConnectionString)
-                : new SqlConnection(builder.ConnectionString, new SqlCredential(User, Password));
+                : new SqlConnection(builder.ConnectionString, credential ?? (credential = new SqlCredential(User, Password)));
         }
     }
 
     /// <summary>Reads table/view/column names, types and foreign keys from the connected database with one fixed catalog query. Never runs user SQL.</summary>
     internal static class LiveMetadata
     {
-        private const int MaxRows = 100_000;
+        // 0 or less means no limit; a missing package (tests) keeps the default.
+        private static int MaxRows => WorkbenchPackage.Instance?.Options?.LiveMetadataRowLimit is int limit ? (limit <= 0 ? int.MaxValue : limit) : 100_000;
         // Joins sys.types/sys.schemas once instead of per-row TYPE_NAME()/SCHEMA_NAME() calls, and orders by the catalog's
         // own key (object_id, column_id) so large databases need no server-side name sort; names are sorted client-side.
         private static string TypeSql(string c, string t) => t + @".name +
@@ -94,26 +98,30 @@ namespace Querywright.Ssms
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
     CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit),
     CAST(CASE o.type WHEN 'U' THEN 0 ELSE 1 END AS bit),
-    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END + ISNULL(' DEFAULT ' + LEFT(d.definition, 200), '')
+    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END, c.default_object_id
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = o.object_id
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
-LEFT JOIN sys.default_constraints AS d ON d.object_id = c.default_object_id
 WHERE o.type IN ('U', 'V', 'IF', 'TF') AND o.is_ms_shipped = 0
 ORDER BY o.object_id, c.column_id;";
 
+        // The guard skips a sys.columns scan that cost ~1 s on large databases even with no synonyms; no rows then, as before.
         private static readonly string SynonymsQuery = @"SET LOCK_TIMEOUT 3000;
+IF EXISTS (SELECT 1 FROM sys.synonyms)
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
     CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit), CAST(1 AS bit),
-    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END + ISNULL(' DEFAULT ' + LEFT(d.definition, 200), '')
+    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END, c.default_object_id
 FROM sys.synonyms AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = OBJECT_ID(o.base_object_name)
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
-LEFT JOIN sys.default_constraints AS d ON d.object_id = c.default_object_id
 WHERE PARSENAME(o.base_object_name, 4) IS NULL AND ISNULL(PARSENAME(o.base_object_name, 3), DB_NAME()) = DB_NAME()
 ORDER BY o.object_id, c.column_id;";
+
+        // Read apart from the columns: joining sys.default_constraints there doubled the columns query's CPU on big schemas.
+        private const string DefaultsQuery = @"SET LOCK_TIMEOUT 3000;
+SELECT object_id, LEFT(definition, 200) FROM sys.default_constraints WHERE is_ms_shipped = 0;";
 
         private const string ForeignKeysQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT fk.object_id, ps.name, p.name, pc.name, rs.name, r.name, rc.name
@@ -454,17 +462,19 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
 
         private static string Text(SqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
 
-        // Reads one result set into a list, capped; the rest is drained so the reader can close cleanly.
+        // Reads one result set into a list, capped at the row limit setting; the rest is cancelled.
         private static List<T> ReadAll<T>(SqlConnection sql, string query, int timeout, Func<SqlDataReader, T> row, out bool capped)
         {
             var list = new List<T>();
+            var limit = MaxRows;
             capped = false;
             using (var command = new SqlCommand(query, sql) { CommandTimeout = timeout })
             using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
             {
                 while (reader.Read())
                 {
-                    if (list.Count >= MaxRows) { capped = true; break; }
+                    // Cancel, or disposing the reader would still pull every remaining row off the wire.
+                    if (list.Count >= limit) { capped = true; command.Cancel(); break; }
                     list.Add(row(reader));
                 }
             }
@@ -488,33 +498,49 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             {
                 Progress = (0, "connecting");
                 var problems = new List<string>();
-                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note)>();
+                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note, int DefaultId)>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
+                List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note, int DefaultId)> synonyms = null;
                 List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default, bool Function)> parameters = null;
                 List<string> databases = null;
                 bool capped;
-                using (var sql = connection.Open())
+                // Synonyms and procedures read on a second connection while the columns read on the first. The optional
+                // sections never throw: each failure degrades to a problem entry.
+                var optional = Task.Run(() =>
                 {
-                    Progress = (10, "reading columns");
-                    // Essential: an error here propagates to the retry logic below.
-                    columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), Text(r, 6)), out capped);
-                    Progress = (45, "reading synonyms");
                     try
                     {
-                        if (!capped)
-                            columns.AddRange(ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6)), out _));
+                        using (var sql = connection.Open())
+                        {
+                            try { synonyms = ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6), r.GetInt32(7)), out _); }
+                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("synonyms " + Describe(error)); }
+                            try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), !r.IsDBNull(6) && r.GetBoolean(6)), out _); }
+                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("procedures " + Describe(error)); }
+                        }
                     }
-                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("synonyms " + Describe(error)); }
-                    Progress = (55, "reading foreign keys");
-                    try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
-                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("foreign keys " + Describe(error)); }
-                    Progress = (70, "reading procedures");
-                    try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), !r.IsDBNull(6) && r.GetBoolean(6)), out _); }
-                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("procedures " + Describe(error)); }
-                    Progress = (85, "reading databases");
-                    try { databases = ReadAll(sql, DatabasesQuery, 15, r => r.GetString(0), out _); }
-                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("databases " + Describe(error)); }
+                    catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("details " + Describe(error)); }
+                });
+                try
+                {
+                    using (var sql = connection.Open())
+                    {
+                        Progress = (10, "reading columns");
+                        // Essential: an error here propagates to the retry logic below.
+                        columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), Text(r, 6), r.GetInt32(7)), out capped);
+                        // Foreign keys and databases follow on this connection so both connections finish at about the same time.
+                        try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
+                        catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("foreign keys " + Describe(error)); }
+                        try { databases = ReadAll(sql, DatabasesQuery, 15, r => r.GetString(0), out _); }
+                        catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("databases " + Describe(error)); }
+                    }
                 }
+                finally
+                {
+                    Progress = (70, "reading keys and procedures");
+                    // Never leave the second connection reading behind a failed or retried load.
+                    optional.Wait();
+                }
+                if (!capped && synonyms != null) columns.AddRange(synonyms);
                 Progress = (95, "indexing " + columns.Count + " columns");
                 if (capped && columns.Count > 0)
                 {
@@ -522,8 +548,10 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     var last = columns[columns.Count - 1];
                     columns.RemoveAll(c => c.Schema == last.Schema && c.Table == last.Table);
                 }
-                var built = CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View, (string)c.Note)),
+                (SchemaTable[] Tables, int Skipped) Assemble(Dictionary<int, string> defaults) => CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View,
+                    defaults != null && defaults.TryGetValue(c.DefaultId, out var value) && value != null ? c.Note + " DEFAULT " + value : c.Note)),
                     keys.Select(k => (k.Id, (string)k.Schema, (string)k.Table, (string)k.Column, (string)k.RefSchema, (string)k.RefTable, (string)k.RefColumn)));
+                var built = Assemble(null);
                 if (built.Skipped > 0) ActivityLog.TryLogWarning("Querywright", "Live metadata skipped " + built.Skipped + " objects with unusable names");
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
                 if (databases != null) databaseCache[connection.Key] = databases;
@@ -537,14 +565,42 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + built.Tables.Length + " tables"
                     + (capped ? " (column cap reached)" : "") + (problems.Count == 0 ? "" : " (" + LastProblem + ")"));
                 stale.TryRemove(connection.Key, out _);
-                if (!capped && DiskCachePath(connection) is string path)
+                var saved = procedureCache.TryGetValue(connection.Key, out var known) ? known : null;
+                var path = capped ? null : DiskCachePath(connection);
+                // Column defaults cost ~30 us a row on the server (seconds on big schemas) and only feed tooltips, so the tables are
+                // handed back without them and swapped for enriched ones once read. The disk save follows, so it never delays completion.
+                _ = Task.Run(() =>
+                {
+                    var tables = built.Tables;
                     try
                     {
-                        Directory.CreateDirectory(Path.GetDirectoryName(path));
-                        using (var writer = File.CreateText(path + ".tmp")) SchemaDiskCache.Write(writer, built.Tables, procedureCache.TryGetValue(connection.Key, out var saved) ? saved : null);
-                        File.Copy(path + ".tmp", path, true); File.Delete(path + ".tmp");
+                        Dictionary<int, string> defaults;
+                        using (var sql = connection.Open())
+                            defaults = ReadAll(sql, DefaultsQuery, 30, r => (r.GetInt32(0), Text(r, 1)), out _).ToDictionary(d => d.Item1, d => d.Item2);
+                        if (defaults.Count > 0)
+                        {
+                            tables = Assemble(defaults).Tables;
+                            // Only replace this load's own result: a refresh or newer load since then wins.
+                            if (cache.TryGetValue(connection.Key, out var current) && current.Status == TaskStatus.RanToCompletion && ReferenceEquals(current.Result, built.Tables))
+                                cache.TryUpdate(connection.Key, Task.FromResult<IReadOnlyList<SchemaTable>>(tables), current);
+                        }
                     }
-                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+                    // ponytail: defaults are cosmetic; a failure keeps the plain notes and only the type is logged.
+                    catch (Exception error) when (IsRecoverable(error)) { ActivityLog.TryLogWarning("Querywright", "Live metadata defaults unavailable: " + Describe(error)); }
+                    if (path == null) return;
+                    // A unique temp file keeps two overlapping saves of one connection from interleaving; the last one to finish wins whole.
+                    {
+                        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                        try
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(path));
+                            using (var writer = File.CreateText(temp)) SchemaDiskCache.Write(writer, tables, saved);
+                            File.Copy(temp, path, true);
+                        }
+                        catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+                        finally { try { File.Delete(temp); } catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { } }
+                    }
+                });
                 return built.Tables;
             }
             catch (SqlException error) when (attempt < MaxAttempts - 1 && Transient(error) && (error.Number != -2 || attempt == 0))

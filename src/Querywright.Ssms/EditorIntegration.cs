@@ -97,6 +97,7 @@ namespace Querywright.Ssms
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
             SelfTest.Adapter = adapter;
             SelfTest.View = view;
+            SelfTest.Completion = Completion;
         }
     }
 

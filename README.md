@@ -33,7 +33,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`.
 
 **Writing SQL**
 - Suggestions as you type: tables, views, columns and joins from the connected database. Columns are grouped per table in the current query scope (innermost subquery first), including UPDATE aliases, INSERT column lists and MERGE inserts.
-  Press **Ctrl+Shift+D** to reload them after schema changes. Names and types are cached on disk (hashed file names, never credentials or data) so suggestions work right after a restart; turn it off with "Cache schema on disk".
+  Press **Ctrl+Shift+D** to reload them after schema changes. Names and types are cached on disk (hashed file names, never credentials or data) so suggestions work right after a restart; turn it off with "Cache schema on disk". Very large databases load up to 100,000 columns by default; raise or remove the cap with "Live metadata row limit" (0 = no limit).
 - Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`. Lowercase `$name$` placeholders in a template are fields: Tab selects the next one, then goes to `$CURSOR$`; Esc stops.
   56 built in; add your own `.sql` files or share a team folder.
 - Typing `'` inserts `''` with the cursor inside; typing `'` again steps over the closing quote (turn off under Tools > Options > Querywright).

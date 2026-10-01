@@ -92,7 +92,8 @@ ELSE
                     using (var command = new SqlCommand(sql, sqlConnection) { CommandTimeout = 120 })
                     {
                         parameters?.Invoke(command);
-                        using (var reader = command.ExecuteReader()) table.Load(reader);
+                        // One past the cap, so a huge result stops reading instead of filling memory before the check below.
+                        using (var adapter = new SqlDataAdapter(command)) adapter.Fill(0, MaxRows - merged.Rows.Count + 1, table);
                     }
                     if (addDatabase)
                     {

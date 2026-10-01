@@ -111,7 +111,7 @@ namespace Querywright.Ssms
             ThreadHelper.ThrowIfNotOnUIThread();
             var live = options?.LiveMetadata != false ? LiveMetadata.Procedures(LiveMetadata.Capture()) : null;
             IReadOnlyList<SchemaProcedure> local;
-            try { local = sql.Length > 1_000_000 ? Array.Empty<SchemaProcedure>() : SqlAssist.ProceduresFromScript(sql); }
+            try { local = sql.Length > 1_000_000 || sql.IndexOf("CREATE", StringComparison.OrdinalIgnoreCase) < 0 ? Array.Empty<SchemaProcedure>() : SqlAssist.ProceduresFromScript(sql); }
             catch (Exception error) when (!(error is OutOfMemoryException)) { local = Array.Empty<SchemaProcedure>(); }
             // Script definitions first: they are what the user is editing and they carry parameter defaults.
             return live == null ? local : local.Concat(live).ToArray();
@@ -889,8 +889,10 @@ namespace Querywright.Ssms
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 var cause = (error as System.Reflection.TargetInvocationException)?.InnerException ?? error;
-                // ponytail: InvalidOperationException ("select a table") and Core's FormatException ("fix SQL syntax errors first") are user-facing messages; anything else is a bug worth reporting.
-                if (cause is InvalidOperationException || cause is FormatException) { ShowWarning(cause.Message); return; }
+                // ponytail: InvalidOperationException ("select a table"), Core's FormatException ("fix SQL syntax errors first") and file errors (file in use) are user-facing messages; anything else is a bug worth reporting.
+                if (cause is InvalidOperationException || cause is FormatException || cause is IOException || cause is UnauthorizedAccessException) { ShowWarning(cause.Message); return; }
+                // A server error is not a bug, and its text can name the server or login.
+                if (cause is System.Data.SqlClient.SqlException) { ShowWarning("Could not read from the server: " + Reason(cause)); return; }
                 string line = Updates.ErrorLine(UpdateCheck.InstalledVersion(), command, cause.GetType());
                 int answer = VsShellUtilities.ShowMessageBox(this,
                     cause.Message + "\r\n\r\n" + line + "\r\n\r\nOpen a GitHub issue with this line? Only the line above is sent; the error message, your query and connection are not.",
@@ -1027,7 +1029,7 @@ namespace Querywright.Ssms
             // ponytail: a box or multi-range selection is transformed as the one range from its start to its end.
             var span = view.Selection.IsEmpty ? new SnapshotSpan(snapshot, 0, snapshot.Length) : new SnapshotSpan(view.Selection.Start.Position, view.Selection.End.Position);
             string result = transform(span.GetText());
-            ReplaceText(view, span, result, span.Start.Position + result.Length, 0, 0, name);
+            ReplaceText(view, span, result, result.Length, 0, 0, name); // caret is relative to the span start
         });
 
         /// <summary>Runs the script in each ticked database and shows the first result set of each, merged, in a window.</summary>

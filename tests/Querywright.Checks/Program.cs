@@ -1110,7 +1110,9 @@ Check(SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = N'p''w', CHEC
     && SqlRefactoring.RedactSecrets("EXEC sp_addlinkedsrvlogin N'srv', 'false', NULL, 'sa', N'p;w'\nEXEC sp_password NULL, 'new', 'me' SELECT 'keep'") == "EXEC sp_addlinkedsrvlogin N'***', '***', NULL, '***', N'***'\nEXEC sp_password NULL, '***', '***' SELECT 'keep'"
     && SqlRefactoring.RedactSecrets("EXEC sp_change_users_login 'Auto_Fix', 'u', NULL, 'pw'") == "EXEC sp_change_users_login '***', '***', NULL, '***'"
     && SqlRefactoring.RedactSecrets("SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=sa;Pwd=a b;', 'SELECT 1')") == "SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=sa;Pwd=***;', 'SELECT 1')"
-    && SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1") == "CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1", "tab history redacts secrets");
+    && SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1") == "CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1"
+    && SqlRefactoring.RedactSecrets("SELECT ENCRYPTBYPASSPHRASE(N'p''w', 'data'), DecryptByPassphrase ( 'pw', @c), ENCRYPTBYPASSPHRASE(@k, 'x')") == "SELECT ENCRYPTBYPASSPHRASE(N'***', 'data'), DecryptByPassphrase ( '***', @c), ENCRYPTBYPASSPHRASE(@k, 'x')"
+    && SqlRefactoring.RedactSecrets("BACKUP DATABASE d TO DISK = 'f' WITH MEDIAPASSWORD = 'm'") == "BACKUP DATABASE d TO DISK = 'f' WITH MEDIAPASSWORD = '***'", "tab history redacts secrets");
 Check(ColorRules.Matches("dev; PROD ", @"sql-prod01\A", "Sales") && ColorRules.Matches("prod01/Sales", "prod01", "Sales") && !ColorRules.Matches("prod", "dev01", "Sales")
     && !ColorRules.Matches(";;", "x", "y") && !ColorRules.Matches("prod", null, null), "production server patterns");
 Check(typeof(WorkbenchSettings).GetProperties().Where(p => p.PropertyType == typeof(RuleSeverity))

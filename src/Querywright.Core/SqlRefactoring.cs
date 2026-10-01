@@ -413,13 +413,14 @@ namespace Querywright.Core
             return tokens.Any(t => t.TokenType == TSqlTokenType.Use);
         }
 
-        // Every literal argument of procedures that take a password, PASSWORD/SECRET = literal, password-named variables
+        // Every literal argument of procedures that take a password, the passphrase of (EN|DE)CRYPTBYPASSPHRASE, PASSWORD/SECRET = literal, password-named variables
         // and parameters, and Password=/Pwd= inside connection strings.
         // ponytail: those procedures lose their other literals (server, login) too; positional arguments give no names to go by.
         private static readonly Regex Secrets = new Regex(
             @"(?<call>\b(?:sp_addlinkedsrvlogin|sp_addlogin|sp_password|sp_setapprole|sp_addapprole|sp_approlepassword|sp_change_users_login)\b\s+"
             + @"(?>(?:@\w+\s*=\s*)?(?:N?'(?:[^']|'')*'|[\w@.]+))(?>\s*,\s*(?:@\w+\s*=\s*)?(?:N?'(?:[^']|'')*'|[\w@.]+))*)"
-            + @"|(?<key>\b(?:OLD_)?PASSWORD|\bSECRET)\s*=\s*(?:N?'(?:[^']|'')*'|0x[0-9A-F]+)"
+            + @"|(?<call>\b(?:EN|DE)CRYPTBYPASSPHRASE\s*\(\s*N?'(?:[^']|'')*')"
+            + @"|(?<key>\b(?:OLD_|MEDIA)?PASSWORD|\bSECRET)\s*=\s*(?:N?'(?:[^']|'')*'|0x[0-9A-F]+)"
             + @"|(?<key>@\w*(?:pass|pwd|secret)\w*(?:\s+\w+(?:\s*\(\s*\w+\s*\))?)?)\s*=\s*N?'(?:[^']|'')*'"
             + @"|\b(?<cs>Password|Pwd)(?<=[;'""]\s*\w+)\s*=\s*[^;'""]+",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));

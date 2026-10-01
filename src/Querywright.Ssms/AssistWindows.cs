@@ -316,6 +316,24 @@ namespace Querywright.Ssms
     /// <summary>Search saved tabs, pick a timestamped version, preview it, reopen it; rename or delete a tab.</summary>
     internal sealed class TabHistoryDialog : Window
     {
+        // Kept out of the constructor so the offscreen dialog checks never load the VS shell.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ReadVersions(List<string> files, Action<Dictionary<string, string>> done)
+        {
+            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                var read = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string file in files)
+                        try { result[file] = File.ReadAllText(file); }
+                        catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+                    return result;
+                });
+                done(read);
+            });
+        }
+
         internal string? Text { get; private set; }
 
         private sealed class Version
@@ -434,16 +452,8 @@ namespace Querywright.Ssms
                     loading = true;
                     var files = tabs.SelectMany(t => t.Versions.Skip(1)).Select(v => v.File.FullName).ToList();
                     feedback.Text = "Searching older versions...";
-                    _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    ReadVersions(files, read =>
                     {
-                        var read = await System.Threading.Tasks.Task.Run(() =>
-                        {
-                            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                            foreach (string file in files)
-                                try { result[file] = File.ReadAllText(file); }
-                                catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
-                            return result;
-                        });
                         texts = read;
                         if (feedback.Text == "Searching older versions...") feedback.Text = "";
                         Filter(Selected());

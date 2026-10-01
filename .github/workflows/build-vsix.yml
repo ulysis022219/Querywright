@@ -49,8 +49,8 @@ jobs:
           $boot = Join-Path $env:RUNNER_TEMP 'vs_SSMS.exe'
           Invoke-WebRequest 'https://aka.ms/ssms/22/release/vs_SSMS.exe' -OutFile $boot
           Start-Process $boot -ArgumentList '--quiet', '--wait', '--norestart', '--nocache'
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 10.0.x
       - name: Core checks
@@ -94,7 +94,7 @@ jobs:
           (Get-Content -Raw scripts/Install.cmd) + (Get-Content -Raw scripts/Install-Development.ps1) | Set-Content -NoNewline -Encoding ascii (Join-Path $out 'Install.cmd')
           Copy-Item scripts/Uninstall.cmd $out
           Compress-Archive -Path "$out/*" -DestinationPath dist/Querywright-ssms22.zip -Force
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Querywright-ssms22
           path: dist/Querywright-ssms22.zip
@@ -117,7 +117,7 @@ jobs:
         run: |
           Get-Process vs_SSMS -ErrorAction SilentlyContinue | Wait-Process
           scripts/Test-Ssms.ps1 -Package (Resolve-Path src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.prior.outputs.e2e != 'skip'
         with:
           name: e2e-evidence
@@ -131,10 +131,10 @@ jobs:
     if: github.ref_type == 'tag' || inputs.release != ''
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # tags, for the commits since the previous release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: Querywright-ssms22
       - name: Publish release

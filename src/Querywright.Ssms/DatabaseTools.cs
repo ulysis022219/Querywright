@@ -146,8 +146,7 @@ ELSE
                 form.Controls.Add(label);
                 form.Controls.Add(buttons);
                 form.Controls.Add(DialogParts.FormHeader("Database results", "Read-only results. Select cells and press Ctrl+C to copy with headers."));
-                DialogParts.Style(form);
-                form.ShowDialog();
+                DialogParts.ShowModal(form);
             }
             if (chosen != null) open(chosen);
         }
@@ -170,8 +169,7 @@ ELSE
                 ok.Enabled = box.Text.Length > 0;
                 form.Shown += (sender, args) => { box.Focus(); box.SelectAll(); };
                 form.AcceptButton = ok; form.CancelButton = cancel;
-                DialogParts.Style(form);
-                return form.ShowDialog() == DialogResult.OK && box.Text.Trim().Length > 0 ? box.Text.Trim() : null;
+                return DialogParts.ShowModal(form) == DialogResult.OK && box.Text.Trim().Length > 0 ? box.Text.Trim() : null;
             }
         }
     }

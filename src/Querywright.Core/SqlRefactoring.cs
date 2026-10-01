@@ -412,6 +412,21 @@ namespace Querywright.Core
             return tokens.Any(t => t.TokenType == TSqlTokenType.Use);
         }
 
+        // PASSWORD/SECRET = literal, password-named variables and parameters, and Password=/Pwd= inside connection strings.
+        // ponytail: positional secrets (sp_addlinkedsrvlogin 'srv', 'false', NULL, 'sa', 'pw') are not recognized.
+        private static readonly Regex Secrets = new Regex(
+            @"(?<key>\b(?:OLD_)?PASSWORD|\bSECRET)\s*=\s*(?:N?'(?:[^']|'')*'|0x[0-9A-F]+)"
+            + @"|(?<key>@\w*(?:pass|pwd|secret)\w*(?:\s+\w+(?:\s*\(\s*\w+\s*\))?)?)\s*=\s*N?'(?:[^']|'')*'"
+            + @"|\b(?<cs>Password|Pwd)(?<=[;'""]\s*\w+)\s*=\s*[^;'""]+",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+        /// <summary>The SQL with password and secret values replaced by ***, or null when that takes too long.</summary>
+        public static string? RedactSecrets(string sql)
+        {
+            try { return Secrets.Replace(sql ?? "", m => m.Groups["cs"].Success ? m.Groups["cs"].Value + "=***" : m.Groups["key"].Value + " = '***'"); }
+            catch (RegexMatchTimeoutException) { return null; }
+        }
+
         /// <summary>
         /// Wraps the selected statements in CREATE PROCEDURE. Variables used but not declared in the selection become parameters,
         /// typed from their declarations elsewhere in the script (sql_variant when unknown); assigned ones become OUTPUT.

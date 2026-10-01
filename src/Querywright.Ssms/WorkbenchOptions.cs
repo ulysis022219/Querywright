@@ -14,12 +14,12 @@ namespace Querywright.Ssms
 
         [Category("Completion")]
         [DisplayName("Read live metadata")]
-        [Description("Read table and column names from the query window's connection with one fixed catalog query (sys.objects, sys.columns). Never runs your SQL.")]
+        [Description("Read tables, views, columns, keys, procedures, parameters and database names from the query window's connection with fixed read-only catalog queries, over Windows or SQL Server authentication (Microsoft Entra when SSMS shares its sign-in token). Never runs your SQL.")]
         public bool LiveMetadata { get; set; } = true;
 
         [Category("Completion")]
         [DisplayName("Cache schema on disk")]
-        [Description("Keep table and column names, types and foreign keys in %LOCALAPPDATA%\\Querywright\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes. Turning this off deletes the cached files.")]
+        [Description("Keep table, column, procedure and parameter names, types and foreign keys in %LOCALAPPDATA%\\Querywright\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes. Turning this off deletes the cached files.")]
         public bool CacheSchemaOnDisk { get; set; } = true;
 
         [Category("Completion")]
@@ -74,7 +74,7 @@ namespace Querywright.Ssms
 
         [Category("Editor")]
         [DisplayName("Format on save")]
-        [Description("File > Save (Ctrl+S) formats the whole SQL document with your formatting style first. One Undo reverts it. Scripts that do not parse are saved unchanged. Off by default.")]
+        [Description("File > Save (Ctrl+S) formats the SQL document with your formatting style first, and File > Save All formats every unsaved SQL document. One Undo reverts each. Scripts that do not parse are saved unchanged. Off by default.")]
         public bool FormatOnSave { get; set; }
 
         [Category("Editor")]
@@ -84,7 +84,7 @@ namespace Querywright.Ssms
 
         [Category("Tab history")]
         [DisplayName("Keep tab history")]
-        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab and 200 tabs kept, so any version can be reopened. Turn off to save nothing.")]
+        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab, 200 tabs and 256 MB in all kept (favorites aside), so any version can be reopened. PASSWORD and SECRET literals and password variables are saved as ***. Turn off to save nothing.")]
         public bool TabHistory { get; set; } = true;
 
         [Category("Shared settings")]
@@ -114,7 +114,7 @@ namespace Querywright.Ssms
 
         [Category("Environment")]
         [DisplayName("Production servers")]
-        [Description("Patterns separated by ';' matched against server/database, e.g. \"prod;live\". On a matching connection, executing DROP, ALTER, TRUNCATE or a DELETE/UPDATE without WHERE always asks first.")]
+        [Description("Patterns separated by ';' matched against server/database, e.g. \"prod;live\". On a matching connection, executing DROP, ALTER, TRUNCATE or a DELETE/UPDATE without WHERE always asks first; Run in multiple databases names matching databases in its prompt.")]
         public string ProductionServers { get; set; } = "";
 
         [Category("Environment")]
@@ -189,7 +189,7 @@ namespace Querywright.Ssms
 
         [Category("Snippets")]
         [DisplayName("Snippet folder")]
-        [Description("Folder of editable .sql templates. Use a shared folder for team snippets.")]
+        [Description("Folder of editable .sql templates; ssf.sql expands when you type ssf and press Tab. Use a shared folder for team snippets. New files are picked up within 30 seconds.")]
         public string SnippetFolder { get; set; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "Snippets");
 

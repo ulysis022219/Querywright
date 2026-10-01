@@ -148,15 +148,6 @@ namespace Querywright.Core
             return text.Substring(start, caret - start);
         }
 
-        /// <summary>Path of the snippet named by <paramref name="shortcut"/>, or null.</summary>
-        public static string? FindShortcut(string folder, string shortcut)
-        {
-            if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrEmpty(shortcut)) return null;
-            foreach (char c in shortcut) if (!char.IsLetterOrDigit(c) && c != '_') return null;
-            string path = Path.Combine(folder, shortcut + ".sql");
-            return File.Exists(path) ? path : null;
-        }
-
         private static void Seed(string path, string text)
         {
             FileStream file;

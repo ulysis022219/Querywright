@@ -152,25 +152,30 @@ namespace Querywright.Core
         {
             private readonly string sql;
             internal readonly List<string> Targets = new List<string>();
+            private readonly List<TSqlFragment> modules = new List<TSqlFragment>();
             private readonly bool unfiltered, dropTruncate, schema;
             internal Unfiltered(string sql, bool unfiltered, bool dropTruncate, bool schema) { this.sql = sql; this.unfiltered = unfiltered; this.dropTruncate = dropTruncate; this.schema = schema; }
-            private void Add(string verb, TSqlFragment target) => Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength));
-            public override void Visit(DeleteSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null) Add("DELETE", node.Target); }
-            public override void Visit(UpdateSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null) Add("UPDATE", node.Target); }
+            // Statements inside a procedure, function or trigger body are stored, not run; ScriptDom visits the module before its body.
+            public override void Visit(ProcedureStatementBodyBase node) => modules.Add(node);
+            public override void Visit(TriggerStatementBody node) => modules.Add(node);
+            private bool Stored(TSqlFragment node) => modules.Any(m => m != node && node.StartOffset >= m.StartOffset && node.StartOffset < m.StartOffset + m.FragmentLength);
+            private void Add(string verb, TSqlFragment target) { if (!Stored(target)) Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength)); }
+            public override void Visit(DeleteSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null && !(node.Target is VariableTableReference)) Add("DELETE", node.Target); }
+            public override void Visit(UpdateSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null && !(node.Target is VariableTableReference)) Add("UPDATE", node.Target); }
             public override void Visit(TruncateTableStatement node) { if (dropTruncate && node.TableName != null) Add("TRUNCATE TABLE", node.TableName); }
             public override void Visit(DropTableStatement node) { if (dropTruncate) foreach (var name in node.Objects) Add("DROP TABLE", name); }
             // ponytail: ScriptDom names every DROP/ALTER statement type Drop*/Alter*, so the type name covers them all.
             public override void Visit(TSqlStatement node)
             {
                 string type = node.GetType().Name;
-                if (!schema || node is DropTableStatement || !(type.StartsWith("Drop", StringComparison.Ordinal) || type.StartsWith("Alter", StringComparison.Ordinal))) return;
+                if (!schema || node is DropTableStatement || Stored(node) || !(type.StartsWith("Drop", StringComparison.Ordinal) || type.StartsWith("Alter", StringComparison.Ordinal))) return;
                 string text = sql.Substring(node.StartOffset, node.FragmentLength).Split('\n')[0].Trim().TrimEnd(';');
                 Targets.Add(text.Length > 80 ? text.Substring(0, 77) + "..." : text);
             }
         }
 
         /// <summary>Rules with a mechanical fix.</summary>
-        public static readonly IReadOnlyCollection<string> FixableRules =new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };
+        public static readonly IReadOnlyCollection<string> FixableRules = new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };
 
         /// <summary>The edit that resolves one diagnostic, or null when the rule has no safe fix here. The result must still parse.</summary>
         public static TextEdit? Fix(string sql, SqlDiagnostic diagnostic, IReadOnlyList<SchemaTable>? tables = null, string defaultSchema = "dbo")
@@ -382,23 +387,14 @@ namespace Querywright.Core
                 if (node.ComparisonType == BooleanComparisonType.NotLessThan || node.ComparisonType == BooleanComparisonType.NotGreaterThan)
                     Add("SW042", "!< and !> are nonstandard; use >= or <=.", node);
             }
-            private static ScalarExpression Strip(ScalarExpression expression)
-            {
-                while (expression is ParenthesisExpression parenthesis) expression = parenthesis.Expression;
-                return expression;
-            }
-            private static bool IsZero(ScalarExpression expression) => Strip(expression) is IntegerLiteral literal && literal.Value == "0";
+            private static bool IsZero(ScalarExpression expression) => Unwrap(expression) is IntegerLiteral literal && literal.Value == "0";
             private static bool IsAggregate(QueryExpression? query, params string[] names) =>
                 query is QuerySpecification spec && spec.GroupByClause == null && spec.HavingClause == null && spec.SelectElements.Count == 1
-                && spec.SelectElements[0] is SelectScalarExpression element && Strip(element.Expression) is FunctionCall call
+                && spec.SelectElements[0] is SelectScalarExpression element && Unwrap(element.Expression) is FunctionCall call
                 && names.Contains(call.FunctionName.Value, StringComparer.OrdinalIgnoreCase);
             private static bool IsCountSubquery(ScalarExpression expression) =>
-                Strip(expression) is ScalarSubquery subquery && IsAggregate(subquery.QueryExpression, "COUNT", "COUNT_BIG");
-            private static bool IsNull(ScalarExpression expression)
-            {
-                while (expression is ParenthesisExpression parenthesis) expression = parenthesis.Expression;
-                return expression is NullLiteral;
-            }
+                Unwrap(expression) is ScalarSubquery subquery && IsAggregate(subquery.QueryExpression, "COUNT", "COUNT_BIG");
+            private static bool IsNull(ScalarExpression expression) => Unwrap(expression) is NullLiteral;
             public override void Visit(SearchedCaseExpression node)
             {
                 if (node.ElseExpression == null)
@@ -527,7 +523,7 @@ namespace Querywright.Core
             {
                 if (node.TopRowFilter != null && node.OrderByClause == null && !existsQueries.Contains(node))
                     Add("SW026", "TOP without ORDER BY returns an arbitrary set of rows.", node.TopRowFilter);
-                if (node.TopRowFilter != null && node.TopRowFilter.Percent && Strip(node.TopRowFilter.Expression) is IntegerLiteral hundred && hundred.Value == "100")
+                if (node.TopRowFilter != null && node.TopRowFilter.Percent && Unwrap(node.TopRowFilter.Expression) is IntegerLiteral hundred && hundred.Value == "100")
                     Add("SW043", "TOP 100 PERCENT does nothing; the optimizer ignores ORDER BY it was meant to keep.", node.TopRowFilter);
             }
             public override void Visit(ExecuteSpecification node)
@@ -551,7 +547,7 @@ namespace Querywright.Core
             }
             public override void Visit(LikePredicate node)
             {
-                if (Strip(node.FirstExpression) is ColumnReferenceExpression && Strip(node.SecondExpression) is StringLiteral pattern && pattern.Value.StartsWith("%", StringComparison.Ordinal))
+                if (Unwrap(node.FirstExpression) is ColumnReferenceExpression && Unwrap(node.SecondExpression) is StringLiteral pattern && pattern.Value.StartsWith("%", StringComparison.Ordinal))
                     Add("SW033", "LIKE with a leading % cannot seek an index.", node);
             }
             private readonly HashSet<BooleanComparisonExpression> sargChecked = new HashSet<BooleanComparisonExpression>();
@@ -567,7 +563,7 @@ namespace Querywright.Core
                         Add("SW032", "A function around the column prevents an index seek; move the work to the other side.", comparison);
             }
             private static bool WrapsColumn(ScalarExpression expression) =>
-                Strip(expression) is FunctionCall call && call.CallTarget == null && call.Parameters.Any(p => Strip(p) is ColumnReferenceExpression c && c.ColumnType == ColumnType.Regular);
+                Unwrap(expression) is FunctionCall call && call.CallTarget == null && call.Parameters.Any(p => Unwrap(p) is ColumnReferenceExpression c && c.ColumnType == ColumnType.Regular);
             private static bool HasColumn(ScalarExpression expression)
             {
                 var columns = new Columns();

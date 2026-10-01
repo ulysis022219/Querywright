@@ -499,11 +499,10 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note, int DefaultId)>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
                 List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note, int DefaultId)> synonyms = null;
-                Dictionary<int, string> defaults = null;
                 List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default, bool Function)> parameters = null;
                 List<string> databases = null;
                 bool capped;
-                // Defaults, synonyms and procedures read on a second connection while the columns read on the first. The optional
+                // Synonyms and procedures read on a second connection while the columns read on the first. The optional
                 // sections never throw: each failure degrades to a problem entry.
                 var optional = Task.Run(() =>
                 {
@@ -511,8 +510,6 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     {
                         using (var sql = connection.Open())
                         {
-                            try { defaults = ReadAll(sql, DefaultsQuery, 30, r => (r.GetInt32(0), Text(r, 1)), out _).ToDictionary(d => d.Item1, d => d.Item2); }
-                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("defaults " + Describe(error)); }
                             try { synonyms = ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6), r.GetInt32(7)), out _); }
                             catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("synonyms " + Describe(error)); }
                             try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), !r.IsDBNull(6) && r.GetBoolean(6)), out _); }
@@ -549,9 +546,10 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     var last = columns[columns.Count - 1];
                     columns.RemoveAll(c => c.Schema == last.Schema && c.Table == last.Table);
                 }
-                var built = CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View,
+                (SchemaTable[] Tables, int Skipped) Assemble(Dictionary<int, string> defaults) => CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View,
                     defaults != null && defaults.TryGetValue(c.DefaultId, out var value) && value != null ? c.Note + " DEFAULT " + value : c.Note)),
                     keys.Select(k => (k.Id, (string)k.Schema, (string)k.Table, (string)k.Column, (string)k.RefSchema, (string)k.RefTable, (string)k.RefColumn)));
+                var built = Assemble(null);
                 if (built.Skipped > 0) ActivityLog.TryLogWarning("Querywright", "Live metadata skipped " + built.Skipped + " objects with unusable names");
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
                 if (databases != null) databaseCache[connection.Key] = databases;
@@ -565,24 +563,42 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + built.Tables.Length + " tables"
                     + (capped ? " (column cap reached)" : "") + (problems.Count == 0 ? "" : " (" + LastProblem + ")"));
                 stale.TryRemove(connection.Key, out _);
-                if (!capped && DiskCachePath(connection) is string path)
+                var saved = procedureCache.TryGetValue(connection.Key, out var known) ? known : null;
+                var path = capped ? null : DiskCachePath(connection);
+                // Column defaults cost ~30 us a row on the server (seconds on big schemas) and only feed tooltips, so the tables are
+                // handed back without them and swapped for enriched ones once read. The disk save follows, so it never delays completion.
+                _ = Task.Run(() =>
                 {
-                    var saved = procedureCache.TryGetValue(connection.Key, out var known) ? known : null;
-                    // Written after the result is handed back, so the disk never delays completion. A unique temp file keeps two
-                    // overlapping saves of one connection from interleaving; the last one to finish wins whole.
-                    _ = Task.Run(() =>
+                    var tables = built.Tables;
+                    try
+                    {
+                        Dictionary<int, string> defaults;
+                        using (var sql = connection.Open())
+                            defaults = ReadAll(sql, DefaultsQuery, 30, r => (r.GetInt32(0), Text(r, 1)), out _).ToDictionary(d => d.Item1, d => d.Item2);
+                        if (defaults.Count > 0)
+                        {
+                            tables = Assemble(defaults).Tables;
+                            // Only replace this load's own result: a refresh or newer load since then wins.
+                            if (cache.TryGetValue(connection.Key, out var current) && current.Status == TaskStatus.RanToCompletion && ReferenceEquals(current.Result, built.Tables))
+                                cache.TryUpdate(connection.Key, Task.FromResult<IReadOnlyList<SchemaTable>>(tables), current);
+                        }
+                    }
+                    // ponytail: defaults are cosmetic; a failure keeps the plain notes and only the type is logged.
+                    catch (Exception error) when (IsRecoverable(error)) { ActivityLog.TryLogWarning("Querywright", "Live metadata defaults unavailable: " + Describe(error)); }
+                    if (path == null) return;
+                    // A unique temp file keeps two overlapping saves of one connection from interleaving; the last one to finish wins whole.
                     {
                         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
                         try
                         {
                             Directory.CreateDirectory(Path.GetDirectoryName(path));
-                            using (var writer = File.CreateText(temp)) SchemaDiskCache.Write(writer, built.Tables, saved);
+                            using (var writer = File.CreateText(temp)) SchemaDiskCache.Write(writer, tables, saved);
                             File.Copy(temp, path, true);
                         }
                         catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
                         finally { try { File.Delete(temp); } catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { } }
-                    });
-                }
+                    }
+                });
                 return built.Tables;
             }
             catch (SqlException error) when (attempt < MaxAttempts - 1 && Transient(error) && (error.Number != -2 || attempt == 0))

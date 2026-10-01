@@ -90,13 +90,17 @@ namespace Querywright.Core
             var result = new List<KeyValuePair<string, string>>();
             if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder)) return result;
             var names = new List<string>();
-            foreach (var path in Directory.EnumerateFiles(folder, "*.sql"))
+            try
             {
-                // "*.sql" also matches ".sqlx" on Windows.
-                if (!string.Equals(Path.GetExtension(path), ".sql", StringComparison.OrdinalIgnoreCase)) continue;
-                var name = Path.GetFileNameWithoutExtension(path);
-                if (IsShortcut(name)) names.Add(name);
+                foreach (var path in Directory.EnumerateFiles(folder, "*.sql"))
+                {
+                    // "*.sql" also matches ".sqlx" on Windows.
+                    if (!string.Equals(Path.GetExtension(path), ".sql", StringComparison.OrdinalIgnoreCase)) continue;
+                    var name = Path.GetFileNameWithoutExtension(path);
+                    if (IsShortcut(name)) names.Add(name);
+                }
             }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { return result; }
             names.Sort(StringComparer.Ordinal);
             foreach (var name in names)
             {

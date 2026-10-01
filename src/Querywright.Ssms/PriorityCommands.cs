@@ -143,7 +143,7 @@ namespace Querywright.Ssms
                 && (nCmdID == (uint)VSConstants.VSStd97CmdID.SaveProjectItem || nCmdID == (uint)VSConstants.VSStd97CmdID.SaveSolution))
             {
                 System.Collections.Generic.IEnumerable<Microsoft.VisualStudio.Text.Editor.IWpfTextView> views;
-                try { views = nCmdID == (uint)VSConstants.VSStd97CmdID.SaveSolution ? EditorListener.UnsavedViews() : new[] { package.GetSqlView(mustHaveFocus: false) }; }
+                try { views = nCmdID == (uint)VSConstants.VSStd97CmdID.SaveSolution ? EditorListener.UnsavedViews() : new[] { package.SavedSqlView() }.Where(v => v != null); }
                 catch (InvalidOperationException) { return pass; }
                 foreach (var view in views)
                 {

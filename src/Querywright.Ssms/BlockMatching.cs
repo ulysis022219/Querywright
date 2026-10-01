@@ -45,8 +45,12 @@ namespace Querywright.Ssms
                 {
                     await Task.Delay(delay, cancellation.Token);
                     var blocks = Compute(snapshot);
-                    try { regions = snapshot.Length > 2_000_000 ? Array.Empty<(int, int, string)>() : SqlNavigation.Regions(snapshot.GetText()); }
-                    catch (Exception error) when (!(error is OutOfMemoryException)) { regions = Array.Empty<(int, int, string)>(); }
+                    IReadOnlyList<(int, int, string)> found;
+                    try { found = snapshot.Length > 2_000_000 ? Array.Empty<(int, int, string)>() : SqlNavigation.Regions(snapshot.GetText()); }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { found = Array.Empty<(int, int, string)>(); }
+                    // A newer edit's run supersedes this one; publishing now could overwrite its result with an older snapshot's.
+                    if (cancellation.IsCancellationRequested) return;
+                    regions = found;
                     latest = (snapshot, blocks);
                     Updated?.Invoke(snapshot);
                 }
@@ -216,7 +220,7 @@ namespace Querywright.Ssms
                 if (end > snapshot.Length || start >= end || snapshot.GetLineNumberFromPosition(start) == snapshot.GetLineNumberFromPosition(end)) continue;
                 var span = new SnapshotSpan(snapshot, start, end - start).TranslateTo(target, SpanTrackingMode.EdgeExclusive);
                 if (!spans.IntersectsWith(new NormalizedSnapshotSpanCollection(span))) continue;
-                yield return new TagSpan<IOutliningRegionTag>(span, new OutliningRegionTag(false, false, label.Length == 0 ? "region" : label, span.Length > 500 ? span.GetText().Substring(0, 500) + "..." : span.GetText()));
+                yield return new TagSpan<IOutliningRegionTag>(span, new OutliningRegionTag(false, false, label.Length == 0 ? "region" : label, span.Length > 500 ? new SnapshotSpan(span.Start, 500).GetText() + "..." : span.GetText()));
             }
         }
     }

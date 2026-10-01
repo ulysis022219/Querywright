@@ -88,7 +88,7 @@ namespace Querywright.Ssms
                             await package.JoinableTaskFactory.SwitchToMainThreadAsync();
                             break;
                         case "f12": // through the shell's command routing, as the key is, so priority targets see it
-                            Exec((IOleCommandTarget)await package.GetServiceAsync(typeof(SUIHostCommandDispatcher)), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn);
+                            Exec(await DispatcherAsync(package), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.GotoDefn);
                             break;
                         case "ready": // wait until the window is connected and live metadata has loaded
                             for (int i = 0; i < 150 && !(package.CurrentTables()?.Count > 0); i++) { await Task.Delay(1000); await package.JoinableTaskFactory.SwitchToMainThreadAsync(); }
@@ -125,7 +125,7 @@ namespace Querywright.Ssms
                             property.SetValue(package.Options, Convert.ChangeType(arg.Substring(arg.IndexOf('=') + 1), property.PropertyType, System.Globalization.CultureInfo.InvariantCulture));
                             break;
                         case "save": // File > Save through the shell's routing, as Ctrl+S is
-                            Exec((IOleCommandTarget)await package.GetServiceAsync(typeof(SUIHostCommandDispatcher)), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.SaveProjectItem);
+                            Exec(await DispatcherAsync(package), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.SaveProjectItem);
                             break;
                         case "prompt": // the next Querywright warning is answered with its Cancel button; its text is appended
                             var answered = view;
@@ -198,6 +198,13 @@ namespace Querywright.Ssms
             ThreadHelper.ThrowIfNotOnUIThread();
             view.Selection.Clear();
             view.Caret.MoveTo(new SnapshotPoint(view.TextSnapshot, Math.Max(0, Math.Min(position, view.TextSnapshot.Length))));
+        }
+
+        private static async Task<IOleCommandTarget> DispatcherAsync(WorkbenchPackage package)
+        {
+            var service = await package.GetServiceAsync(typeof(SUIHostCommandDispatcher));
+            await package.JoinableTaskFactory.SwitchToMainThreadAsync();
+            return service as IOleCommandTarget ?? throw new InvalidOperationException("no command dispatcher");
         }
 
         private static void Exec(IOleCommandTarget target, Guid group, uint id)

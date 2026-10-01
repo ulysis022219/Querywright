@@ -375,7 +375,9 @@ Check(Rules("SELECT a FROM dbo.A WHERE a NOT IN (SELECT b FROM dbo.B);").Sequenc
     Rules("SELECT a FROM dbo.A WHERE a NOT IN (1, 2);").Length == 0, "NOT IN subquery");
 Check(Rules("DECLARE @unused int; DECLARE @t TABLE (x int NULL); SELECT x FROM @t;").SequenceEqual(new[] { "SW016" }) &&
     Rules("DECLARE @x int = 1;\nGO\nSELECT 1;").SequenceEqual(new[] { "SW016" }) &&
-    Rules("CREATE PROCEDURE dbo.p @a int AS SET NOCOUNT ON; SELECT 1;").Length == 0, "unused variables");
+    Rules("CREATE PROCEDURE dbo.p @a int AS SET NOCOUNT ON; SELECT 1;").Length == 0 &&
+    Rules("DECLARE @x int; EXEC dbo.p @x = 1;").SequenceEqual(new[] { "SW016" }) && Rules("DECLARE @x int = 1; EXEC dbo.p @a = @x;").Length == 0 &&
+    !Rules("CREATE FUNCTION dbo.f() RETURNS @t TABLE (a int) AS BEGIN RETURN; END").Contains("SW016"), "unused variables");
 Check(Rules("EXEC GetPeople;").SequenceEqual(new[] { "SW017" }) && Rules("EXEC dbo.GetPeople; EXEC sp_who; EXEC #tmp;").Length == 0, "unqualified EXEC");
 var strict = new WorkbenchSettings { SW005 = RuleSeverity.Disabled };
 Check(SqlAnalysis.Analyze("DELETE FROM dbo.T;", settings: strict).Diagnostics.Count == 0 && strict.Severity("PARSE1") == RuleSeverity.Error, "new rules configurable");
@@ -433,6 +435,7 @@ Check(Rules("SELECT TOP 100 PERCENT a FROM dbo.T ORDER BY a;").SequenceEqual(new
     Rules("SELECT TOP 50 PERCENT a FROM dbo.T ORDER BY a;").Length == 0, "TOP 100 PERCENT");
 Check(Rules("DECLARE @t sysname = N'x'; EXEC('SELECT 1 FROM ' + @t);").Contains("SW047") && !Rules("EXEC('SELECT 1');").Contains("SW047"), "concatenated EXEC");
 Check(SqlRefactoring.UnwrapDynamicSql(SqlRefactoring.WrapAsDynamicSql("SELECT 'a';")).Trim() == "SELECT 'a';" && SqlRefactoring.WrapAsDynamicSql("SELECT 'a';").Contains("N'SELECT ''a'';'"), "wrap and unwrap dynamic SQL");
+Check(new[] { "N'abc", "'", "EXEC('x" }.All(s => { try { SqlRefactoring.UnwrapDynamicSql(s); return false; } catch (InvalidOperationException) { return true; } }), "unwrap unterminated literal warns");
 Check(SqlAnalysis.DatabaseSwitchChanges("USE Other; DELETE FROM dbo.T WHERE Id = 1;").SequenceEqual(new[] { "USE Other" }) && SqlAnalysis.DatabaseSwitchChanges("USE Other; SELECT 1;").Count == 0 && SqlAnalysis.DatabaseSwitchChanges("DELETE FROM dbo.T WHERE Id = 1;").Count == 0, "USE with data changes");
 Check(Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T WHERE a = 1) SELECT 1;").SequenceEqual(new[] { "SW044" }) &&
     Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T GROUP BY a) SELECT 1; IF EXISTS (SELECT MAX(a) FROM dbo.T HAVING MAX(a) > 1) SELECT 1;").Length == 0, "EXISTS aggregate");
@@ -933,7 +936,8 @@ Check(merge.Contains("MERGE INTO [dbo].[People] AS target\nUSING (VALUES\n    (1
 string createTable = ResultGrid.CreateTableScript(new[] { "Id", "Name" }, new[] { "int", null }, new List<string?[]> { new[] { "1", "x" }, new[] { "2", null } }, "#Results", "\n");
 Check(createTable.EndsWith("CREATE TABLE #Results\n(\n    [Id] int NOT NULL,\n    [Name] nvarchar(1) NULL\n);\n"), "create table script: " + createTable);
 Check(ResultGrid.SourceTable("SELECT * FROM Sales.Orders o JOIN dbo.X x ON 1=1") == "[Sales].[Orders]" && ResultGrid.SourceTable("SELECT 1") == null, "source table");
-Check(SqlAnalysis.UnfilteredChanges("TRUNCATE TABLE dbo.T; DROP TABLE dbo.A, #b; DELETE FROM dbo.T", unfiltered: false, dropTruncate: true).SequenceEqual(new[] { "TRUNCATE TABLE dbo.T", "DROP TABLE dbo.A", "DROP TABLE #b" }), "drop/truncate warning targets");
+Check(SqlAnalysis.UnfilteredChanges("TRUNCATE TABLE dbo.T; DROP TABLE dbo.A, #b; DELETE FROM dbo.T", unfiltered: false, dropTruncate: true).SequenceEqual(new[] { "TRUNCATE TABLE dbo.T", "DROP TABLE dbo.A" }), "drop/truncate warning targets");
+Check(SqlAnalysis.UnfilteredChanges("DROP TABLE #a; TRUNCATE TABLE #a; DELETE FROM #a; UPDATE ##g SET x = 1; ALTER TABLE #a ADD c int; DROP TABLE IF EXISTS #a;", true, true, true).Count == 0, "temp tables are not flagged");
 string multi = SqlRefactoring.ForDatabases("CREATE OR ALTER PROC dbo.p AS SELECT 1;\n", new[] { "Sales", "O'Brien]x" }, newline: "\n");
 Check(multi == "-- Querywright: script for 2 databases. Review, then execute. Nothing has been run.\n\nUSE [Sales];\nPRINT N'Sales';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n\nUSE [O'Brien]]x];\nPRINT N'O''Brien]x';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n", "script for databases: " + multi);
 string multiStop = SqlRefactoring.ForDatabases("SELECT 1\ngo", new[] { "A" }, stopOnError: true, printName: false, newline: "\n");
@@ -1102,9 +1106,13 @@ Check(SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = N'p''w', CHEC
     && SqlRefactoring.RedactSecrets("ALTER LOGIN x WITH PASSWORD='new' OLD_PASSWORD = 'old'") == "ALTER LOGIN x WITH PASSWORD = '***' OLD_PASSWORD = '***'"
     && SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = 0x0200AB HASHED") == "CREATE LOGIN x WITH PASSWORD = '***' HASHED"
     && SqlRefactoring.RedactSecrets("CREATE DATABASE SCOPED CREDENTIAL c WITH IDENTITY = 'me', SECRET = 'sig'") == "CREATE DATABASE SCOPED CREDENTIAL c WITH IDENTITY = 'me', SECRET = '***'"
-    && SqlRefactoring.RedactSecrets("EXEC sp_addlinkedsrvlogin 'srv', 'false', NULL, 'sa', @rmtpassword = 'pw'; DECLARE @Pwd nvarchar(50) = N'pw';") == "EXEC sp_addlinkedsrvlogin 'srv', 'false', NULL, 'sa', @rmtpassword = '***'; DECLARE @Pwd nvarchar(50) = '***';"
+    && SqlRefactoring.RedactSecrets("EXEC sp_addlinkedsrvlogin 'srv', 'false', NULL, 'sa', @rmtpassword = 'pw'; DECLARE @Pwd nvarchar(50) = N'pw';") == "EXEC sp_addlinkedsrvlogin '***', '***', NULL, '***', @rmtpassword = '***'; DECLARE @Pwd nvarchar(50) = '***';"
+    && SqlRefactoring.RedactSecrets("EXEC sp_addlinkedsrvlogin N'srv', 'false', NULL, 'sa', N'p;w'\nEXEC sp_password NULL, 'new', 'me' SELECT 'keep'") == "EXEC sp_addlinkedsrvlogin N'***', '***', NULL, '***', N'***'\nEXEC sp_password NULL, '***', '***' SELECT 'keep'"
+    && SqlRefactoring.RedactSecrets("EXEC sp_change_users_login 'Auto_Fix', 'u', NULL, 'pw'") == "EXEC sp_change_users_login '***', '***', NULL, '***'"
     && SqlRefactoring.RedactSecrets("SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=sa;Pwd=a b;', 'SELECT 1')") == "SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=sa;Pwd=***;', 'SELECT 1')"
-    && SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1") == "CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1", "tab history redacts secrets");
+    && SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1") == "CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1"
+    && SqlRefactoring.RedactSecrets("SELECT ENCRYPTBYPASSPHRASE(N'p''w', 'data'), DecryptByPassphrase ( 'pw', @c), ENCRYPTBYPASSPHRASE(@k, 'x')") == "SELECT ENCRYPTBYPASSPHRASE(N'***', 'data'), DecryptByPassphrase ( '***', @c), ENCRYPTBYPASSPHRASE(@k, 'x')"
+    && SqlRefactoring.RedactSecrets("BACKUP DATABASE d TO DISK = 'f' WITH MEDIAPASSWORD = 'm'") == "BACKUP DATABASE d TO DISK = 'f' WITH MEDIAPASSWORD = '***'", "tab history redacts secrets");
 Check(ColorRules.Matches("dev; PROD ", @"sql-prod01\A", "Sales") && ColorRules.Matches("prod01/Sales", "prod01", "Sales") && !ColorRules.Matches("prod", "dev01", "Sales")
     && !ColorRules.Matches(";;", "x", "y") && !ColorRules.Matches("prod", null, null), "production server patterns");
 Check(typeof(WorkbenchSettings).GetProperties().Where(p => p.PropertyType == typeof(RuleSeverity))

@@ -83,7 +83,7 @@ namespace Querywright.Ssms
                 _ = Task.Run(() =>
                 {
                     try { LoadSchema(); }
-                    catch (Exception error) when (!(error is OutOfMemoryException)) { }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { schemaCache = null; } // deleted or broken: stop suggesting it
                     finally { Interlocked.Exchange(ref schemaLoading, 0); }
                 });
             var cache = schemaCache;
@@ -111,7 +111,7 @@ namespace Querywright.Ssms
             ThreadHelper.ThrowIfNotOnUIThread();
             var live = options?.LiveMetadata != false ? LiveMetadata.Procedures(LiveMetadata.Capture()) : null;
             IReadOnlyList<SchemaProcedure> local;
-            try { local = sql.Length > 1_000_000 ? Array.Empty<SchemaProcedure>() : SqlAssist.ProceduresFromScript(sql); }
+            try { local = sql.Length > 1_000_000 || sql.IndexOf("CREATE", StringComparison.OrdinalIgnoreCase) < 0 ? Array.Empty<SchemaProcedure>() : SqlAssist.ProceduresFromScript(sql); }
             catch (Exception error) when (!(error is OutOfMemoryException)) { local = Array.Empty<SchemaProcedure>(); }
             // Script definitions first: they are what the user is editing and they carry parameter defaults.
             return live == null ? local : local.Concat(live).ToArray();
@@ -122,8 +122,12 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
-            var offline = await Task.Run(LoadSchema);
-            var tables = Merge(await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(20)), offline);
+            var live = await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(20));
+            IReadOnlyList<SchemaTable> offline;
+            // A missing or broken offline file only matters when there is no live metadata to use instead.
+            try { offline = await Task.Run(LoadSchema); }
+            catch (Exception error) when (live != null && !(error is OutOfMemoryException)) { offline = null; }
+            var tables = Merge(live, offline);
             if (tables == null)
                 throw new InvalidOperationException("Connect the query window to a database, or set an offline schema SQL file under Tools > Options > Querywright.");
             return tables;
@@ -409,7 +413,7 @@ namespace Querywright.Ssms
                     // Say why instead of silently falling back to SSMS's own F12, which has nothing for objects.
                     ShowWarning(LiveMetadata.CaptureNames() == null
                         ? "F12 on " + target.Name + " needs a connected query window. Connect this window and try again."
-                        : "F12 on " + target.Name + " could not use this window's connection: " + LiveMetadata.LastProblem + ".");
+                        : "F12 on " + target.Name + " could not use this window's connection: " + LiveMetadata.CaptureProblem + ".");
                     return true;
                 }
                 // OtherDb.dbo.Proc: read the definition from that database on the same server.
@@ -707,11 +711,16 @@ namespace Querywright.Ssms
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             LiveMetadata.Refresh(); // every consumer (popup, quick info, *, INSERT/EXEC fill, JOIN ON, column picker) reads this cache
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (options?.LiveMetadata == false)
+            {
+                status?.SetText("Querywright: Read live metadata is off (Tools > Options > Querywright); the offline schema file is re-read whenever it changes.");
+                return;
+            }
+            var connection = LiveMetadata.Capture();
             if (connection == null)
             {
                 status?.SetText(LiveMetadata.CaptureNames() == null ? "Querywright: no live connection; the offline schema file is re-read whenever it changes."
-                    : "Querywright: live metadata can't use this window's connection (" + LiveMetadata.LastProblem + ").");
+                    : "Querywright: live metadata can't use this window's connection (" + LiveMetadata.CaptureProblem + ").");
                 return;
             }
             var load = LiveMetadata.LoadAsync(connection);
@@ -779,7 +788,8 @@ namespace Querywright.Ssms
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
-                ShowWarning(error.Message);
+                // Our own not-found text names only the object; a server's message can name the server or login.
+                ShowWarning(error is InvalidOperationException && !(error.InnerException is System.Data.SqlClient.SqlException) ? error.Message : "Could not script the object: " + Reason(error));
             }
         }
 
@@ -879,8 +889,10 @@ namespace Querywright.Ssms
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 var cause = (error as System.Reflection.TargetInvocationException)?.InnerException ?? error;
-                // ponytail: InvalidOperationException ("select a table") and Core's FormatException ("fix SQL syntax errors first") are user-facing messages; anything else is a bug worth reporting.
-                if (cause is InvalidOperationException || cause is FormatException) { ShowWarning(cause.Message); return; }
+                // ponytail: InvalidOperationException ("select a table"), Core's FormatException ("fix SQL syntax errors first") and file errors (file in use) are user-facing messages; anything else is a bug worth reporting.
+                if (cause is InvalidOperationException || cause is FormatException || cause is IOException || cause is UnauthorizedAccessException) { ShowWarning(cause.Message); return; }
+                // A server error is not a bug, and its text can name the server or login.
+                if (cause is System.Data.SqlClient.SqlException) { ShowWarning("Could not read from the server: " + Reason(cause)); return; }
                 string line = Updates.ErrorLine(UpdateCheck.InstalledVersion(), command, cause.GetType());
                 int answer = VsShellUtilities.ShowMessageBox(this,
                     cause.Message + "\r\n\r\n" + line + "\r\n\r\nOpen a GitHub issue with this line? Only the line above is sent; the error message, your query and connection are not.",
@@ -1014,9 +1026,10 @@ namespace Querywright.Ssms
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var view = GetSqlView();
             var snapshot = view.TextSnapshot;
-            var span = view.Selection.IsEmpty ? new SnapshotSpan(snapshot, 0, snapshot.Length) : view.Selection.SelectedSpans[0];
+            // ponytail: a box or multi-range selection is transformed as the one range from its start to its end.
+            var span = view.Selection.IsEmpty ? new SnapshotSpan(snapshot, 0, snapshot.Length) : new SnapshotSpan(view.Selection.Start.Position, view.Selection.End.Position);
             string result = transform(span.GetText());
-            ReplaceText(view, span, result, span.Start.Position + result.Length, 0, 0, name);
+            ReplaceText(view, span, result, result.Length, 0, 0, name); // caret is relative to the span start
         });
 
         /// <summary>Runs the script in each ticked database and shows the first result set of each, merged, in a window.</summary>
@@ -1383,9 +1396,8 @@ namespace Querywright.Ssms
             // ponytail: synchronous; the save waits for the formatter, which is fine for ordinary scripts and skipped past 1 MB.
             if (original.Length > 1_000_000) return;
             string path = options.SettingsFile;
-            var style = (string.IsNullOrWhiteSpace(path) ? new WorkbenchSettings() : WorkbenchSettings.Load(path)).Formatting;
             string formatted;
-            try { formatted = SqlFormatting.Format(original, style); }
+            try { formatted = SqlFormatting.Format(original, (string.IsNullOrWhiteSpace(path) ? new WorkbenchSettings() : WorkbenchSettings.Load(path)).Formatting); }
             catch (Exception error) when (!(error is OutOfMemoryException)) { return; }
             if (formatted != original) ReplaceText(view, span, formatted, 0, 0, 0, "Format SQL on save");
         }
@@ -1427,6 +1439,22 @@ namespace Querywright.Ssms
         }
 
         internal WorkbenchOptions Options => options;
+
+        /// <summary>For File > Save: the focused SQL view, else the active document's SQL view when focus is in its results.
+        /// Null when the document being saved is not SQL, so another tab is never formatted.</summary>
+        internal IWpfTextView SavedSqlView()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try { return GetSqlView(); }
+            catch (InvalidOperationException) { }
+            var view = GetSqlView(mustHaveFocus: false);
+            var selection = GetService(typeof(SVsShellMonitorSelection)) as IVsMonitorSelection;
+            if (selection == null || ErrorHandler.Failed(selection.GetCurrentElementValue((uint)VSConstants.VSSELELEMID.SEID_DocumentFrame, out object frame))
+                || !(frame is IVsWindowFrame window) || ErrorHandler.Failed(window.GetProperty((int)__VSFPROPID.VSFPROPID_pszMkDocument, out object moniker)))
+                return null;
+            return view.TextBuffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument document)
+                && string.Equals(document.FilePath, moniker as string, StringComparison.OrdinalIgnoreCase) ? view : null;
+        }
 
         internal IWpfTextView GetSqlView(bool mustHaveFocus = true)
         {

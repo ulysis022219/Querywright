@@ -402,6 +402,7 @@ namespace Querywright.Core
             if (literal == null) throw new InvalidOperationException("Select a dynamic SQL string, such as DECLARE @sql nvarchar(max) = N'...'.");
             string text = literal.Text;
             int open = text.IndexOf('\'');
+            if (text.Length < open + 2 || text[text.Length - 1] != '\'') throw new InvalidOperationException("The dynamic SQL string is not closed with a quote.");
             return text.Substring(open + 1, text.Length - open - 2).Replace("''", "'") + "\r\n";
         }
 
@@ -412,18 +413,24 @@ namespace Querywright.Core
             return tokens.Any(t => t.TokenType == TSqlTokenType.Use);
         }
 
-        // PASSWORD/SECRET = literal, password-named variables and parameters, and Password=/Pwd= inside connection strings.
-        // ponytail: positional secrets (sp_addlinkedsrvlogin 'srv', 'false', NULL, 'sa', 'pw') are not recognized.
+        // Every literal argument of procedures that take a password, the passphrase of (EN|DE)CRYPTBYPASSPHRASE, PASSWORD/SECRET = literal, password-named variables
+        // and parameters, and Password=/Pwd= inside connection strings.
+        // ponytail: those procedures lose their other literals (server, login) too; positional arguments give no names to go by.
         private static readonly Regex Secrets = new Regex(
-            @"(?<key>\b(?:OLD_)?PASSWORD|\bSECRET)\s*=\s*(?:N?'(?:[^']|'')*'|0x[0-9A-F]+)"
+            @"(?<call>\b(?:sp_addlinkedsrvlogin|sp_addlogin|sp_password|sp_setapprole|sp_addapprole|sp_approlepassword|sp_change_users_login)\b\s+"
+            + @"(?>(?:@\w+\s*=\s*)?(?:N?'(?:[^']|'')*'|[\w@.]+))(?>\s*,\s*(?:@\w+\s*=\s*)?(?:N?'(?:[^']|'')*'|[\w@.]+))*)"
+            + @"|(?<call>\b(?:EN|DE)CRYPTBYPASSPHRASE\s*\(\s*N?'(?:[^']|'')*')"
+            + @"|(?<key>\b(?:OLD_|MEDIA)?PASSWORD|\bSECRET)\s*=\s*(?:N?'(?:[^']|'')*'|0x[0-9A-F]+)"
             + @"|(?<key>@\w*(?:pass|pwd|secret)\w*(?:\s+\w+(?:\s*\(\s*\w+\s*\))?)?)\s*=\s*N?'(?:[^']|'')*'"
             + @"|\b(?<cs>Password|Pwd)(?<=[;'""]\s*\w+)\s*=\s*[^;'""]+",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
+        private static readonly Regex Literal = new Regex("'(?:[^']|'')*'", RegexOptions.None, TimeSpan.FromSeconds(1));
+
         /// <summary>The SQL with password and secret values replaced by ***, or null when that takes too long.</summary>
         public static string? RedactSecrets(string sql)
         {
-            try { return Secrets.Replace(sql ?? "", m => m.Groups["cs"].Success ? m.Groups["cs"].Value + "=***" : m.Groups["key"].Value + " = '***'"); }
+            try { return Secrets.Replace(sql ?? "", m => m.Groups["call"].Success ? Literal.Replace(m.Value, "'***'") : m.Groups["cs"].Success ? m.Groups["cs"].Value + "=***" : m.Groups["key"].Value + " = '***'"); }
             catch (RegexMatchTimeoutException) { return null; }
         }
 

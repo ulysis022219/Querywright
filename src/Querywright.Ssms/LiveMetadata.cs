@@ -139,9 +139,11 @@ ORDER BY o.object_id, p.parameter_id;";
 
         private const string DatabasesQuery = "SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;";
 
-        /// <summary>Why the last load failed or degraded, or why the window's connection can't be used, as safe text
-        /// (exception type, SQL number, section, authentication type); empty when it was clean.</summary>
+        /// <summary>Why the last load failed or degraded, as safe text (exception type, SQL number, section); empty when it was clean.</summary>
         internal static string LastProblem = "";
+
+        /// <summary>Why the last Capture found a connected window it can't use (authentication type, exception type); UI thread only.</summary>
+        internal static string CaptureProblem = "";
 
         private static readonly ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>> cache =
             new ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>>();
@@ -177,7 +179,24 @@ ORDER BY o.object_id, p.parameter_id;";
 
         /// <summary>The (possibly running) catalog load for a connection; null result when unavailable.</summary>
         internal static Task<IReadOnlyList<SchemaTable>> LoadAsync(ActiveConnection connection) =>
-            cache.GetOrAdd(connection.Key, _ => Task.Run(() => Load(connection)));
+            cache.GetOrAdd(connection.Key, key =>
+            {
+                var task = Task.Run(() => Load(connection));
+                _ = ForgetFailureAsync(key, task);
+                return task;
+            });
+
+        // A failed load is dropped after 30 s so the next request retries; Refresh retries at once. Watching the task, not the
+        // cache entry, also covers a load that fails before GetOrAdd has stored it.
+        private static async Task ForgetFailureAsync(string key, Task<IReadOnlyList<SchemaTable>> task)
+        {
+            #pragma warning disable VSTHRD003 // a thread-pool Task.Run: no main-thread dependency to deadlock on
+            try { if (await task.ConfigureAwait(false) != null) return; }
+            #pragma warning restore VSTHRD003
+            catch (Exception error) when (!(error is OutOfMemoryException)) { }
+            await Task.Delay(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            ((ICollection<KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>>)cache).Remove(new KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>(key, task));
+        }
 
         /// <summary>Loaded tables, or null while loading / unavailable. Starts a background load on first request.</summary>
         internal static IReadOnlyList<SchemaTable> TryGet(ActiveConnection connection)
@@ -424,7 +443,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         {
             switch (error.Number)
             {
-                case 233: case 53: case 2: case 64: case 121: case 258: case 1205: case 1222: case 4060: case 10053: case 10054: case 10060:
+                case -2: case 233: case 53: case 2: case 64: case 121: case 258: case 1205: case 1222: case 4060: case 10053: case 10054: case 10060:
                 case 10928: case 10929: case 40197: case 40501: case 40613: case 49918: case 49919: case 49920:
                     return true;
                 default: return false;
@@ -538,11 +557,6 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 // Type and SQL error number only: messages can echo server or login names.
                 LastProblem = Describe(error);
                 ActivityLog.TryLogWarning("Querywright", "Live metadata unavailable: " + LastProblem);
-                // Back off 30 s before the next attempt; Refresh clears the cache for an immediate retry.
-                if (cache.TryGetValue(connection.Key, out var failed))
-                    _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ =>
-                        ((ICollection<KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>>)cache).Remove(
-                            new KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>(connection.Key, failed)), TaskScheduler.Default);
                 return null;
             }
         }
@@ -600,6 +614,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         internal static ActiveConnection Capture()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+            CaptureProblem = "";
             try
             {
                 var info = ActiveConnectionInfo();
@@ -626,7 +641,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     }
                     else
                     {
-                        LastProblem = "SSMS did not share this window's SQL Server password";
+                        CaptureProblem = "SSMS did not share this window's SQL Server password";
                         return null;
                     }
                     connection.Password.MakeReadOnly();
@@ -636,7 +651,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     connection.AccessToken = EntraToken(info, type);
                     if (connection.AccessToken == null)
                     {
-                        LastProblem = "authentication type " + authentication + " (Microsoft Entra) shares no usable token; use Windows or SQL Server authentication";
+                        CaptureProblem = "authentication type " + authentication + " (Microsoft Entra) shares no usable token; use Windows or SQL Server authentication";
                         // Property names only, to find the token in other SSMS releases; never values.
                         LogOnce("Live metadata skipped: authentication type " + authentication + "; connection properties "
                             + string.Join(",", type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Select(p => p.Name)));
@@ -653,8 +668,8 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                LastProblem = "connection lookup failed: " + error.GetType().Name;
-                LogOnce("Live metadata " + LastProblem);
+                CaptureProblem = "connection lookup failed: " + error.GetType().Name;
+                LogOnce("Live metadata " + CaptureProblem);
                 return null;
             }
         }
@@ -668,7 +683,12 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             var tokenType = token?.GetType();
             var get = tokenType == null ? null : new[] { tokenType }.Concat(tokenType.GetInterfaces())
                 .Select(t => t.GetMethod("GetAccessToken", Type.EmptyTypes)).FirstOrDefault(m => m?.ReturnType == typeof(string));
-            bool Fresh() => Property(token, tokenType, "TokenExpiry") is DateTimeOffset expiry && expiry > DateTimeOffset.UtcNow.AddMinutes(2);
+            bool Fresh()
+            {
+                var expiry = Property(token, tokenType, "TokenExpiry");
+                var at = expiry is DateTimeOffset offset ? offset : expiry is DateTime time ? new DateTimeOffset(time.ToUniversalTime()) : (DateTimeOffset?)null;
+                return at > DateTimeOffset.UtcNow.AddMinutes(2);
+            }
             if (get == null || !Fresh()) return null;
             return () => Fresh() ? get.Invoke(token, null) as string : throw new InvalidOperationException("The Microsoft Entra token expired.");
         }

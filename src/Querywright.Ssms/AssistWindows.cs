@@ -79,8 +79,11 @@ namespace Querywright.Ssms
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static IntPtr HostOwner()
         {
+            if (!Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess()) return IntPtr.Zero;
+#pragma warning disable VSTHRD010 // checked above; asserting instead would make every dialog caller assert too
             var shell = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(Microsoft.VisualStudio.Shell.Interop.SVsUIShell)) as Microsoft.VisualStudio.Shell.Interop.IVsUIShell;
             return shell != null && shell.GetDialogOwnerHwnd(out IntPtr owner) == 0 ? owner : IntPtr.Zero;
+#pragma warning restore VSTHRD010
         }
 
         private sealed class Owner : System.Windows.Forms.IWin32Window
@@ -313,6 +316,24 @@ namespace Querywright.Ssms
     /// <summary>Search saved tabs, pick a timestamped version, preview it, reopen it; rename or delete a tab.</summary>
     internal sealed class TabHistoryDialog : Window
     {
+        // Kept out of the constructor so the offscreen dialog checks never load the VS shell.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ReadVersions(List<string> files, Action<Dictionary<string, string>> done)
+        {
+            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                var read = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string file in files)
+                        try { result[file] = File.ReadAllText(file); }
+                        catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+                    return result;
+                });
+                done(read);
+            });
+        }
+
         internal string? Text { get; private set; }
 
         private sealed class Version
@@ -418,21 +439,26 @@ namespace Querywright.Ssms
                 return time >= today ? "Today" : time >= today.AddDays(-1) ? "Yesterday" : time >= today.AddDays(-7) ? "Last week"
                     : time >= today.AddMonths(-1) ? "Last month" : "Older";
             }
-            // Old versions are read once, on the first search that needs them, and kept for this dialog only.
-            var texts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            bool VersionHas(Version version, string term)
-            {
-                if (!texts.TryGetValue(version.File.FullName, out var text))
-                {
-                    try { text = File.ReadAllText(version.File.FullName); }
-                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { text = ""; }
-                    texts[version.File.FullName] = text;
-                }
-                return text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0;
-            }
+            // Old versions are read once, off the UI thread, on the first search; until then only the latest text matches.
+            Dictionary<string, string>? texts = null;
+            bool loading = false;
+            bool VersionHas(Version version, string term) =>
+                texts != null && texts.TryGetValue(version.File.FullName, out var text) && text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0;
             void Filter(Tab? keep = null)
             {
                 string term = search.Text.Trim();
+                if (term.Length > 0 && texts == null && !loading)
+                {
+                    loading = true;
+                    var files = tabs.SelectMany(t => t.Versions.Skip(1)).Select(v => v.File.FullName).ToList();
+                    feedback.Text = "Searching older versions...";
+                    ReadVersions(files, read =>
+                    {
+                        texts = read;
+                        if (feedback.Text == "Searching older versions...") feedback.Text = "";
+                        Filter(Selected());
+                    });
+                }
                 bool favorites = favoritesView.IsChecked == true;
                 favoritesView.Content = "F_avorites (" + tabs.Count(t => t.Favorite) + ")";
                 list.Items.Clear();

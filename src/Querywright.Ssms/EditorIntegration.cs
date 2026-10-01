@@ -210,9 +210,7 @@ namespace Querywright.Ssms
                 if (IsTab(group, id) && !completion.IsCompletionActive(view) && package.TryNextField(view)) return VSConstants.S_OK;
                 if (IsTab(group, id) && package.Options?.TabExpandSnippets != false && !completion.IsCompletionActive(view))
                 {
-                    bool expanded = package.TryTabExpand(view);
-                    Microsoft.VisualStudio.Shell.ActivityLog.TryLogInformation("Querywright", "Tab received; expanded=" + expanded);
-                    if (expanded) return VSConstants.S_OK;
+                    if (package.TryTabExpand(view)) return VSConstants.S_OK;
                 }
                 if (IsGoToDefinition(group, id) && package.Options?.GoToDefinition != false && package.TryGoToDefinition(view)) return VSConstants.S_OK;
             }
@@ -413,7 +411,8 @@ namespace Querywright.Ssms
             {
                 try
                 {
-                    var procedures = sql.Length > 1_000_000 ? live : SqlAssist.ProceduresFromScript(sql).Concat(live).ToArray();
+                    var procedures = sql.Length > 1_000_000 || sql.IndexOf("CREATE", StringComparison.OrdinalIgnoreCase) < 0 ? live
+                        : SqlAssist.ProceduresFromScript(sql).Concat(live).ToArray();
                     return (SqlAssist.Describe(sql, position, tables, procedures), procedures);
                 }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { return (null, null); }

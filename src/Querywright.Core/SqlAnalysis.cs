@@ -159,7 +159,9 @@ namespace Querywright.Core
             public override void Visit(ProcedureStatementBodyBase node) => modules.Add(node);
             public override void Visit(TriggerStatementBody node) => modules.Add(node);
             private bool Stored(TSqlFragment node) => modules.Any(m => m != node && node.StartOffset >= m.StartOffset && node.StartOffset < m.StartOffset + m.FragmentLength);
-            private void Add(string verb, TSqlFragment target) { if (!Stored(target)) Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength)); }
+            // #temp tables belong to this session, so dropping or emptying them is never a surprise.
+            private static bool Temp(TSqlFragment? target) => ((target as NamedTableReference)?.SchemaObject ?? target as SchemaObjectName)?.BaseIdentifier?.Value.StartsWith("#", StringComparison.Ordinal) == true;
+            private void Add(string verb, TSqlFragment target) { if (!Stored(target) && !Temp(target)) Targets.Add(verb + " " + sql.Substring(target.StartOffset, target.FragmentLength)); }
             public override void Visit(DeleteSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null && !(node.Target is VariableTableReference)) Add("DELETE", node.Target); }
             public override void Visit(UpdateSpecification node) { if (unfiltered && node.WhereClause == null && node.Target != null && !(node.Target is VariableTableReference)) Add("UPDATE", node.Target); }
             public override void Visit(TruncateTableStatement node) { if (dropTruncate && node.TableName != null) Add("TRUNCATE TABLE", node.TableName); }
@@ -168,7 +170,7 @@ namespace Querywright.Core
             public override void Visit(TSqlStatement node)
             {
                 string type = node.GetType().Name;
-                if (!schema || node is DropTableStatement || Stored(node) || !(type.StartsWith("Drop", StringComparison.Ordinal) || type.StartsWith("Alter", StringComparison.Ordinal))) return;
+                if (!schema || node is DropTableStatement || Stored(node) || Temp((node as AlterTableStatement)?.SchemaObjectName) || !(type.StartsWith("Drop", StringComparison.Ordinal) || type.StartsWith("Alter", StringComparison.Ordinal))) return;
                 string text = sql.Substring(node.StartOffset, node.FragmentLength).Split('\n')[0].Trim().TrimEnd(';');
                 Targets.Add(text.Length > 80 ? text.Substring(0, 77) + "..." : text);
             }
@@ -633,6 +635,9 @@ namespace Querywright.Core
                 public override void Visit(DeclareTableVariableBody node) => Declared.Add(node.VariableName);
                 public override void Visit(VariableReference node) => Used.Add(node.Name);
                 public override void Visit(VariableTableReference node) => Used.Add(node.Variable.Name);
+                // EXEC p @x = 1 names p's parameter, not a local; a TVF's RETURNS @t TABLE is its result, used by RETURN.
+                public override void ExplicitVisit(ExecuteParameter node) { node.ParameterValue?.Accept(this); }
+                public override void ExplicitVisit(TableValuedFunctionReturnType node) { }
             }
         }
     }

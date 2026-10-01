@@ -179,7 +179,24 @@ ORDER BY o.object_id, p.parameter_id;";
 
         /// <summary>The (possibly running) catalog load for a connection; null result when unavailable.</summary>
         internal static Task<IReadOnlyList<SchemaTable>> LoadAsync(ActiveConnection connection) =>
-            cache.GetOrAdd(connection.Key, _ => Task.Run(() => Load(connection)));
+            cache.GetOrAdd(connection.Key, key =>
+            {
+                var task = Task.Run(() => Load(connection));
+                _ = ForgetFailureAsync(key, task);
+                return task;
+            });
+
+        // A failed load is dropped after 30 s so the next request retries; Refresh retries at once. Watching the task, not the
+        // cache entry, also covers a load that fails before GetOrAdd has stored it.
+        private static async Task ForgetFailureAsync(string key, Task<IReadOnlyList<SchemaTable>> task)
+        {
+            #pragma warning disable VSTHRD003 // a thread-pool Task.Run: no main-thread dependency to deadlock on
+            try { if (await task.ConfigureAwait(false) != null) return; }
+            #pragma warning restore VSTHRD003
+            catch (Exception error) when (!(error is OutOfMemoryException)) { }
+            await Task.Delay(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            ((ICollection<KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>>)cache).Remove(new KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>(key, task));
+        }
 
         /// <summary>Loaded tables, or null while loading / unavailable. Starts a background load on first request.</summary>
         internal static IReadOnlyList<SchemaTable> TryGet(ActiveConnection connection)
@@ -426,7 +443,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         {
             switch (error.Number)
             {
-                case 233: case 53: case 2: case 64: case 121: case 258: case 1205: case 1222: case 4060: case 10053: case 10054: case 10060:
+                case -2: case 233: case 53: case 2: case 64: case 121: case 258: case 1205: case 1222: case 4060: case 10053: case 10054: case 10060:
                 case 10928: case 10929: case 40197: case 40501: case 40613: case 49918: case 49919: case 49920:
                     return true;
                 default: return false;
@@ -540,11 +557,6 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 // Type and SQL error number only: messages can echo server or login names.
                 LastProblem = Describe(error);
                 ActivityLog.TryLogWarning("Querywright", "Live metadata unavailable: " + LastProblem);
-                // Back off 30 s before the next attempt; Refresh clears the cache for an immediate retry.
-                if (cache.TryGetValue(connection.Key, out var failed))
-                    _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ =>
-                        ((ICollection<KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>>)cache).Remove(
-                            new KeyValuePair<string, Task<IReadOnlyList<SchemaTable>>>(connection.Key, failed)), TaskScheduler.Default);
                 return null;
             }
         }

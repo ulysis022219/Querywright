@@ -24,5 +24,8 @@ jobs:
           NOTES: ${{ inputs.notes }}
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must look like v1.2.3"; exit 1; }
-          printf '## What changed\n\n%s\n\n## Install or update\n\nClose SSMS 22, unzip, double-click Install.cmd. Free and open source (MIT).\n' "$NOTES" > notes.md
+          # Keep the install steps and SHA-256 checksums already on the release; only What changed is replaced.
+          rest=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | tr -d '\r' | sed -n '/^## Install or update/,$p')
+          [ -n "$rest" ] || rest=$'## Install or update\n\nClose SSMS 22, unzip, double-click Install.cmd. Free and open source (MIT).'
+          printf '## What changed\n\n%s\n\n%s\n' "$NOTES" "$rest" > notes.md
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md

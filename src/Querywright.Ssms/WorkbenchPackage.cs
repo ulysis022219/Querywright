@@ -788,7 +788,8 @@ namespace Querywright.Ssms
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
-                ShowWarning(error.Message);
+                // Our own not-found text names only the object; a server's message can name the server or login.
+                ShowWarning(error is InvalidOperationException && !(error.InnerException is System.Data.SqlClient.SqlException) ? error.Message : "Could not script the object: " + Reason(error));
             }
         }
 
@@ -1023,7 +1024,8 @@ namespace Querywright.Ssms
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var view = GetSqlView();
             var snapshot = view.TextSnapshot;
-            var span = view.Selection.IsEmpty ? new SnapshotSpan(snapshot, 0, snapshot.Length) : view.Selection.SelectedSpans[0];
+            // ponytail: a box or multi-range selection is transformed as the one range from its start to its end.
+            var span = view.Selection.IsEmpty ? new SnapshotSpan(snapshot, 0, snapshot.Length) : new SnapshotSpan(view.Selection.Start.Position, view.Selection.End.Position);
             string result = transform(span.GetText());
             ReplaceText(view, span, result, span.Start.Position + result.Length, 0, 0, name);
         });
@@ -1392,9 +1394,8 @@ namespace Querywright.Ssms
             // ponytail: synchronous; the save waits for the formatter, which is fine for ordinary scripts and skipped past 1 MB.
             if (original.Length > 1_000_000) return;
             string path = options.SettingsFile;
-            var style = (string.IsNullOrWhiteSpace(path) ? new WorkbenchSettings() : WorkbenchSettings.Load(path)).Formatting;
             string formatted;
-            try { formatted = SqlFormatting.Format(original, style); }
+            try { formatted = SqlFormatting.Format(original, (string.IsNullOrWhiteSpace(path) ? new WorkbenchSettings() : WorkbenchSettings.Load(path)).Formatting); }
             catch (Exception error) when (!(error is OutOfMemoryException)) { return; }
             if (formatted != original) ReplaceText(view, span, formatted, 0, 0, 0, "Format SQL on save");
         }

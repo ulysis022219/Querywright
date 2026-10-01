@@ -402,6 +402,7 @@ namespace Querywright.Core
             if (literal == null) throw new InvalidOperationException("Select a dynamic SQL string, such as DECLARE @sql nvarchar(max) = N'...'.");
             string text = literal.Text;
             int open = text.IndexOf('\'');
+            if (text.Length < open + 2 || text[text.Length - 1] != '\'') throw new InvalidOperationException("The dynamic SQL string is not closed with a quote.");
             return text.Substring(open + 1, text.Length - open - 2).Replace("''", "'") + "\r\n";
         }
 

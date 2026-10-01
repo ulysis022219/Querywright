@@ -79,7 +79,8 @@ namespace Querywright.Ssms
     /// <summary>Reads table/view/column names, types and foreign keys from the connected database with one fixed catalog query. Never runs user SQL.</summary>
     internal static class LiveMetadata
     {
-        private const int MaxRows = 100_000;
+        // 0 or less means no limit; a missing package (tests) keeps the default.
+        private static int MaxRows => WorkbenchPackage.Instance?.Options?.LiveMetadataRowLimit is int limit ? (limit <= 0 ? int.MaxValue : limit) : 100_000;
         // Joins sys.types/sys.schemas once instead of per-row TYPE_NAME()/SCHEMA_NAME() calls, and orders by the catalog's
         // own key (object_id, column_id) so large databases need no server-side name sort; names are sorted client-side.
         private static string TypeSql(string c, string t) => t + @".name +
@@ -461,10 +462,11 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
 
         private static string Text(SqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
 
-        // Reads one result set into a list, capped; the rest is drained so the reader can close cleanly.
+        // Reads one result set into a list, capped at the row limit setting; the rest is cancelled.
         private static List<T> ReadAll<T>(SqlConnection sql, string query, int timeout, Func<SqlDataReader, T> row, out bool capped)
         {
             var list = new List<T>();
+            var limit = MaxRows;
             capped = false;
             using (var command = new SqlCommand(query, sql) { CommandTimeout = timeout })
             using (var reader = command.ExecuteReader(CommandBehavior.SequentialAccess))
@@ -472,7 +474,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 while (reader.Read())
                 {
                     // Cancel, or disposing the reader would still pull every remaining row off the wire.
-                    if (list.Count >= MaxRows) { capped = true; command.Cancel(); break; }
+                    if (list.Count >= limit) { capped = true; command.Cancel(); break; }
                     list.Add(row(reader));
                 }
             }

@@ -79,8 +79,11 @@ namespace Querywright.Ssms
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static IntPtr HostOwner()
         {
+            if (!Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess()) return IntPtr.Zero;
+#pragma warning disable VSTHRD010 // checked above; asserting instead would make every dialog caller assert too
             var shell = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(Microsoft.VisualStudio.Shell.Interop.SVsUIShell)) as Microsoft.VisualStudio.Shell.Interop.IVsUIShell;
             return shell != null && shell.GetDialogOwnerHwnd(out IntPtr owner) == 0 ? owner : IntPtr.Zero;
+#pragma warning restore VSTHRD010
         }
 
         private sealed class Owner : System.Windows.Forms.IWin32Window

@@ -22,6 +22,8 @@ namespace Querywright.Ssms
         internal SecureString Password;
         /// <summary>Microsoft Entra: fetches SSMS's token for the window on each open; the token is never logged or kept.</summary>
         internal Func<string> AccessToken;
+        // One credential per window, shared by copies: SqlClient keys its pool by credential reference, so a new one per open would never reuse.
+        private SqlCredential credential;
         internal string Key => Server + "\0" + Database + "\0" + (Integrated ? "" : User);
 
         /// <summary>Traffic stays on this machine (LocalDB, shared memory, local pipe), so TLS adds nothing.</summary>
@@ -64,12 +66,13 @@ namespace Querywright.Ssms
             {
                 DataSource = Server, InitialCatalog = Database ?? "", IntegratedSecurity = Integrated,
                 Encrypt = Encrypt, TrustServerCertificate = TrustServerCertificate, ConnectTimeout = 10,
-                ApplicationName = "Querywright metadata", Pooling = false
+                ApplicationName = "Querywright metadata", Pooling = true
             };
-            // Password travels only as a read-only SecureString, never through the connection string.
+            // Password travels only as a read-only SecureString, never through the connection string. Pooling skips the
+            // login and TLS handshake on refresh, hover and F12; the pool is keyed by server, database, login and token.
             if (AccessToken != null) return new SqlConnection(builder.ConnectionString) { AccessToken = AccessToken() };
             return Integrated ? new SqlConnection(builder.ConnectionString)
-                : new SqlConnection(builder.ConnectionString, new SqlCredential(User, Password));
+                : new SqlConnection(builder.ConnectionString, credential ?? (credential = new SqlCredential(User, Password)));
         }
     }
 
@@ -490,31 +493,46 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 var problems = new List<string>();
                 var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note)>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
+                List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note)> synonyms = null;
                 List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default, bool Function)> parameters = null;
                 List<string> databases = null;
                 bool capped;
-                using (var sql = connection.Open())
+                // The optional sections read on a second connection while the columns read on the first, so a refresh takes
+                // about as long as the columns alone. They never throw: each failure degrades to a problem entry.
+                var optional = Task.Run(() =>
                 {
-                    Progress = (10, "reading columns");
-                    // Essential: an error here propagates to the retry logic below.
-                    columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), Text(r, 6)), out capped);
-                    Progress = (45, "reading synonyms");
                     try
                     {
-                        if (!capped)
-                            columns.AddRange(ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6)), out _));
+                        using (var sql = connection.Open())
+                        {
+                            try { synonyms = ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6)), out _); }
+                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("synonyms " + Describe(error)); }
+                            try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
+                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("foreign keys " + Describe(error)); }
+                            try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), !r.IsDBNull(6) && r.GetBoolean(6)), out _); }
+                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("procedures " + Describe(error)); }
+                            try { databases = ReadAll(sql, DatabasesQuery, 15, r => r.GetString(0), out _); }
+                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("databases " + Describe(error)); }
+                        }
                     }
-                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("synonyms " + Describe(error)); }
-                    Progress = (55, "reading foreign keys");
-                    try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
-                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("foreign keys " + Describe(error)); }
-                    Progress = (70, "reading procedures");
-                    try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), !r.IsDBNull(6) && r.GetBoolean(6)), out _); }
-                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("procedures " + Describe(error)); }
-                    Progress = (85, "reading databases");
-                    try { databases = ReadAll(sql, DatabasesQuery, 15, r => r.GetString(0), out _); }
-                    catch (Exception error) when (IsRecoverable(error)) { problems.Add("databases " + Describe(error)); }
+                    catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("details " + Describe(error)); }
+                });
+                try
+                {
+                    using (var sql = connection.Open())
+                    {
+                        Progress = (10, "reading columns");
+                        // Essential: an error here propagates to the retry logic below.
+                        columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), Text(r, 6)), out capped);
+                    }
                 }
+                finally
+                {
+                    Progress = (70, "reading keys and procedures");
+                    // Never leave the second connection reading behind a failed or retried load.
+                    optional.Wait();
+                }
+                if (!capped && synonyms != null) columns.AddRange(synonyms);
                 Progress = (95, "indexing " + columns.Count + " columns");
                 if (capped && columns.Count > 0)
                 {
@@ -538,13 +556,23 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     + (capped ? " (column cap reached)" : "") + (problems.Count == 0 ? "" : " (" + LastProblem + ")"));
                 stale.TryRemove(connection.Key, out _);
                 if (!capped && DiskCachePath(connection) is string path)
-                    try
+                {
+                    var saved = procedureCache.TryGetValue(connection.Key, out var known) ? known : null;
+                    // Written after the result is handed back, so the disk never delays completion. A unique temp file keeps two
+                    // overlapping saves of one connection from interleaving; the last one to finish wins whole.
+                    _ = Task.Run(() =>
                     {
-                        Directory.CreateDirectory(Path.GetDirectoryName(path));
-                        using (var writer = File.CreateText(path + ".tmp")) SchemaDiskCache.Write(writer, built.Tables, procedureCache.TryGetValue(connection.Key, out var saved) ? saved : null);
-                        File.Copy(path + ".tmp", path, true); File.Delete(path + ".tmp");
-                    }
-                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+                        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                        try
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(path));
+                            using (var writer = File.CreateText(temp)) SchemaDiskCache.Write(writer, built.Tables, saved);
+                            File.Copy(temp, path, true);
+                        }
+                        catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+                        finally { try { File.Delete(temp); } catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { } }
+                    });
+                }
                 return built.Tables;
             }
             catch (SqlException error) when (attempt < MaxAttempts - 1 && Transient(error) && (error.Number != -2 || attempt == 0))

@@ -635,6 +635,9 @@ namespace Querywright.Core
                 public override void Visit(DeclareTableVariableBody node) => Declared.Add(node.VariableName);
                 public override void Visit(VariableReference node) => Used.Add(node.Name);
                 public override void Visit(VariableTableReference node) => Used.Add(node.Variable.Name);
+                // EXEC p @x = 1 names p's parameter, not a local; a TVF's RETURNS @t TABLE is its result, used by RETURN.
+                public override void ExplicitVisit(ExecuteParameter node) { node.ParameterValue?.Accept(this); }
+                public override void ExplicitVisit(TableValuedFunctionReturnType node) { }
             }
         }
     }

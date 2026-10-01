@@ -421,21 +421,34 @@ namespace Querywright.Ssms
                 return time >= today ? "Today" : time >= today.AddDays(-1) ? "Yesterday" : time >= today.AddDays(-7) ? "Last week"
                     : time >= today.AddMonths(-1) ? "Last month" : "Older";
             }
-            // Old versions are read once, on the first search that needs them, and kept for this dialog only.
-            var texts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            bool VersionHas(Version version, string term)
-            {
-                if (!texts.TryGetValue(version.File.FullName, out var text))
-                {
-                    try { text = File.ReadAllText(version.File.FullName); }
-                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { text = ""; }
-                    texts[version.File.FullName] = text;
-                }
-                return text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0;
-            }
+            // Old versions are read once, off the UI thread, on the first search; until then only the latest text matches.
+            Dictionary<string, string>? texts = null;
+            bool loading = false;
+            bool VersionHas(Version version, string term) =>
+                texts != null && texts.TryGetValue(version.File.FullName, out var text) && text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0;
             void Filter(Tab? keep = null)
             {
                 string term = search.Text.Trim();
+                if (term.Length > 0 && texts == null && !loading)
+                {
+                    loading = true;
+                    var files = tabs.SelectMany(t => t.Versions.Skip(1)).Select(v => v.File.FullName).ToList();
+                    feedback.Text = "Searching older versions...";
+                    _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    {
+                        var read = await System.Threading.Tasks.Task.Run(() =>
+                        {
+                            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (string file in files)
+                                try { result[file] = File.ReadAllText(file); }
+                                catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+                            return result;
+                        });
+                        texts = read;
+                        if (feedback.Text == "Searching older versions...") feedback.Text = "";
+                        Filter(Selected());
+                    });
+                }
                 bool favorites = favoritesView.IsChecked == true;
                 favoritesView.Content = "F_avorites (" + tabs.Count(t => t.Favorite) + ")";
                 list.Items.Clear();

@@ -103,7 +103,7 @@ ELSE
                     if (merged.Rows.Count + table.Rows.Count > MaxRows) { errors.Add(database + ": stopped, more than " + MaxRows + " rows."); break; }
                     merged.Merge(table, false, MissingSchemaAction.Add);
                 }
-                catch (Exception error) when (error is SqlException || error is InvalidOperationException || error is ArgumentException || error is ConstraintException)
+                catch (Exception error) when (error is SqlException || error is InvalidOperationException || error is ArgumentException || error is DataException)
                 {
                     errors.Add(database + ": " + error.Message);
                 }

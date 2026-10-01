@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -94,8 +95,12 @@ namespace Querywright.Ssms
 
                 // Stage our installed helper scripts outside the extension directory: VSIXInstaller replaces it.
                 string source = Path.Combine(Path.GetDirectoryName(typeof(UpdateCheck).Assembly.Location), "Updater");
-                string staging = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Querywright", "Updates", Guid.NewGuid().ToString("N"));
+                string updates = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "Updates");
+                // Earlier updates' staged scripts; a day old means their updater finished long ago.
+                if (Directory.Exists(updates))
+                    foreach (var old in new DirectoryInfo(updates).GetDirectories().Where(d => d.CreationTimeUtc < DateTime.UtcNow.AddDays(-1)))
+                        try { old.Delete(true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                string staging = Path.Combine(updates, Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(staging);
                 foreach (string name in new[] { "Update-Querywright.ps1", "Update-Release.ps1", "Install-Development.ps1", "Test-Package.ps1" })
                     File.Copy(Path.Combine(source, name), Path.Combine(staging, name));

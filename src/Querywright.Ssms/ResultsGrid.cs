@@ -117,7 +117,7 @@ namespace Querywright.Ssms
             foreach (var block in blocks)
                 for (long row = block.Top; row <= block.Bottom; row++)
                 {
-                    if (!rows.Contains(row) && (long)(rows.Count + 1) * columns.Count > MaxCells) { result.Truncated = true; break; }
+                    if (!rows.Contains(row) && (long)(rows.Count + 1) * columns.Count > maxCells) { result.Truncated = true; break; }
                     rows.Add(row);
                 }
             foreach (int column in columns)

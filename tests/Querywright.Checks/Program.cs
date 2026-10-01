@@ -375,7 +375,9 @@ Check(Rules("SELECT a FROM dbo.A WHERE a NOT IN (SELECT b FROM dbo.B);").Sequenc
     Rules("SELECT a FROM dbo.A WHERE a NOT IN (1, 2);").Length == 0, "NOT IN subquery");
 Check(Rules("DECLARE @unused int; DECLARE @t TABLE (x int NULL); SELECT x FROM @t;").SequenceEqual(new[] { "SW016" }) &&
     Rules("DECLARE @x int = 1;\nGO\nSELECT 1;").SequenceEqual(new[] { "SW016" }) &&
-    Rules("CREATE PROCEDURE dbo.p @a int AS SET NOCOUNT ON; SELECT 1;").Length == 0, "unused variables");
+    Rules("CREATE PROCEDURE dbo.p @a int AS SET NOCOUNT ON; SELECT 1;").Length == 0 &&
+    Rules("DECLARE @x int; EXEC dbo.p @x = 1;").SequenceEqual(new[] { "SW016" }) && Rules("DECLARE @x int = 1; EXEC dbo.p @a = @x;").Length == 0 &&
+    !Rules("CREATE FUNCTION dbo.f() RETURNS @t TABLE (a int) AS BEGIN RETURN; END").Contains("SW016"), "unused variables");
 Check(Rules("EXEC GetPeople;").SequenceEqual(new[] { "SW017" }) && Rules("EXEC dbo.GetPeople; EXEC sp_who; EXEC #tmp;").Length == 0, "unqualified EXEC");
 var strict = new WorkbenchSettings { SW005 = RuleSeverity.Disabled };
 Check(SqlAnalysis.Analyze("DELETE FROM dbo.T;", settings: strict).Diagnostics.Count == 0 && strict.Severity("PARSE1") == RuleSeverity.Error, "new rules configurable");
@@ -433,6 +435,7 @@ Check(Rules("SELECT TOP 100 PERCENT a FROM dbo.T ORDER BY a;").SequenceEqual(new
     Rules("SELECT TOP 50 PERCENT a FROM dbo.T ORDER BY a;").Length == 0, "TOP 100 PERCENT");
 Check(Rules("DECLARE @t sysname = N'x'; EXEC('SELECT 1 FROM ' + @t);").Contains("SW047") && !Rules("EXEC('SELECT 1');").Contains("SW047"), "concatenated EXEC");
 Check(SqlRefactoring.UnwrapDynamicSql(SqlRefactoring.WrapAsDynamicSql("SELECT 'a';")).Trim() == "SELECT 'a';" && SqlRefactoring.WrapAsDynamicSql("SELECT 'a';").Contains("N'SELECT ''a'';'"), "wrap and unwrap dynamic SQL");
+Check(new[] { "N'abc", "'", "EXEC('x" }.All(s => { try { SqlRefactoring.UnwrapDynamicSql(s); return false; } catch (InvalidOperationException) { return true; } }), "unwrap unterminated literal warns");
 Check(SqlAnalysis.DatabaseSwitchChanges("USE Other; DELETE FROM dbo.T WHERE Id = 1;").SequenceEqual(new[] { "USE Other" }) && SqlAnalysis.DatabaseSwitchChanges("USE Other; SELECT 1;").Count == 0 && SqlAnalysis.DatabaseSwitchChanges("DELETE FROM dbo.T WHERE Id = 1;").Count == 0, "USE with data changes");
 Check(Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T WHERE a = 1) SELECT 1;").SequenceEqual(new[] { "SW044" }) &&
     Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T GROUP BY a) SELECT 1; IF EXISTS (SELECT MAX(a) FROM dbo.T HAVING MAX(a) > 1) SELECT 1;").Length == 0, "EXISTS aggregate");

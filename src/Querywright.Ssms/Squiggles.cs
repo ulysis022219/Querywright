@@ -90,6 +90,8 @@ namespace Querywright.Ssms
                                 d.severity == RuleSeverity.Error ? PredefinedErrorTypeNames.SyntaxError
                                 : d.severity == RuleSeverity.Info ? PredefinedErrorTypeNames.HintedSuggestion : PredefinedErrorTypeNames.Warning,
                                 d.d.Rule + ": " + d.d.Message)));
+                    // A newer edit superseded this run while it analysed; publishing now would replace its squiggles with stale ones.
+                    if (cancellation.IsCancellationRequested) return;
                     latest = (snapshot, issues);
                     TagsChanged?.Invoke(this, new SnapshotSpanEventArgs(new SnapshotSpan(snapshot, 0, snapshot.Length)));
                 }

@@ -412,18 +412,23 @@ namespace Querywright.Core
             return tokens.Any(t => t.TokenType == TSqlTokenType.Use);
         }
 
-        // PASSWORD/SECRET = literal, password-named variables and parameters, and Password=/Pwd= inside connection strings.
-        // ponytail: positional secrets (sp_addlinkedsrvlogin 'srv', 'false', NULL, 'sa', 'pw') are not recognized.
+        // Every literal argument of procedures that take a password, PASSWORD/SECRET = literal, password-named variables
+        // and parameters, and Password=/Pwd= inside connection strings.
+        // ponytail: those procedures lose their other literals (server, login) too; positional arguments give no names to go by.
         private static readonly Regex Secrets = new Regex(
-            @"(?<key>\b(?:OLD_)?PASSWORD|\bSECRET)\s*=\s*(?:N?'(?:[^']|'')*'|0x[0-9A-F]+)"
+            @"(?<call>\b(?:sp_addlinkedsrvlogin|sp_addlogin|sp_password|sp_setapprole|sp_addapprole|sp_approlepassword)\b\s+"
+            + @"(?>(?:@\w+\s*=\s*)?(?:N?'(?:[^']|'')*'|[\w@.]+))(?>\s*,\s*(?:@\w+\s*=\s*)?(?:N?'(?:[^']|'')*'|[\w@.]+))*)"
+            + @"|(?<key>\b(?:OLD_)?PASSWORD|\bSECRET)\s*=\s*(?:N?'(?:[^']|'')*'|0x[0-9A-F]+)"
             + @"|(?<key>@\w*(?:pass|pwd|secret)\w*(?:\s+\w+(?:\s*\(\s*\w+\s*\))?)?)\s*=\s*N?'(?:[^']|'')*'"
             + @"|\b(?<cs>Password|Pwd)(?<=[;'""]\s*\w+)\s*=\s*[^;'""]+",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
+        private static readonly Regex Literal = new Regex("'(?:[^']|'')*'", RegexOptions.None, TimeSpan.FromSeconds(1));
+
         /// <summary>The SQL with password and secret values replaced by ***, or null when that takes too long.</summary>
         public static string? RedactSecrets(string sql)
         {
-            try { return Secrets.Replace(sql ?? "", m => m.Groups["cs"].Success ? m.Groups["cs"].Value + "=***" : m.Groups["key"].Value + " = '***'"); }
+            try { return Secrets.Replace(sql ?? "", m => m.Groups["call"].Success ? Literal.Replace(m.Value, "'***'") : m.Groups["cs"].Success ? m.Groups["cs"].Value + "=***" : m.Groups["key"].Value + " = '***'"); }
             catch (RegexMatchTimeoutException) { return null; }
         }
 

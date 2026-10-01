@@ -105,7 +105,9 @@ LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
 WHERE o.type IN ('U', 'V', 'IF', 'TF') AND o.is_ms_shipped = 0
 ORDER BY o.object_id, c.column_id;";
 
+        // The guard skips a sys.columns scan that cost ~1 s on large databases even with no synonyms; no rows then, as before.
         private static readonly string SynonymsQuery = @"SET LOCK_TIMEOUT 3000;
+IF EXISTS (SELECT 1 FROM sys.synonyms)
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
     CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit), CAST(1 AS bit),
     CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END, c.default_object_id
@@ -469,7 +471,8 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             {
                 while (reader.Read())
                 {
-                    if (list.Count >= MaxRows) { capped = true; break; }
+                    // Cancel, or disposing the reader would still pull every remaining row off the wire.
+                    if (list.Count >= MaxRows) { capped = true; command.Cancel(); break; }
                     list.Add(row(reader));
                 }
             }
@@ -500,8 +503,8 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default, bool Function)> parameters = null;
                 List<string> databases = null;
                 bool capped;
-                // The optional sections read on a second connection while the columns read on the first, so a refresh takes
-                // about as long as the columns alone. They never throw: each failure degrades to a problem entry.
+                // Defaults, synonyms and procedures read on a second connection while the columns read on the first. The optional
+                // sections never throw: each failure degrades to a problem entry.
                 var optional = Task.Run(() =>
                 {
                     try
@@ -512,12 +515,8 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                             catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("defaults " + Describe(error)); }
                             try { synonyms = ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6), r.GetInt32(7)), out _); }
                             catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("synonyms " + Describe(error)); }
-                            try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
-                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("foreign keys " + Describe(error)); }
                             try { parameters = ReadAll(sql, ProceduresQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), !r.IsDBNull(6) && r.GetBoolean(6)), out _); }
                             catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("procedures " + Describe(error)); }
-                            try { databases = ReadAll(sql, DatabasesQuery, 15, r => r.GetString(0), out _); }
-                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("databases " + Describe(error)); }
                         }
                     }
                     catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("details " + Describe(error)); }
@@ -529,6 +528,11 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                         Progress = (10, "reading columns");
                         // Essential: an error here propagates to the retry logic below.
                         columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), Text(r, 6), r.GetInt32(7)), out capped);
+                        // Foreign keys and databases follow on this connection so both connections finish at about the same time.
+                        try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
+                        catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("foreign keys " + Describe(error)); }
+                        try { databases = ReadAll(sql, DatabasesQuery, 15, r => r.GetString(0), out _); }
+                        catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("databases " + Describe(error)); }
                     }
                 }
                 finally

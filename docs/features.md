@@ -72,7 +72,7 @@ parity claim. This initial package is not a completed SQL Prompt replacement.
 
 | Feature | Notes |
 |---|---|
-| Run in multiple databases (merged results) | Tick databases, run the script (one batch, no GO) in each, first result set of each merged with a leading Database column in a window; failed databases listed. Confirms before unfiltered changes. Runs with the window's login; 100,000 row cap. |
+| Run in multiple databases (merged results) | Tick databases, run the script (one batch, no GO) in each, first result set of each merged with a leading Database column in a window; failed databases listed. Confirms before DROP, ALTER, TRUNCATE or unfiltered changes, naming databases that match "Production servers". Runs with the window's login; 100,000 row cap. |
 | Find object or column in all databases | Name contains text (literal, wildcards escaped) across tables, views, procedures, functions, triggers and columns; read-only catalog query. |
 | Find in database code / usages | Procedures, views, functions and triggers in the current database whose code contains the text, one row per matching line; double-click opens the script at that line. A table, view or synonym name uses the dependency catalog instead of scanning definitions. Explicit command only; first 500 objects, no ORDER BY, READ UNCOMMITTED, 3 s lock timeout, low deadlock priority, 60 s timeout. |
 | Wrap in dynamic SQL / Unwrap dynamic SQL | Selection (or whole window) to `DECLARE @sql ... PRINT ... sp_executesql` with quotes doubled, and back from the first string literal. |

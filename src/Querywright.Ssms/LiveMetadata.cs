@@ -20,6 +20,8 @@ namespace Querywright.Ssms
         internal string Server, Database, User;
         internal bool Integrated, Encrypt = true, TrustServerCertificate;
         internal SecureString Password;
+        /// <summary>Microsoft Entra: fetches SSMS's token for the window on each open; the token is never logged or kept.</summary>
+        internal Func<string> AccessToken;
         internal string Key => Server + "\0" + Database + "\0" + (Integrated ? "" : User);
 
         /// <summary>Traffic stays on this machine (LocalDB, shared memory, local pipe), so TLS adds nothing.</summary>
@@ -65,6 +67,7 @@ namespace Querywright.Ssms
                 ApplicationName = "Querywright metadata", Pooling = false
             };
             // Password travels only as a read-only SecureString, never through the connection string.
+            if (AccessToken != null) return new SqlConnection(builder.ConnectionString) { AccessToken = AccessToken() };
             return Integrated ? new SqlConnection(builder.ConnectionString)
                 : new SqlConnection(builder.ConnectionString, new SqlCredential(User, Password));
         }
@@ -136,7 +139,8 @@ ORDER BY o.object_id, p.parameter_id;";
 
         private const string DatabasesQuery = "SELECT name FROM sys.databases WHERE state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name;";
 
-        /// <summary>Why the last load failed or degraded, as safe text (exception type, SQL number, section); empty when it was clean.</summary>
+        /// <summary>Why the last load failed or degraded, or why the window's connection can't be used, as safe text
+        /// (exception type, SQL number, section, authentication type); empty when it was clean.</summary>
         internal static string LastProblem = "";
 
         private static readonly ConcurrentDictionary<string, Task<IReadOnlyList<SchemaTable>>> cache =
@@ -210,12 +214,11 @@ ORDER BY o.object_id, p.parameter_id;";
         /// <summary>Module text for F12 (OBJECT_DEFINITION; null for tables or no permission). Read-only, parameterized.</summary>
         internal static string Definition(ActiveConnection connection, string schema, string name)
         {
-            string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
             using (var sql = connection.Open())
             {
                 using (var command = new SqlCommand("SELECT OBJECT_DEFINITION(OBJECT_ID(@name));", sql) { CommandTimeout = 10 })
                 {
-                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : Quote(schema) + ".") + Quote(name);
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : ObjectScript.Bracket(schema) + ".") + ObjectScript.Bracket(name);
                     return command.ExecuteScalar() as string;
                 }
             }
@@ -283,14 +286,12 @@ FROM sys.parameters AS p WHERE p.object_id = @id AND p.parameter_id > 0 ORDER BY
         /// <summary>Hover popup: type, definition, columns, constraints and parameters of one object; null when it does not exist. Read-only, parameterized.</summary>
         internal static ObjectDetails Details(ActiveConnection connection, string schema, string name)
         {
-            string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
-            string Text(SqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
             var details = new ObjectDetails();
             using (var sql = connection.Open())
             {
                 using (var command = new SqlCommand(DetailsQuery, sql) { CommandTimeout = 15 })
                 {
-                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : Quote(schema) + ".") + Quote(name);
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = (schema == null ? "" : ObjectScript.Bracket(schema) + ".") + ObjectScript.Bracket(name);
                     using (var reader = command.ExecuteReader())
                     {
                         if (!reader.Read()) return null;
@@ -333,16 +334,15 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
         /// <summary>Modules that reference the object, with their definitions (null when encrypted or not permitted). Read-only, parameterized.</summary>
         internal static IReadOnlyList<(string Schema, string Name, string Definition)> Dependents(ActiveConnection connection, string schema, string name)
         {
-            string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
             var result = new List<(string, string, string)>();
             using (var sql = connection.Open())
             {
                 using (var command = new SqlCommand(DependentsQuery, sql) { CommandTimeout = 15 })
                 {
-                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = Quote(schema) + "." + Quote(name);
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = ObjectScript.Bracket(schema) + "." + ObjectScript.Bracket(name);
                     using (var reader = command.ExecuteReader())
                         while (reader.Read())
-                            result.Add((reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+                            result.Add((reader.GetString(0), reader.GetString(1), Text(reader, 2)));
                 }
             }
             return result;
@@ -351,7 +351,6 @@ WHERE d.referencing_class = 1 AND d.referenced_id = OBJECT_ID(@name) AND d.refer
         /// <summary>Primary-key columns of a table in key order; empty when it has none. Read-only, parameterized.</summary>
         internal static IReadOnlyList<string> PrimaryKey(ActiveConnection connection, string schema, string name)
         {
-            string Quote(string part) => "[" + part.Replace("]", "]]") + "]";
             var result = new List<string>();
             using (var sql = connection.Open())
             {
@@ -361,7 +360,7 @@ JOIN sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.i
 JOIN sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
 WHERE i.object_id = OBJECT_ID(@name) AND i.is_primary_key = 1 ORDER BY ic.key_ordinal;", sql) { CommandTimeout = 15 })
                 {
-                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = Quote(schema) + "." + Quote(name);
+                    command.Parameters.Add("@name", SqlDbType.NVarChar, 1000).Value = ObjectScript.Bracket(schema) + "." + ObjectScript.Bracket(name);
                     using (var reader = command.ExecuteReader())
                         while (reader.Read()) result.Add(reader.GetString(0));
                 }
@@ -625,13 +624,24 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                         connection.Password = new SecureString();
                         foreach (char c in plain) connection.Password.AppendChar(c);
                     }
-                    else return null;
+                    else
+                    {
+                        LastProblem = "SSMS did not share this window's SQL Server password";
+                        return null;
+                    }
                     connection.Password.MakeReadOnly();
                 }
                 else if (authentication != 0)
                 {
-                    LogOnce("Live metadata skipped: authentication type " + authentication + " not supported");
-                    return null;
+                    connection.AccessToken = EntraToken(info, type);
+                    if (connection.AccessToken == null)
+                    {
+                        LastProblem = "authentication type " + authentication + " (Microsoft Entra) shares no usable token; use Windows or SQL Server authentication";
+                        // Property names only, to find the token in other SSMS releases; never values.
+                        LogOnce("Live metadata skipped: authentication type " + authentication + "; connection properties "
+                            + string.Join(",", type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Select(p => p.Name)));
+                        return null;
+                    }
                 }
                 if (options != null)
                 {
@@ -643,9 +653,24 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                LogOnce("Live metadata connection lookup failed: " + error.GetType().Name);
+                LastProblem = "connection lookup failed: " + error.GetType().Name;
+                LogOnce("Live metadata " + LastProblem);
                 return null;
             }
+        }
+
+        /// <summary>Best effort for Microsoft Entra: the token SSMS already holds for the window (SMO's IRenewableToken), used only
+        /// while it has minutes left so renewal, and any sign-in prompt, stays with SSMS. Null when SSMS exposes none.</summary>
+        // ponytail: untested against real Entra sign-ins (CI has Windows authentication only); a miss just leaves live metadata off.
+        private static Func<string> EntraToken(object info, Type type)
+        {
+            var token = Property(info, type, "RenewableToken") ?? Property(info, type, "AccessToken");
+            var tokenType = token?.GetType();
+            var get = tokenType == null ? null : new[] { tokenType }.Concat(tokenType.GetInterfaces())
+                .Select(t => t.GetMethod("GetAccessToken", Type.EmptyTypes)).FirstOrDefault(m => m?.ReturnType == typeof(string));
+            bool Fresh() => Property(token, tokenType, "TokenExpiry") is DateTimeOffset expiry && expiry > DateTimeOffset.UtcNow.AddMinutes(2);
+            if (get == null || !Fresh()) return null;
+            return () => Fresh() ? get.Invoke(token, null) as string : throw new InvalidOperationException("The Microsoft Entra token expired.");
         }
 
         private static bool? Flag(NameValueCollection options, params string[] keys)

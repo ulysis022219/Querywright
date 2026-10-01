@@ -103,7 +103,6 @@ namespace Querywright.Core
             return names;
         }
 
-
         private static string? BaseType(string? type)
         {
             var match = type == null ? null : TypeShape.Match(type);
@@ -144,10 +143,9 @@ namespace Querywright.Core
         /// <summary>SQL Prompt's "Script as INSERT": DROP/CREATE TABLE #Results plus INSERT ... VALUES in batches of 1000 (SQL Server's row-constructor limit).</summary>
         public static string InsertScript(IReadOnlyList<string?> headers, IReadOnlyList<string?>? types, IReadOnlyList<string?[]> rows, string newline = "\r\n")
         {
-            if (headers.Count == 0) throw new InvalidOperationException("The results have no columns.");
-            if (rows.Any(r => r.Length != headers.Count)) throw new ArgumentException("Every row needs one value per column.");
+            CheckShape(headers, rows);
             var names = ColumnNames(headers);
-            var reported = Enumerable.Range(0, headers.Count).Select(c => types != null && c < types.Count && BaseType(types[c]) != null ? types[c] : null).ToList();
+            var reported = Reported(types, names.Count);
             var builder = new StringBuilder();
             builder.Append("-- Querywright: results scripted as INSERT. Values are the grid's display text (floats rounded, long text may be truncated).").Append(newline);
             builder.Append("DROP TABLE IF EXISTS #Results;").Append(newline);
@@ -342,9 +340,8 @@ namespace Querywright.Core
         /// </summary>
         public static void Xlsx(Stream output, IReadOnlyList<string?> headers, IReadOnlyList<string?>? types, IReadOnlyList<string?[]> rows)
         {
-            if (headers.Count == 0) throw new InvalidOperationException("The results have no columns.");
+            CheckShape(headers, rows);
             if (rows.Count >= 1048576) throw new InvalidOperationException("Excel holds at most 1,048,575 rows plus the header.");
-            if (rows.Any(r => r.Length != headers.Count)) throw new ArgumentException("Every row needs one value per column.");
             var numeric = Enumerable.Range(0, headers.Count).Select(c => types != null && c < types.Count && BaseType(types[c]) is string t && NumericTypes.Contains(t)).ToList();
             // Style 0 default, 1 bold header, 2 text; 3+ numbers with 0..n decimals (numFmt 164+).
             var decimals = new List<int>();

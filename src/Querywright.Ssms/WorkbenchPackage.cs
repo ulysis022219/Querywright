@@ -34,7 +34,8 @@ namespace Querywright.Ssms
         private CancellationTokenSource analysisCancellation;
         private WorkbenchOptions options;
         private readonly object schemaLock = new object();
-        private (string Path, DateTime Stamp, IReadOnlyList<SchemaTable> Tables)? schemaCache;
+        private volatile Tuple<string, DateTime, IReadOnlyList<SchemaTable>> schemaCache;
+        private int schemaLoading;
 
         /// <summary>Set after initialization; editor MEF components reach package services through it.</summary>
         internal static WorkbenchPackage Instance { get; private set; }
@@ -69,10 +70,24 @@ namespace Querywright.Ssms
         internal IReadOnlyList<SchemaTable> CurrentTables()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            IReadOnlyList<SchemaTable> offline = null;
-            try { offline = LoadSchema(); } catch (Exception error) when (!(error is OutOfMemoryException)) { }
             var live = options?.LiveMetadata != false ? LiveMetadata.TryGet(LiveMetadata.Capture()) : null;
-            return Merge(live, offline);
+            return Merge(live, OfflineSchemaNow());
+        }
+
+        /// <summary>The offline schema as last parsed, without touching the disk; a background reload picks up file changes.</summary>
+        private IReadOnlyList<SchemaTable> OfflineSchemaNow()
+        {
+            string path = options?.SchemaFile;
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            if (Interlocked.Exchange(ref schemaLoading, 1) == 0)
+                _ = Task.Run(() =>
+                {
+                    try { LoadSchema(); }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { }
+                    finally { Interlocked.Exchange(ref schemaLoading, 0); }
+                });
+            var cache = schemaCache;
+            return cache != null && cache.Item1 == path ? cache.Item3 : null;
         }
 
         /// <summary>Databases on the connected server for USE. Never blocks (typing path).</summary>
@@ -132,9 +147,9 @@ namespace Querywright.Ssms
             lock (schemaLock)
             {
                 var cache = schemaCache;
-                if (cache.HasValue && cache.Value.Path == path && cache.Value.Stamp == info.LastWriteTimeUtc) return cache.Value.Tables;
+                if (cache != null && cache.Item1 == path && cache.Item2 == info.LastWriteTimeUtc) return cache.Item3;
                 var loaded = SchemaCatalog.FromDdl(File.ReadAllText(path));
-                schemaCache = (path, info.LastWriteTimeUtc, loaded);
+                schemaCache = Tuple.Create(path, info.LastWriteTimeUtc, loaded);
                 return loaded;
             }
         }
@@ -151,22 +166,6 @@ namespace Querywright.Ssms
             if (textManager == null) throw new InvalidOperationException("SSMS text services unavailable.");
             options = (WorkbenchOptions)GetDialogPage(typeof(WorkbenchOptions));
             errorList = new ErrorListProvider(this) { ProviderName = "Querywright", ProviderGuid = new Guid("c493165c-47d9-43d7-b28b-d2d7144d45ac") };
-            commands.AddCommand(new MenuCommand(ShowSnippetCheck,
-                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0100)));
-            commands.AddCommand(new MenuCommand(InsertSnippet,
-                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0101)));
-            commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(AnalyzeDocumentAsync); },
-                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0102)));
-            commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(FormatDocumentAsync); },
-                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0103)));
-            commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(CompleteAsync); },
-                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0104)));
-            commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(RenameVariableAsync); },
-                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0105)));
-            commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(AddSemicolonsAsync); },
-                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0106)));
-            commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(ExpandWildcardAsync); },
-                new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), 0x0107)));
             GridTotals.Start(() => options?.GridTotals != false, text => (GetService(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText(text));
             void Add(int id, Func<Task> handler) => commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id)));
@@ -177,6 +176,13 @@ namespace Querywright.Ssms
                 command.BeforeQueryStatus += (sender, args) => ((OleMenuCommand)sender).Visible = shown();
                 commands.AddCommand(command);
             }
+            Add(0x0101, InsertSnippetAsync);
+            Add(0x0102, AnalyzeDocumentAsync);
+            Add(0x0103, FormatDocumentAsync);
+            Add(0x0104, CompleteAsync);
+            Add(0x0105, RenameVariableAsync);
+            Add(0x0106, AddSemicolonsAsync);
+            Add(0x0107, ExpandWildcardAsync);
             Add(0x0108, () => TransformAsync(sql => SqlRefactoring.ApplyCasing(sql), "Apply casing"));
             Add(0x0109, () => TransformAsync(SqlRefactoring.AddBrackets, "Add square brackets"));
             Add(0x010A, () => TransformAsync(SqlRefactoring.RemoveBrackets, "Remove square brackets"));
@@ -215,6 +221,9 @@ namespace Querywright.Ssms
             Add(0x012D, SearchCodeAsync);
             Add(0x012C, () => Task.Run(() => UpdateCheck.RunAsync(this, manual: true)));
             Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
+            // Warm the caches that the typing path reads without touching the disk.
+            SnippetList();
+            OfflineSchemaNow();
             Instance = this;
             ServerColorMenu.Start();
             PriorityCommands.Start(this);
@@ -224,24 +233,38 @@ namespace Querywright.Ssms
                 _ = Task.Run(() => UpdateCheck.RunAsync(this));
         }
 
-        /// <summary>Tab after a snippet shortcut (ssf) or after * expands in place. False passes Tab to the editor.</summary>
-        private IReadOnlyList<KeyValuePair<string, string>> snippetCache = Array.Empty<KeyValuePair<string, string>>();
-        private DateTime snippetCacheTime = DateTime.MinValue;
+        private volatile Tuple<string, DateTime, IReadOnlyList<KeyValuePair<string, string>>> snippetCache;
+        private int snippetLoading;
 
-        /// <summary>(shortcut, first line) pairs for the popup, re-read at most every 30 seconds.</summary>
+        /// <summary>(shortcut, first line) pairs for the popup and Tab. Never touches the disk: the folder, which may be a slow
+        /// or missing share, is listed in the background at most every 30 seconds.</summary>
+        // ponytail: a new snippet file works from the next listing; Tab covers what the popup lists (first 500, ASCII names).
         internal IReadOnlyList<KeyValuePair<string, string>> SnippetList()
         {
-            if (DateTime.UtcNow - snippetCacheTime < TimeSpan.FromSeconds(30)) return snippetCache;
-            try
-            {
-                string folder = options?.SnippetFolder ?? "";
-                if (folder.Length > 0 && !Directory.Exists(folder)) SnippetFiles.Initialize(folder);
-                snippetCache = SnippetFiles.List(folder);
-            }
-            catch (Exception error) when (!(error is OutOfMemoryException)) { snippetCache = Array.Empty<KeyValuePair<string, string>>(); }
-            snippetCacheTime = DateTime.UtcNow;
-            return snippetCache;
+            string folder = options?.SnippetFolder ?? "";
+            var cache = snippetCache;
+            if ((cache == null || cache.Item1 != folder || DateTime.UtcNow - cache.Item2 >= TimeSpan.FromSeconds(30))
+                && Interlocked.Exchange(ref snippetLoading, 1) == 0)
+                _ = Task.Run(() =>
+                {
+                    IReadOnlyList<KeyValuePair<string, string>> list = Array.Empty<KeyValuePair<string, string>>();
+                    try
+                    {
+                        if (folder.Length > 0 && !Directory.Exists(folder)) SnippetFiles.Initialize(folder);
+                        list = SnippetFiles.List(folder);
+                    }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { }
+                    finally
+                    {
+                        snippetCache = Tuple.Create(folder, DateTime.UtcNow, list);
+                        Interlocked.Exchange(ref snippetLoading, 0);
+                    }
+                });
+            return cache != null && cache.Item1 == folder ? cache.Item3 : Array.Empty<KeyValuePair<string, string>>();
         }
+
+        private bool IsSnippet(string shortcut) =>
+            shortcut != null && SnippetList().Any(p => string.Equals(p.Key, shortcut, StringComparison.OrdinalIgnoreCase));
 
         internal bool HasSnippetShortcut(IWpfTextView view)
         {
@@ -249,9 +272,7 @@ namespace Querywright.Ssms
             if (!view.Selection.IsEmpty) return false;
             var point = view.Caret.Position.BufferPosition;
             var line = point.GetContainingLine();
-            string shortcut = SnippetFiles.ShortcutBefore(line.GetText(), point.Position - line.Start.Position);
-            try { return shortcut != null && SnippetFiles.FindShortcut(options?.SnippetFolder ?? "", shortcut) != null; }
-            catch (Exception error) when (!(error is OutOfMemoryException)) { return false; }
+            return IsSnippet(SnippetFiles.ShortcutBefore(line.GetText(), point.Position - line.Start.Position));
         }
 
         /// <summary>After a suggestion is committed: INSERT INTO t / EXEC p gets its column list or parameters right away.</summary>
@@ -307,6 +328,7 @@ namespace Querywright.Ssms
 
         internal static void EndFields(IWpfTextView view) => view.Properties.RemoveProperty(FieldsKey);
 
+        /// <summary>Tab after a snippet shortcut (ssf) or after * expands in place. False passes Tab to the editor.</summary>
         internal bool TryTabExpand(IWpfTextView view)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
@@ -343,12 +365,16 @@ namespace Querywright.Ssms
                 }
                 if (Fill(view, snapshot, caret)) return true;
                 string shortcut = SnippetFiles.ShortcutBefore(line.GetText(), caret - line.Start.Position);
-                if (shortcut == null) return false;
-                if (!Directory.Exists(options.SnippetFolder)) SnippetFiles.Initialize(options.SnippetFolder);
-                // ponytail: snippet files are small local reads; kept on the UI thread so Tab stays ordered with typing.
-                string path = SnippetFiles.FindShortcut(options.SnippetFolder, shortcut);
-                if (path == null) return false;
-                string template = SnippetFiles.Read(path);
+                // An ordinary word, or a snippet folder that is empty, missing or unreachable, leaves Tab to the editor.
+                if (!IsSnippet(shortcut)) return false;
+                string template;
+                // ponytail: one small read on the UI thread so Tab stays ordered with typing; the folder answered the last listing.
+                try { template = SnippetFiles.Read(Path.Combine(options.SnippetFolder, shortcut + ".sql")); }
+                catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is DecoderFallbackException)
+                {
+                    (GetService(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: snippet " + shortcut + " could not be read. " + error.Message);
+                    return false;
+                }
                 var expansion = Snippets.Expand(template, SnippetContext(template, ""), DateTimeOffset.Now);
                 ReplaceText(view, new SnapshotSpan(snapshot, caret - shortcut.Length, shortcut.Length), expansion.Text,
                     expansion.Caret, expansion.SelectionStart, expansion.SelectionLength, "Expand snippet " + shortcut, expansion.Fields);
@@ -383,7 +409,7 @@ namespace Querywright.Ssms
                     // Say why instead of silently falling back to SSMS's own F12, which has nothing for objects.
                     ShowWarning(LiveMetadata.CaptureNames() == null
                         ? "F12 on " + target.Name + " needs a connected query window. Connect this window and try again."
-                        : "F12 on " + target.Name + " could not use this window's connection. Querywright reads definitions over Windows or SQL Server authentication only.");
+                        : "F12 on " + target.Name + " could not use this window's connection: " + LiveMetadata.LastProblem + ".");
                     return true;
                 }
                 // OtherDb.dbo.Proc: read the definition from that database on the same server.
@@ -684,7 +710,8 @@ namespace Querywright.Ssms
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
             if (connection == null)
             {
-                status?.SetText("Querywright: no live connection; the offline schema file is re-read whenever it changes.");
+                status?.SetText(LiveMetadata.CaptureNames() == null ? "Querywright: no live connection; the offline schema file is re-read whenever it changes."
+                    : "Querywright: live metadata can't use this window's connection (" + LiveMetadata.LastProblem + ").");
                 return;
             }
             var load = LiveMetadata.LoadAsync(connection);
@@ -803,7 +830,7 @@ namespace Querywright.Ssms
             // The diff window deletes both files when it closes (the Temporary flags).
             string folder = Path.Combine(Path.GetTempPath(), "Querywright");
             Directory.CreateDirectory(folder);
-            string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            string stamp = Guid.NewGuid().ToString("N");
             string leftFile = Path.Combine(folder, "Compare-" + stamp + "-a.sql"), rightFile = Path.Combine(folder, "Compare-" + stamp + "-b.sql");
             File.WriteAllText(leftFile, a); File.WriteAllText(rightFile, b);
             diff.OpenComparisonWindow2(leftFile, rightFile, full + ": " + connection.Database + " vs " + other, null,
@@ -1007,9 +1034,11 @@ namespace Querywright.Ssms
             if (!await ShowDialogAsync(picker)) return;
             options.MultiDatabaseSelection = string.Join("\n", picker.Selected);
             options.SaveSettingsToStorage();
-            var risky = await Task.Run(() => SqlAnalysis.UnfilteredChanges(sql, true, true));
+            var risky = await Task.Run(() => SqlAnalysis.UnfilteredChanges(sql, true, true, schema: true));
+            var production = picker.Selected.Where(d => ColorRules.Matches(options.ProductionServers, connection.Server, d)).ToList();
             if (risky.Count > 0 && VsShellUtilities.ShowMessageBox(this,
-                    "This script can change or remove every row (" + string.Join(", ", risky.Take(3)) + ") and will run in " + picker.Selected.Count + " databases. Run it?",
+                    (production.Count > 0 ? "PRODUCTION (" + connection.Server + "/" + string.Join(", ", production.Take(3)) + (production.Count > 3 ? ", ..." : "") + "): " : "")
+                    + "This script changes schema or can change or remove every row (" + string.Join(", ", risky.Take(3)) + ") and will run in " + picker.Selected.Count + " databases. Run it?",
                     "Querywright", OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) != (int)VSConstants.MessageBoxResult.IDYES) return;
             var errors = new List<string>();
             var table = await Task.Run(() => DatabaseTools.Run(connection, picker.Selected, sql, null, true, errors));
@@ -1242,7 +1271,7 @@ namespace Querywright.Ssms
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             using (var dialog = new FormattingStyleDialog(settings, path))
             {
-                if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+                if (DialogParts.ShowModal(dialog) != System.Windows.Forms.DialogResult.OK) return;
                 settings = dialog.Settings;
             }
             await Task.Run(() => settings.Save(path));
@@ -1399,12 +1428,12 @@ namespace Querywright.Ssms
 
         internal WorkbenchOptions Options => options;
 
-        internal IWpfTextView GetSqlView()
+        internal IWpfTextView GetSqlView(bool mustHaveFocus = true)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             if (textManager == null || components == null)
                 throw new InvalidOperationException("SSMS editor services unavailable.");
-            ErrorHandler.ThrowOnFailure(textManager.GetActiveView(1, null, out var adapter));
+            ErrorHandler.ThrowOnFailure(textManager.GetActiveView(mustHaveFocus ? 1 : 0, null, out var adapter));
             var view = adapter == null ? null : components.GetService<IVsEditorAdaptersFactoryService>().GetWpfTextView(adapter);
             if (view == null || view.IsClosed) throw new InvalidOperationException("Open a SQL query editor first.");
             if (!EditorListener.IsSql(view.TextBuffer.ContentType))
@@ -1456,7 +1485,7 @@ namespace Querywright.Ssms
                 }
                 errorList.Show();
                 var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-                status?.SetText($"Querywright: {result.Diagnostics.Count} diagnostics from 17 implemented rules; full analysis coverage pending.");
+                status?.SetText($"Querywright: {result.Diagnostics.Count} diagnostics.");
             }
             catch (OperationCanceledException) { }
             catch (Exception error) when (!(error is OutOfMemoryException))
@@ -1487,7 +1516,7 @@ namespace Querywright.Ssms
         private void ShowWarning(string message)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            SelfTest.Note += " warning: " + message;
+            SelfTest.Note += " warning"; // not the message: F12 logs Note, and messages can hold object names
             VsShellUtilities.ShowMessageBox(this, message, "Querywright",
                 OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }
@@ -1516,9 +1545,9 @@ namespace Querywright.Ssms
             return context;
         }
 
-        private void InsertSnippet(object sender, EventArgs args)
+        private async Task InsertSnippetAsync()
         {
-            ThreadHelper.ThrowIfNotOnUIThread();
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
             try
             {
                 var view = GetSqlView();
@@ -1546,17 +1575,6 @@ namespace Querywright.Ssms
                 VsShellUtilities.ShowMessageBox(this, error.Message, "Querywright snippet insertion",
                     OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
             }
-        }
-
-        private void ShowSnippetCheck(object sender, EventArgs args)
-        {
-            ThreadHelper.ThrowIfNotOnUIThread();
-            var expansion = Snippets.Expand("SELECT $CURSOR$; -- $DATE$",
-                new Dictionary<string, string>(), DateTimeOffset.Now);
-            VsShellUtilities.ShowMessageBox(this,
-                "Snippet core loaded. Preview only; editor unchanged.\n\n" + expansion.Text,
-                "Querywright integration check", OLEMSGICON.OLEMSGICON_INFO,
-                OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }
     }
 }

@@ -343,10 +343,11 @@ Check(SnippetFiles.ShortcutBefore("@ssf", 4) == null && SnippetFiles.ShortcutBef
 var shortcutFolder = Path.Combine(Path.GetTempPath(), "Querywright-shortcut-" + Guid.NewGuid().ToString("N"));
 try
 {
+    Check(SnippetFiles.List("").Count == 0 && SnippetFiles.List(Path.Combine(shortcutFolder, "missing")).Count == 0, "empty or missing snippet folder lists nothing");
     SnippetFiles.Initialize(shortcutFolder);
-    var ssf = SnippetFiles.FindShortcut(shortcutFolder, "ssf");
-    Check(ssf != null && Snippets.Expand(SnippetFiles.Read(ssf), context, now).Text == "SELECT * FROM ", "ssf snippet");
-    Check(SnippetFiles.FindShortcut(shortcutFolder, "nope") == null && SnippetFiles.FindShortcut(shortcutFolder, "../ssf") == null, "unknown/unsafe shortcut");
+    var listed = SnippetFiles.List(shortcutFolder);
+    Check(listed.Any(p => p.Key == "ssf") && Snippets.Expand(SnippetFiles.Read(Path.Combine(shortcutFolder, "ssf.sql")), context, now).Text == "SELECT * FROM ", "ssf snippet");
+    Check(!listed.Any(p => p.Key == "nope") && listed.All(p => p.Key.All(c => c < 128 && (char.IsLetterOrDigit(c) || c == '_'))), "unknown/unsafe shortcut");
 }
 finally { Directory.Delete(shortcutFolder, true); }
 Console.WriteLine($"PASS: {checks} total checks including snippet shortcuts. SSMS integration not tested.");
@@ -1091,6 +1092,19 @@ Check(SqlAnalysis.UnfilteredChanges("DROP PROCEDURE dbo.p; ALTER TABLE dbo.T ADD
     .SequenceEqual(new[] { "DROP PROCEDURE dbo.p", "ALTER TABLE dbo.T ADD c int" }) && SqlAnalysis.UnfilteredChanges("ALTER TABLE dbo.T ADD c int").Count == 0, "production: DROP/ALTER only with schema");
 Check(SqlAnalysis.UnfilteredChanges("ALTER PROCEDURE dbo.p AS\nSELECT 1 FROM dbo.T WHERE Id = 1", false, false, true).Single() == "ALTER PROCEDURE dbo.p AS"
     && SqlAnalysis.UnfilteredChanges("ALTER TABLE dbo." + new string('x', 100) + " ADD c int", false, false, true).Single().Length == 80, "production: first line of statement, capped");
+Check(SqlAnalysis.UnfilteredChanges("CREATE PROC dbo.p AS BEGIN DELETE FROM dbo.T; UPDATE dbo.T SET c = 1; TRUNCATE TABLE dbo.T; DROP TABLE dbo.A; ALTER TABLE dbo.T ADD d int; END", true, true, true).Count == 0
+    && SqlAnalysis.UnfilteredChanges("CREATE TRIGGER dbo.tr ON dbo.T AFTER INSERT AS DELETE FROM dbo.Log;", true, true, true).Count == 0
+    && SqlAnalysis.UnfilteredChanges("CREATE FUNCTION dbo.f() RETURNS @r TABLE (a int) AS BEGIN INSERT @r VALUES (1); UPDATE @r SET a = 2; RETURN; END", true, true, true).Count == 0
+    && SqlAnalysis.UnfilteredChanges("ALTER PROC dbo.p AS DELETE FROM dbo.T;", true, true, true).SequenceEqual(new[] { "ALTER PROC dbo.p AS DELETE FROM dbo.T" })
+    && SqlAnalysis.UnfilteredChanges("CREATE PROC dbo.p AS DELETE FROM dbo.T;\nGO\nDELETE FROM dbo.T;").SequenceEqual(new[] { "DELETE dbo.T" }), "module bodies are stored, not run");
+Check(SqlAnalysis.UnfilteredChanges("DECLARE @t TABLE (a int); DELETE FROM @t; UPDATE @t SET a = 1; DELETE dbo.T;").SequenceEqual(new[] { "DELETE dbo.T" }), "table variables are not flagged");
+Check(SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = N'p''w', CHECK_POLICY = OFF;") == "CREATE LOGIN x WITH PASSWORD = '***', CHECK_POLICY = OFF;"
+    && SqlRefactoring.RedactSecrets("ALTER LOGIN x WITH PASSWORD='new' OLD_PASSWORD = 'old'") == "ALTER LOGIN x WITH PASSWORD = '***' OLD_PASSWORD = '***'"
+    && SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = 0x0200AB HASHED") == "CREATE LOGIN x WITH PASSWORD = '***' HASHED"
+    && SqlRefactoring.RedactSecrets("CREATE DATABASE SCOPED CREDENTIAL c WITH IDENTITY = 'me', SECRET = 'sig'") == "CREATE DATABASE SCOPED CREDENTIAL c WITH IDENTITY = 'me', SECRET = '***'"
+    && SqlRefactoring.RedactSecrets("EXEC sp_addlinkedsrvlogin 'srv', 'false', NULL, 'sa', @rmtpassword = 'pw'; DECLARE @Pwd nvarchar(50) = N'pw';") == "EXEC sp_addlinkedsrvlogin 'srv', 'false', NULL, 'sa', @rmtpassword = '***'; DECLARE @Pwd nvarchar(50) = '***';"
+    && SqlRefactoring.RedactSecrets("SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=sa;Pwd=a b;', 'SELECT 1')") == "SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=sa;Pwd=***;', 'SELECT 1')"
+    && SqlRefactoring.RedactSecrets("CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1") == "CREATE LOGIN x WITH PASSWORD = @p; SELECT Password, Pwd FROM dbo.Users WHERE Secret = 1", "tab history redacts secrets");
 Check(ColorRules.Matches("dev; PROD ", @"sql-prod01\A", "Sales") && ColorRules.Matches("prod01/Sales", "prod01", "Sales") && !ColorRules.Matches("prod", "dev01", "Sales")
     && !ColorRules.Matches(";;", "x", "y") && !ColorRules.Matches("prod", null, null), "production server patterns");
 Check(typeof(WorkbenchSettings).GetProperties().Where(p => p.PropertyType == typeof(RuleSeverity))

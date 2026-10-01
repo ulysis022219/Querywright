@@ -138,11 +138,19 @@ namespace Querywright.Ssms
                 catch (InvalidOperationException) { return pass; }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); return pass; }
             }
-            if (pguidCmdGroup == VSConstants.GUID_VSStandardCommandSet97 && nCmdID == (uint)VSConstants.VSStd97CmdID.SaveProjectItem && package.Options?.FormatOnSave == true)
+            // File > Save formats the active SQL document even when focus is elsewhere; Save All formats every unsaved SQL document.
+            if (pguidCmdGroup == VSConstants.GUID_VSStandardCommandSet97 && package.Options?.FormatOnSave == true
+                && (nCmdID == (uint)VSConstants.VSStd97CmdID.SaveProjectItem || nCmdID == (uint)VSConstants.VSStd97CmdID.SaveSolution))
             {
-                try { package.FormatBeforeSave(package.GetSqlView()); }
-                catch (InvalidOperationException) { }
-                catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
+                System.Collections.Generic.IEnumerable<Microsoft.VisualStudio.Text.Editor.IWpfTextView> views;
+                try { views = nCmdID == (uint)VSConstants.VSStd97CmdID.SaveSolution ? EditorListener.UnsavedViews() : new[] { package.GetSqlView(mustHaveFocus: false) }; }
+                catch (InvalidOperationException) { return pass; }
+                foreach (var view in views)
+                {
+                    try { package.FormatBeforeSave(view); }
+                    catch (InvalidOperationException) { }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
+                }
                 return pass;
             }
             if (pguidCmdGroup != group || nCmdID != id) return pass;
@@ -190,14 +198,16 @@ namespace Querywright.Ssms
             {
                 Text = "Querywright: execution warning", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterScreen,
                 MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12),
+                Font = System.Drawing.SystemFonts.MessageBoxFont, AutoScaleMode = AutoScaleMode.Dpi,
             })
+            using (var bold = new System.Drawing.Font(form.Font, System.Drawing.FontStyle.Bold))
             {
                 var layout = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false };
                 layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0),
                     Text = switched ? "This script switches database with USE and then changes data:"
                         : production != null ? "PRODUCTION (" + production + "): you're about to execute " + (targets.Count == 1 ? "a statement" : targets.Count + " statements") + " that change schema or can change or remove every row:"
                         : "You're about to execute " + (targets.Count == 1 ? "a statement" : targets.Count + " statements") + " that can change or remove every row:" });
-                layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0), Font = new System.Drawing.Font(form.Font, System.Drawing.FontStyle.Bold),
+                layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(460, 0), Font = bold,
                     Text = string.Join(Environment.NewLine, targets.Take(10)) + (targets.Count > 10 ? Environment.NewLine + "..." : ""), Margin = new Padding(3, 8, 3, 12) });
                 var never = new CheckBox { AutoSize = true, Text = "Don't show this warning again" };
                 if (production == null) layout.Controls.Add(never);
@@ -211,7 +221,7 @@ namespace Querywright.Ssms
                 form.AcceptButton = cancel; // Enter does not run it
                 form.CancelButton = cancel;
                 form.Shown += (sender, args) => cancel.Focus();
-                bool execute = form.ShowDialog() == DialogResult.OK;
+                bool execute = DialogParts.ShowModal(form) == DialogResult.OK;
                 if (never.Checked)
                 {
                     if (switched) package.Options.WarnUseSwitch = false;

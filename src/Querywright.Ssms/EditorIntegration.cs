@@ -38,6 +38,14 @@ namespace Querywright.Ssms
         internal static bool IsSql(IContentType type) =>
             type.IsOfType("SQL") || type.IsOfType("T-SQL") || type.TypeName.IndexOf("SQL", StringComparison.OrdinalIgnoreCase) >= 0;
 
+        // UI thread only.
+        private static readonly HashSet<IWpfTextView> OpenViews = new HashSet<IWpfTextView>();
+
+        /// <summary>One view per SQL document with unsaved changes, for format on Save All.</summary>
+        internal static IReadOnlyList<IWpfTextView> UnsavedViews() => OpenViews
+            .Where(v => !v.IsClosed && v.TextBuffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument document) && document.IsDirty)
+            .GroupBy(v => v.TextBuffer).Select(g => g.First()).ToList();
+
         public void VsTextViewCreated(IVsTextView adapter)
         {
             Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
@@ -57,7 +65,8 @@ namespace Querywright.Ssms
                 try { if (view.HasAggregateFocus && WorkbenchPackage.Instance?.LiveMetadataEnabled == true) LiveMetadata.TryGet(LiveMetadata.Capture()); }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
             };
-            view.Closed += (s, e) => poll.Stop();
+            OpenViews.Add(view);
+            view.Closed += (s, e) => { poll.Stop(); OpenViews.Remove(view); };
             poll.Start();
             // Tab history: a timestamped version per window a few seconds after each edit, on execute, and on close.
             // Local only; opt out in options.

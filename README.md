@@ -44,10 +44,10 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`.
 - **Folding**: `--region name` / `--endregion` sections and multi-line BEGIN/END blocks collapse from the margin.
 - **Shift+F5** runs only the statement under the caret (only when you press it).
 - Executing a **DELETE or UPDATE without WHERE** asks first ("Execute anyway" / "Don't execute"); turn it off in the prompt or under Tools > Options > Querywright.
-- **Production servers**: list patterns such as `prod;live` in Tools > Options > Querywright; on a matching connection, executing DROP, ALTER, TRUNCATE or an unfiltered DELETE/UPDATE always asks first.
+- **Production servers**: list patterns such as `prod;live` in Tools > Options > Querywright; on a matching connection, executing DROP, ALTER, TRUNCATE or an unfiltered DELETE/UPDATE always asks first, and Run in multiple databases names matching databases in its prompt.
 
 **Formatting**
-- Format a selection, a whole document, or every `.sql` file in a folder. Optional **Format on save** (off by default) formats the document on Ctrl+S.
+- Format a selection, a whole document, or every `.sql` file in a folder. Optional **Format on save** (off by default) formats the document on Ctrl+S, and every unsaved SQL document on Save All.
 - 13 style options with a live preview, saved to a file your team can share.
 - Keyword casing, add/remove square brackets, qualify object names, insert semicolons.
 
@@ -63,7 +63,7 @@ To uninstall, close SSMS and double-click `Uninstall.cmd`.
 - Split a table, or wrap a selection as a stored procedure.
 
 **Everyday helpers**
-- Tab history: every SQL window keeps timestamped versions (a few seconds after each edit, and on execute), grouped per tab with a preview; search covers every saved version; reopen any version, even after a restart (toolbar button next to New Query).
+- Tab history: every SQL window keeps timestamped versions (a few seconds after each edit, and on execute), grouped per tab with a preview; search covers every saved version; reopen any version, even after a restart (toolbar button next to New Query). Keeps the newest 100 versions per tab, 200 tabs and 256 MB in all (favorites aside); PASSWORD and SECRET literals and password variables are saved as `***`.
 - Select several cells in a results grid to see count, sum, average, min and max in the status bar.
 - A colored strip and a `server · database` label on every query window, so you always know
   where you are connected. Right-click a server in Object Explorer > **Querywright: server color...**

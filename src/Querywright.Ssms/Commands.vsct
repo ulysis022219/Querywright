@@ -79,10 +79,6 @@
         <Parent guid="CommandsGuid" id="SuggestGroup" />
         <Strings><ButtonText>Insert snippet...</ButtonText></Strings>
       </Button>
-      <Button guid="CommandsGuid" id="SnippetCheck" priority="0x0040" type="Button">
-        <Parent guid="CommandsGuid" id="SuggestGroup" />
-        <Strings><ButtonText>Snippet smoke check</ButtonText></Strings>
-      </Button>
       <Button guid="CommandsGuid" id="ApplyCasing" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
         <Strings><ButtonText>Apply keyword casing</ButtonText></Strings>
@@ -304,7 +300,6 @@
       <IDSymbol name="ResultsParentGroup" value="0x1090" />
       <IDSymbol name="ResultsGroup" value="0x10A0" />
       <IDSymbol name="SettingsGroup" value="0x10B0" />
-      <IDSymbol name="SnippetCheck" value="0x0100" />
       <IDSymbol name="InsertSnippet" value="0x0101" />
       <IDSymbol name="AnalyzeDocument" value="0x0102" />
       <IDSymbol name="FormatSql" value="0x0103" />

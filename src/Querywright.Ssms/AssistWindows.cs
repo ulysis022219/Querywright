@@ -66,6 +66,29 @@ namespace Querywright.Ssms
             if (Application.Current != null) HostTheme(form);
         }
 
+        /// <summary>Styles the form and shows it modal to the SSMS main window (screen-centered when standalone).</summary>
+        internal static System.Windows.Forms.DialogResult ShowModal(System.Windows.Forms.Form form)
+        {
+            Style(form);
+            var owner = Application.Current != null ? HostOwner() : IntPtr.Zero;
+            if (owner == IntPtr.Zero) return form.ShowDialog();
+            form.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
+            return form.ShowDialog(new Owner(owner));
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static IntPtr HostOwner()
+        {
+            var shell = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(Microsoft.VisualStudio.Shell.Interop.SVsUIShell)) as Microsoft.VisualStudio.Shell.Interop.IVsUIShell;
+            return shell != null && shell.GetDialogOwnerHwnd(out IntPtr owner) == 0 ? owner : IntPtr.Zero;
+        }
+
+        private sealed class Owner : System.Windows.Forms.IWin32Window
+        {
+            internal Owner(IntPtr handle) => Handle = handle;
+            public IntPtr Handle { get; }
+        }
+
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void HostTheme(System.Windows.Forms.Form form)
         {
@@ -230,6 +253,8 @@ namespace Querywright.Ssms
         internal static readonly string Folder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "TabHistory");
         private const int MaxTabs = 200, MaxVersions = 100, MaxChars = 2 * 1024 * 1024;
+        private const long MaxBytes = 256L * 1024 * 1024;
+        private static long lastCap;
         internal const string Info = "tab.txt", Title = "title.txt", Favorite = "favorite.txt";
 
         /// <summary>A user-given name for a saved tab (pre-1.0.2 single-file tabs keep theirs next to the .sql).</summary>
@@ -240,11 +265,13 @@ namespace Querywright.Ssms
         internal static void Save(Guid id, string name, string connection, string text, bool executed)
         {
             if (string.IsNullOrWhiteSpace(text) || text.Length > MaxChars) return; // ponytail: huge scripts are skipped, not truncated
+            string? redacted = Querywright.Core.SqlRefactoring.RedactSecrets(text);
+            if (redacted == null) return; // too slow to redact: skip rather than store a password
             try
             {
                 var tab = Directory.CreateDirectory(Path.Combine(Folder, id.ToString("N")));
                 File.WriteAllText(Path.Combine(tab.FullName, Info), name + "\n" + connection, Encoding.UTF8);
-                File.WriteAllText(Path.Combine(tab.FullName, DateTime.UtcNow.Ticks.ToString("D19") + (executed ? "x" : "") + ".sql"), text, Encoding.UTF8);
+                File.WriteAllText(Path.Combine(tab.FullName, DateTime.UtcNow.Ticks.ToString("D19") + (executed ? "x" : "") + ".sql"), redacted, Encoding.UTF8);
                 foreach (var old in tab.GetFiles("*.sql").OrderByDescending(f => f.Name, StringComparer.Ordinal).Skip(MaxVersions)) old.Delete();
                 var root = new DirectoryInfo(Folder);
                 // Favorites are never pruned and do not count toward the limit.
@@ -256,11 +283,29 @@ namespace Querywright.Ssms
                     old.Delete();
                     File.Delete(TitlePath(old.FullName));
                 }
+                Cap(root);
             }
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException)
             {
                 // History is best effort; never interrupt editing. Log the failure kind only, never the query text.
                 Microsoft.VisualStudio.Shell.ActivityLog.TryLogWarning("Querywright", "Tab history save failed: " + error.GetType().Name);
+            }
+        }
+
+        // Oldest versions go first once non-favorite history passes MaxBytes.
+        // ponytail: checked at most every 10 minutes, so history can briefly exceed the cap.
+        private static void Cap(DirectoryInfo root)
+        {
+            long now = DateTime.UtcNow.Ticks, last = System.Threading.Interlocked.Read(ref lastCap);
+            if (now - last < TimeSpan.TicksPerMinute * 10 || System.Threading.Interlocked.CompareExchange(ref lastCap, now, last) != last) return;
+            long total = 0;
+            foreach (var file in root.GetDirectories().Where(d => !File.Exists(Path.Combine(d.FullName, Favorite))).SelectMany(d => d.GetFiles("*.sql"))
+                .Concat(root.GetFiles("*.sql").Where(f => !File.Exists(FavoritePath(f.FullName)))).OrderByDescending(f => f.LastWriteTimeUtc).ToList())
+            {
+                if ((total += file.Length) <= MaxBytes) continue;
+                file.Delete();
+                if (string.Equals(file.DirectoryName, root.FullName, StringComparison.OrdinalIgnoreCase)) File.Delete(TitlePath(file.FullName));
+                else if (file.Directory!.GetFiles("*.sql").Length == 0) file.Directory.Delete(true);
             }
         }
     }

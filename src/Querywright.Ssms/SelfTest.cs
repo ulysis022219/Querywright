@@ -24,6 +24,7 @@ namespace Querywright.Ssms
     {
         internal static IVsTextView? Adapter;
         internal static IWpfTextView? View;
+        internal static Microsoft.VisualStudio.Language.Intellisense.AsyncCompletion.IAsyncCompletionBroker? Completion;
         /// <summary>Last point a traced feature reached; the "note" step prints it. Never logged.</summary>
         internal static string? Note;
 
@@ -80,6 +81,10 @@ namespace Querywright.Ssms
                                 await Task.Delay(80);
                                 await package.JoinableTaskFactory.SwitchToMainThreadAsync();
                             }
+                            break;
+                        case "popup": // wait up to 10 s for the suggestion list, so a slow runner doesn't Tab before it opens
+                            for (int i = 0; i < 100 && Completion?.IsCompletionActive(view) != true; i++) { await Task.Delay(100); await package.JoinableTaskFactory.SwitchToMainThreadAsync(); }
+                            if (Completion?.IsCompletionActive(view) != true) trace.AppendLine("popup: not open after 10 s");
                             break;
                         case "tab": Exec(target, VSConstants.VSStd2K, (uint)VSConstants.VSStd2KCmdID.TAB); break;
                         case "focus": // a keypress lands in the focused editor; first-run dialogs can steal focus

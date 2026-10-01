@@ -83,7 +83,7 @@ namespace Querywright.Ssms
                 _ = Task.Run(() =>
                 {
                     try { LoadSchema(); }
-                    catch (Exception error) when (!(error is OutOfMemoryException)) { }
+                    catch (Exception error) when (!(error is OutOfMemoryException)) { schemaCache = null; } // deleted or broken: stop suggesting it
                     finally { Interlocked.Exchange(ref schemaLoading, 0); }
                 });
             var cache = schemaCache;
@@ -122,8 +122,12 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
-            var offline = await Task.Run(LoadSchema);
-            var tables = Merge(await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(20)), offline);
+            var live = await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(20));
+            IReadOnlyList<SchemaTable> offline;
+            // A missing or broken offline file only matters when there is no live metadata to use instead.
+            try { offline = await Task.Run(LoadSchema); }
+            catch (Exception error) when (live != null && !(error is OutOfMemoryException)) { offline = null; }
+            var tables = Merge(live, offline);
             if (tables == null)
                 throw new InvalidOperationException("Connect the query window to a database, or set an offline schema SQL file under Tools > Options > Querywright.");
             return tables;
@@ -409,7 +413,7 @@ namespace Querywright.Ssms
                     // Say why instead of silently falling back to SSMS's own F12, which has nothing for objects.
                     ShowWarning(LiveMetadata.CaptureNames() == null
                         ? "F12 on " + target.Name + " needs a connected query window. Connect this window and try again."
-                        : "F12 on " + target.Name + " could not use this window's connection: " + LiveMetadata.LastProblem + ".");
+                        : "F12 on " + target.Name + " could not use this window's connection: " + LiveMetadata.CaptureProblem + ".");
                     return true;
                 }
                 // OtherDb.dbo.Proc: read the definition from that database on the same server.
@@ -707,11 +711,16 @@ namespace Querywright.Ssms
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             LiveMetadata.Refresh(); // every consumer (popup, quick info, *, INSERT/EXEC fill, JOIN ON, column picker) reads this cache
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (options?.LiveMetadata == false)
+            {
+                status?.SetText("Querywright: Read live metadata is off (Tools > Options > Querywright); the offline schema file is re-read whenever it changes.");
+                return;
+            }
+            var connection = LiveMetadata.Capture();
             if (connection == null)
             {
                 status?.SetText(LiveMetadata.CaptureNames() == null ? "Querywright: no live connection; the offline schema file is re-read whenever it changes."
-                    : "Querywright: live metadata can't use this window's connection (" + LiveMetadata.LastProblem + ").");
+                    : "Querywright: live metadata can't use this window's connection (" + LiveMetadata.CaptureProblem + ").");
                 return;
             }
             var load = LiveMetadata.LoadAsync(connection);
@@ -1427,6 +1436,22 @@ namespace Querywright.Ssms
         }
 
         internal WorkbenchOptions Options => options;
+
+        /// <summary>For File > Save: the focused SQL view, else the active document's SQL view when focus is in its results.
+        /// Null when the document being saved is not SQL, so another tab is never formatted.</summary>
+        internal IWpfTextView SavedSqlView()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try { return GetSqlView(); }
+            catch (InvalidOperationException) { }
+            var view = GetSqlView(mustHaveFocus: false);
+            var selection = GetService(typeof(SVsShellMonitorSelection)) as IVsMonitorSelection;
+            if (selection == null || ErrorHandler.Failed(selection.GetCurrentElementValue((uint)VSConstants.VSSELELEMID.SEID_DocumentFrame, out object frame))
+                || !(frame is IVsWindowFrame window) || ErrorHandler.Failed(window.GetProperty((int)__VSFPROPID.VSFPROPID_pszMkDocument, out object moniker)))
+                return null;
+            return view.TextBuffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument document)
+                && string.Equals(document.FilePath, moniker as string, StringComparison.OrdinalIgnoreCase) ? view : null;
+        }
 
         internal IWpfTextView GetSqlView(bool mustHaveFocus = true)
         {

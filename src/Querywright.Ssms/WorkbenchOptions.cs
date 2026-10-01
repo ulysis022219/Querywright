@@ -84,7 +84,7 @@ namespace Querywright.Ssms
 
         [Category("Tab history")]
         [DisplayName("Keep tab history")]
-        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab, 200 tabs and 256 MB in all kept (favorites aside), so any version can be reopened. PASSWORD and SECRET literals and password variables are saved as ***. Turn off to save nothing.")]
+        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab, 200 tabs and 256 MB in all kept (favorites aside), so any version can be reopened. PASSWORD and SECRET literals, password variables and the arguments of password procedures (sp_addlogin, sp_password, sp_addlinkedsrvlogin and similar) are saved as ***. Turn off to save nothing.")]
         public bool TabHistory { get; set; } = true;
 
         [Category("Shared settings")]

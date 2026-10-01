@@ -416,7 +416,7 @@ namespace Querywright.Core
         // and parameters, and Password=/Pwd= inside connection strings.
         // ponytail: those procedures lose their other literals (server, login) too; positional arguments give no names to go by.
         private static readonly Regex Secrets = new Regex(
-            @"(?<call>\b(?:sp_addlinkedsrvlogin|sp_addlogin|sp_password|sp_setapprole|sp_addapprole|sp_approlepassword)\b\s+"
+            @"(?<call>\b(?:sp_addlinkedsrvlogin|sp_addlogin|sp_password|sp_setapprole|sp_addapprole|sp_approlepassword|sp_change_users_login)\b\s+"
             + @"(?>(?:@\w+\s*=\s*)?(?:N?'(?:[^']|'')*'|[\w@.]+))(?>\s*,\s*(?:@\w+\s*=\s*)?(?:N?'(?:[^']|'')*'|[\w@.]+))*)"
             + @"|(?<key>\b(?:OLD_)?PASSWORD|\bSECRET)\s*=\s*(?:N?'(?:[^']|'')*'|0x[0-9A-F]+)"
             + @"|(?<key>@\w*(?:pass|pwd|secret)\w*(?:\s+\w+(?:\s*\(\s*\w+\s*\))?)?)\s*=\s*N?'(?:[^']|'')*'"

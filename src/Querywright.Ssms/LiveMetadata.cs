@@ -97,26 +97,28 @@ namespace Querywright.Ssms
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
     CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit),
     CAST(CASE o.type WHEN 'U' THEN 0 ELSE 1 END AS bit),
-    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END + ISNULL(' DEFAULT ' + LEFT(d.definition, 200), '')
+    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END, c.default_object_id
 FROM sys.objects AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = o.object_id
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
-LEFT JOIN sys.default_constraints AS d ON d.object_id = c.default_object_id
 WHERE o.type IN ('U', 'V', 'IF', 'TF') AND o.is_ms_shipped = 0
 ORDER BY o.object_id, c.column_id;";
 
         private static readonly string SynonymsQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT s.name, o.name, c.name, " + TypeSql("c", "t") + @",
     CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR c.system_type_id = 189 THEN 1 ELSE 0 END AS bit), CAST(1 AS bit),
-    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END + ISNULL(' DEFAULT ' + LEFT(d.definition, 200), '')
+    CASE c.is_nullable WHEN 1 THEN 'NULL' ELSE 'NOT NULL' END, c.default_object_id
 FROM sys.synonyms AS o
 JOIN sys.schemas AS s ON s.schema_id = o.schema_id
 JOIN sys.columns AS c ON c.object_id = OBJECT_ID(o.base_object_name)
 LEFT JOIN sys.types AS t ON t.user_type_id = c.user_type_id
-LEFT JOIN sys.default_constraints AS d ON d.object_id = c.default_object_id
 WHERE PARSENAME(o.base_object_name, 4) IS NULL AND ISNULL(PARSENAME(o.base_object_name, 3), DB_NAME()) = DB_NAME()
 ORDER BY o.object_id, c.column_id;";
+
+        // Read apart from the columns: joining sys.default_constraints there doubled the columns query's CPU on big schemas.
+        private const string DefaultsQuery = @"SET LOCK_TIMEOUT 3000;
+SELECT object_id, LEFT(definition, 200) FROM sys.default_constraints WHERE is_ms_shipped = 0;";
 
         private const string ForeignKeysQuery = @"SET LOCK_TIMEOUT 3000;
 SELECT fk.object_id, ps.name, p.name, pc.name, rs.name, r.name, rc.name
@@ -491,9 +493,10 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             {
                 Progress = (0, "connecting");
                 var problems = new List<string>();
-                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note)>();
+                var columns = new List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note, int DefaultId)>();
                 var keys = new List<(int Id, string Schema, string Table, string Column, string RefSchema, string RefTable, string RefColumn)>();
-                List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note)> synonyms = null;
+                List<(string Schema, string Table, string Column, string Type, bool Generated, bool View, string Note, int DefaultId)> synonyms = null;
+                Dictionary<int, string> defaults = null;
                 List<(string Schema, string Procedure, string Name, string Type, bool Output, bool Default, bool Function)> parameters = null;
                 List<string> databases = null;
                 bool capped;
@@ -505,7 +508,9 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     {
                         using (var sql = connection.Open())
                         {
-                            try { synonyms = ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6)), out _); }
+                            try { defaults = ReadAll(sql, DefaultsQuery, 30, r => (r.GetInt32(0), Text(r, 1)), out _).ToDictionary(d => d.Item1, d => d.Item2); }
+                            catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("defaults " + Describe(error)); }
+                            try { synonyms = ReadAll(sql, SynonymsQuery, 30, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), true, Text(r, 6), r.GetInt32(7)), out _); }
                             catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("synonyms " + Describe(error)); }
                             try { keys = ReadAll(sql, ForeignKeysQuery, 30, r => (r.IsDBNull(0) ? 0 : r.GetInt32(0), Text(r, 1), Text(r, 2), Text(r, 3), Text(r, 4), Text(r, 5), Text(r, 6)), out _); }
                             catch (Exception error) when (IsRecoverable(error)) { lock (problems) problems.Add("foreign keys " + Describe(error)); }
@@ -523,7 +528,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     {
                         Progress = (10, "reading columns");
                         // Essential: an error here propagates to the retry logic below.
-                        columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), Text(r, 6)), out capped);
+                        columns = ReadAll(sql, ColumnsQuery, 60, r => (Text(r, 0), Text(r, 1), Text(r, 2), Text(r, 3), !r.IsDBNull(4) && r.GetBoolean(4), !r.IsDBNull(5) && r.GetBoolean(5), Text(r, 6), r.GetInt32(7)), out capped);
                     }
                 }
                 finally
@@ -540,7 +545,8 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     var last = columns[columns.Count - 1];
                     columns.RemoveAll(c => c.Schema == last.Schema && c.Table == last.Table);
                 }
-                var built = CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View, (string)c.Note)),
+                var built = CatalogAssembler.Tables(columns.Select(c => ((string)c.Schema, (string)c.Table, (string)c.Column, (string)c.Type, c.Generated, c.View,
+                    defaults != null && defaults.TryGetValue(c.DefaultId, out var value) && value != null ? c.Note + " DEFAULT " + value : c.Note)),
                     keys.Select(k => (k.Id, (string)k.Schema, (string)k.Table, (string)k.Column, (string)k.RefSchema, (string)k.RefTable, (string)k.RefColumn)));
                 if (built.Skipped > 0) ActivityLog.TryLogWarning("Querywright", "Live metadata skipped " + built.Skipped + " objects with unusable names");
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.

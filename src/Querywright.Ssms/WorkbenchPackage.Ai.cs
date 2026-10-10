@@ -118,11 +118,13 @@ namespace Querywright.Ssms
 
         /// <summary>One AI request for the panel. A Chat task continues <paramref name="conversation"/> when it has one; any other
         /// task starts over from the query window. The reply is appended to the conversation and returned.</summary>
-        internal async Task<string> AiAskAsync(AiTask task, string instruction, List<AiMessage> conversation, Action<string> progress, CancellationToken cancellation,
-            IProgress<string> deltas = null, bool wholeScript = false, bool includeSchema = true, Action<IReadOnlyList<AiMessage>, string> prepared = null)
+        internal async Task<AiReply> AiAskAsync(AiTask task, string instruction, List<AiMessage> conversation, Action<string> progress, CancellationToken cancellation,
+            IProgress<string> deltas = null, bool wholeScript = false, bool includeSchema = true, Action<IReadOnlyList<AiMessage>, string> prepared = null, IProgress<string> thoughts = null)
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellation);
             var ai = aiOptions;
+            var provider = (ai.ApiFormat, ai.BaseUrl, ai.Model, ai.Reasoning, ai.ExtraRequestJson);
+            int maxSchemaTables = ai.MaxSchemaTables;
             bool followUp = task == AiTask.Chat && conversation.Count > 0;
             var messages = followUp ? conversation.ToList() : new List<AiMessage>();
             string sql = AiEditorText(wholeScript: wholeScript);
@@ -146,26 +148,28 @@ namespace Querywright.Ssms
                 catch (System.Data.SqlClient.SqlException) { extra = null; }
             }
             string schema = null; int tableCount = 0;
-            if (includeSchema && ai.MaxSchemaTables > 0)
+            if (includeSchema && maxSchemaTables > 0)
             {
                 progress("Reading the database schema...");
-                schema = AiAssist.SchemaContext(await AiTablesAsync(connection), instruction + "\n" + sql, out tableCount, ai.MaxSchemaTables);
+                schema = AiAssist.SchemaContext(await AiTablesAsync(connection), instruction + "\n" + sql, out tableCount, maxSchemaTables);
             }
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellation);
             var request = AiAssist.Messages(task, instruction, sql, schema, extra);
             if (followUp) messages.Add(request.Last()); else messages.AddRange(request);
             prepared?.Invoke(messages, (names == null ? "No connection" : names.Value.Server + " · " + names.Value.Database) + " | " + scope + " | Schema: " + tableCount + " tables");
-            progress("Waiting for " + ai.Model + "...");
-            return await AiReplyAsync(messages, conversation, cancellation, deltas);
+            progress("Waiting for " + provider.Model + "...");
+            return await AiReplyAsync(messages, conversation, cancellation, deltas, thoughts, provider);
         }
 
-        internal async Task<string> AiReplyAsync(IReadOnlyList<AiMessage> messages, List<AiMessage> conversation, CancellationToken cancellation, IProgress<string> deltas)
+        internal async Task<AiReply> AiReplyAsync(IReadOnlyList<AiMessage> messages, List<AiMessage> conversation, CancellationToken cancellation, IProgress<string> deltas, IProgress<string> thoughts = null,
+            (AiApiFormat Format, string BaseUrl, string Model, AiReasoningLevel Reasoning, string ExtraRequestJson)? request = null)
         {
             var ai = aiOptions;
-            string reply = await AiClient.AskAsync(ai.ApiFormat, ai.BaseUrl, ai.Model, messages, cancellation, progress: deltas);
+            var provider = request ?? (ai.ApiFormat, ai.BaseUrl, ai.Model, ai.Reasoning, ai.ExtraRequestJson);
+            var reply = await AiClient.ReplyAsync(provider.Item1, provider.BaseUrl, provider.Model, messages, cancellation, progress: deltas, reasoning: provider.Reasoning, extraJson: provider.ExtraRequestJson, thoughts: thoughts);
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellation);
             conversation.Clear(); conversation.AddRange(messages);
-            conversation.Add(new AiMessage("assistant", reply));
+            conversation.Add(new AiMessage("assistant", reply.Text));
             return reply;
         }
 
@@ -180,8 +184,67 @@ namespace Querywright.Ssms
             else if (view.Selection.IsEmpty) span = new SnapshotSpan(snapshot, 0, snapshot.Length);
             else span = new SnapshotSpan(view.Selection.Start.Position, view.Selection.End.Position);
             sql = sql.Replace("\r\n", "\n").Replace("\n", NewlineOf(snapshot.GetText()));
-            if (replace && !await ShowDialogAsync(new AiReplaceDialog(span.GetText(), sql))) return;
+            if (replace)
+            {
+                var diff = await GetServiceAsync(typeof(SVsDifferenceService)) as IVsDifferenceService;
+                var shell = await GetServiceAsync(typeof(SVsUIShell)) as IVsUIShell;
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (diff == null || shell == null) throw new InvalidOperationException("SSMS comparison window service unavailable.");
+                ErrorHandler.ThrowOnFailure(shell.GetDialogOwnerHwnd(out var owner));
+                string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Querywright"), stamp = Guid.NewGuid().ToString("N");
+                string leftFile = System.IO.Path.Combine(folder, "AI-" + stamp + "-current.sql"), rightFile = System.IO.Path.Combine(folder, "AI-" + stamp + "-replacement.sql");
+                IVsWindowFrame frame = null;
+                IVsWindowFrame2 events = null;
+                uint cookie = 0;
+                var dialog = new AiReplaceDialog();
+                var choice = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                EventHandler cancel = (s, e) => choice.TrySetResult(false);
+                try
+                {
+                    System.IO.Directory.CreateDirectory(folder);
+                    System.IO.File.WriteAllText(leftFile, span.GetText()); System.IO.File.WriteAllText(rightFile, sql);
+                    frame = diff.OpenComparisonWindow2(leftFile, rightFile, "Querywright: AI replacement", null,
+                        "Current text", "AI replacement", null, null,
+                        (uint)(__VSDIFFSERVICEOPTIONS.VSDIFFOPT_LeftFileIsTemporary | __VSDIFFSERVICEOPTIONS.VSDIFFOPT_RightFileIsTemporary));
+                    if (frame == null || !(frame is IVsWindowFrame2)) throw new InvalidOperationException("Could not open the AI comparison window.");
+                    events = (IVsWindowFrame2)frame;
+                    ErrorHandler.ThrowOnFailure(events.Advise(new AiReplaceFrameEvents(() => choice.TrySetResult(false)), out cookie));
+                    ErrorHandler.ThrowOnFailure(frame.Show());
+                    new System.Windows.Interop.WindowInteropHelper(dialog).Owner = owner;
+                    dialog.Closed += (s, e) => choice.TrySetResult(dialog.Apply);
+                    view.Closed += cancel;
+                    using (DisposalToken.Register(() => choice.TrySetResult(false)))
+                    {
+                        dialog.Show();
+                        if (!await choice.Task) return;
+                    }
+                }
+                finally
+                {
+                    await JoinableTaskFactory.SwitchToMainThreadAsync();
+                    view.Closed -= cancel;
+                    try { if (cookie != 0) events.Unadvise(cookie); }
+                    catch (System.Runtime.InteropServices.COMException) { }
+                    dialog.Close();
+                    try { frame?.CloseFrame((uint)__FRAMECLOSE.FRAMECLOSE_NoSave); }
+                    catch (System.Runtime.InteropServices.COMException) { }
+                    foreach (string file in new[] { leftFile, rightFile })
+                        try { System.IO.File.Delete(file); }
+                        catch (Exception error) when (error is System.IO.IOException || error is UnauthorizedAccessException) { }
+                }
+                await JoinableTaskFactory.SwitchToMainThreadAsync();
+            }
             ReplaceText(view, span, sql, sql.Length, 0, 0, replace ? "AI replace" : "AI insert");
+        }
+
+        private sealed class AiReplaceFrameEvents : IVsWindowFrameNotify
+        {
+            private readonly Action cancel;
+            internal AiReplaceFrameEvents(Action cancel) => this.cancel = cancel;
+            public int OnShow(int reason) { if (reason == (int)__FRAMESHOW.FRAMESHOW_WinClosed) cancel(); return VSConstants.S_OK; }
+            public int OnMove() => VSConstants.S_OK;
+            public int OnSize() => VSConstants.S_OK;
+            public int OnDockableChange(int dockable) => VSConstants.S_OK;
         }
 
         /// <summary>Opens AI SQL in a new query window on the same connection and, when asked, executes it there.</summary>

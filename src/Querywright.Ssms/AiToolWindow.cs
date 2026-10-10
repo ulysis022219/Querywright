@@ -45,6 +45,13 @@ namespace Querywright.Ssms
         private readonly Button send, stop, fresh;
         private readonly TextBlock context = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.8, FontSize = 12 };
         private readonly Button scope, regenerate, editLast;
+        private readonly ComboBox model = new ComboBox { IsEditable = true, IsTextSearchEnabled = false, MinWidth = 180, Width = 240, Margin = new Thickness(4), ToolTip = "Choose a provider model or type its identifier. Opening the list contacts the provider for model metadata only." };
+        private readonly ComboBox reasoning = new ComboBox { Width = 90, Margin = new Thickness(4), ItemsSource = new[] { "Off", "Low", "Med", "High" }, SelectedIndex = 0, ToolTip = "Requested reasoning effort. Off omits reasoning fields; provider defaults may still reason." };
+        private readonly Button refreshModels;
+        private string providerIdentity, optionModel;
+        private AiReasoningLevel optionReasoning;
+        private bool syncingProvider;
+        private CancellationTokenSource modelDiscovery;
         private readonly CheckBox schema = new CheckBox { Content = "Include schema", IsChecked = true, Margin = new Thickness(4), ToolTip = "Include table definitions with the next message. Earlier conversation context is still sent." };
         private bool wholeScript, editing;
         private string lastPrompt, lastContext;
@@ -87,6 +94,26 @@ namespace Querywright.Ssms
             header.Children.Add(new TextBlock { Text = "Querywright AI", FontSize = 16, FontWeight = FontWeights.SemiBold });
             var navigation = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
             navigation.Children.Add(fresh); navigation.Children.Add(regenerate); navigation.Children.Add(editLast); header.Children.Add(navigation);
+            var providers = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+            providers.Children.Add(new TextBlock { Text = "Model", VerticalAlignment = VerticalAlignment.Center }); providers.Children.Add(model);
+            refreshModels = Button("Refresh models", "Reload provider model metadata. Sends no SQL or prompt.", () => LoadModels(true)); providers.Children.Add(refreshModels);
+            providers.Children.Add(new TextBlock { Text = "Reasoning", VerticalAlignment = VerticalAlignment.Center }); providers.Children.Add(reasoning); header.Children.Add(providers);
+            foreach (var picker in new[] { model, reasoning })
+            {
+                picker.SetResourceReference(Control.BackgroundProperty, EnvironmentColors.ComboBoxBackgroundBrushKey);
+                picker.SetResourceReference(Control.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
+                picker.SetResourceReference(Control.BorderBrushProperty, EnvironmentColors.ToolWindowBorderBrushKey);
+                picker.Loaded += (s, e) => ThemePicker(picker);
+            }
+            var itemStyle = new Style(typeof(ComboBoxItem), TryFindResource(typeof(ComboBoxItem)) as Style);
+            itemStyle.Setters.Add(new Setter(Control.ForegroundProperty, new DynamicResourceExtension(EnvironmentColors.ToolWindowTextBrushKey)));
+            itemStyle.Setters.Add(new Setter(Control.BackgroundProperty, new DynamicResourceExtension(EnvironmentColors.ComboBoxBackgroundBrushKey)));
+            Resources[typeof(ComboBoxItem)] = itemStyle;
+            AutomationProperties.SetName(model, "AI model. Choose or type model identifier."); AutomationProperties.SetName(reasoning, "Requested reasoning effort");
+            model.DropDownOpened += (s, e) => LoadModels(false);
+            model.SelectionChanged += (s, e) => { if (!syncingProvider && model.SelectedItem is string choice) { model.Text = choice; SaveProvider(); } };
+            model.LostKeyboardFocus += (s, e) => { if (!syncingProvider) SaveProvider(); };
+            reasoning.SelectionChanged += (s, e) => { if (!syncingProvider) SaveProvider(); };
             Dock(header, System.Windows.Controls.Dock.Top);
 
             var composer = new StackPanel();
@@ -96,9 +123,9 @@ namespace Querywright.Ssms
             composer.Children.Add(contextActions);
             schema.Click += (s, e) => RefreshContext();
             var contextTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            contextTimer.Tick += (s, e) => { if (running == null) RefreshContext(); };
-            Loaded += (s, e) => { RefreshContext(); contextTimer.Start(); };
-            Unloaded += (s, e) => { contextTimer.Stop(); running?.Cancel(); };
+            contextTimer.Tick += (s, e) => { if (running == null) { SyncProvider(); RefreshContext(); } };
+            Loaded += (s, e) => { SyncProvider(); RefreshContext(); contextTimer.Start(); };
+            Unloaded += (s, e) => { contextTimer.Stop(); running?.Cancel(); modelDiscovery?.Cancel(); };
             var quick = new WrapPanel { Margin = new Thickness(0, 6, 0, 6) };
             foreach (var mode in Modes)
             {
@@ -123,10 +150,87 @@ namespace Querywright.Ssms
                 if (e.Key == Key.Enter && (Keyboard.Modifiers == ModifierKeys.None || Keyboard.Modifiers == ModifierKeys.Control)) { e.Handled = true; Send(null); }
                 else if (e.Key == Key.Up && prompt.Text.Length == 0 && prompts.Count > 0) { e.Handled = true; prompt.Text = prompts[0]; prompt.CaretIndex = prompt.Text.Length; }
             };
-            LoadHistory(); Welcome();
+            LoadHistory(); SyncProvider(); Welcome();
+        }
+
+        private void SyncProvider()
+        {
+            var ai = WorkbenchPackage.Instance?.Ai;
+            if (ai == null || running != null || model.IsKeyboardFocusWithin) return;
+            string identity = ai.ApiFormat + ":" + AiModels.Key(ai.BaseUrl);
+            syncingProvider = true;
+            try
+            {
+                if (providerIdentity != identity)
+                {
+                    modelDiscovery?.Cancel(); providerIdentity = identity;
+                    model.Text = AiModels.Selected(ai.BaseUrl) ?? ai.Model;
+                    model.ItemsSource = AiModels.Recent(ai.BaseUrl).Concat(new[] { model.Text }).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToArray();
+                    ai.Model = optionModel = model.Text;
+                }
+                else if (optionModel != ai.Model) model.Text = optionModel = ai.Model;
+                if (optionReasoning != ai.Reasoning) reasoning.SelectedIndex = (int)(optionReasoning = ai.Reasoning);
+            }
+            finally { syncingProvider = false; }
+        }
+        private bool SaveProvider()
+        {
+            var ai = WorkbenchPackage.Instance?.Ai;
+            if (ai == null || running != null) return ai != null;
+            try
+            {
+                string choice = model.Text.Trim();
+                if (choice.Length == 0 || choice.Length > 1024 || choice.Any(char.IsControl)) throw new InvalidOperationException("Choose or type a valid model identifier.");
+                var effort = (AiReasoningLevel)Math.Max(0, reasoning.SelectedIndex);
+                if (ai.Model != choice || ai.Reasoning != effort || AiModels.Selected(ai.BaseUrl) != choice)
+                {
+                    AiModels.Remember(ai.BaseUrl, choice); ai.Model = optionModel = choice; ai.Reasoning = optionReasoning = effort; ai.SaveSettingsToStorage();
+                }
+                return true;
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { status.Text = "Could not save model choice: " + Problem(error); return false; }
+        }
+        private void LoadModels(bool refresh)
+        {
+            var ai = WorkbenchPackage.Instance?.Ai;
+            if (ai == null || running != null || modelDiscovery != null) return;
+            string url = ai.BaseUrl, identity = providerIdentity; var format = ai.ApiFormat;
+            var cancellation = modelDiscovery = new CancellationTokenSource(); refreshModels.IsEnabled = false;
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                try
+                {
+                    var choices = await AiClient.ModelsAsync(format, url, cancellation.Token, refresh);
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    if (identity != providerIdentity || running != null) return;
+                    string typed = model.Text; syncingProvider = true;
+                    try { model.ItemsSource = AiModels.Recent(url).Concat(choices).Concat(new[] { typed }).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToArray(); model.Text = typed; }
+                    finally { syncingProvider = false; }
+                    status.Text = choices.Count + " provider models loaded. Type a model if yours is absent.";
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(); status.Text = Problem(error); }
+                finally { await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(); modelDiscovery = null; cancellation.Dispose(); refreshModels.IsEnabled = running == null; }
+            });
         }
 
         private void Dock(UIElement element, Dock side) { SetDock(element, side); Children.Add(element); }
+        private static void ThemePicker(ComboBox picker)
+        {
+            picker.ApplyTemplate(); Paint(picker);
+            void Paint(DependencyObject node)
+            {
+                // Native WPF combo templates paint their own surfaces, including the editable textbox.
+                if (node is Border border) border.SetResourceReference(Border.BackgroundProperty, EnvironmentColors.ComboBoxBackgroundBrushKey);
+                if (node is Control control)
+                {
+                    control.SetResourceReference(Control.BackgroundProperty, EnvironmentColors.ComboBoxBackgroundBrushKey);
+                    control.SetResourceReference(Control.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
+                }
+                if (node is System.Windows.Shapes.Path path) path.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, EnvironmentColors.ToolWindowTextBrushKey);
+                for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Paint(VisualTreeHelper.GetChild(node, i));
+            }
+        }
         private void StyleButtons(Type type)
         {
             var border = new FrameworkElementFactory(typeof(Border));
@@ -309,6 +413,9 @@ namespace Querywright.Ssms
         {
             if (running != null) return;
             if (retry && lastRequest == null) return;
+            SyncProvider();
+            if (!SaveProvider()) return;
+            string usedModel = model.Text; var usedReasoning = (AiReasoningLevel)Math.Max(0, reasoning.SelectedIndex);
             var task = retry ? lastTask : forced ?? selected ?? (conversation.Count == 0 ? AiTask.Generate : AiTask.Chat);
             string instruction = retry ? lastPrompt : prompt.Text.Trim();
             if ((task == AiTask.Generate || task == AiTask.Chat || task == AiTask.Edit) && instruction.Length == 0) { status.Text = "Type a prompt first."; prompt.Focus(); return; }
@@ -328,46 +435,77 @@ namespace Querywright.Ssms
                 body = lastBody = Message("Assistant", "Thinking…");
                 lastRequest = null; lastPrompt = instruction; lastTask = task;
             }
-            var deltas = new DeltaBuffer();
+            modelDiscovery?.Cancel();
+            var deltas = new DeltaBuffer(); var thoughts = new DeltaBuffer();
             var live = new Paragraph { Margin = new Thickness(0) };
             var liveBox = Readable(new FlowDocument(live));
+            var thoughtParagraph = new Paragraph { Margin = new Thickness(0) };
+            var thoughtBox = Readable(new FlowDocument(thoughtParagraph)); thoughtBox.MaxHeight = 300;
+            var thoughtHeader = new TextBlock { Text = "Reasoning" }; thoughtHeader.SetResourceReference(TextBlock.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
+            var thoughtView = new Expander { Header = thoughtHeader, Content = thoughtBox, IsExpanded = false, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 0, 8) };
+            thoughtView.SetResourceReference(Control.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
+            AutomationProperties.SetName(thoughtView, "Provider reasoning. Read-only, separate from answer.");
+            var reasoningClock = System.Diagnostics.Stopwatch.StartNew();
             bool started = false;
+            void StartLive()
+            {
+                if (started) return;
+                body.Children.Clear(); body.Children.Add(thoughtView); body.Children.Add(liveBox); started = true;
+            }
             void Flush()
             {
+                string thought = thoughts.Take();
+                if (thought.Length > 0)
+                {
+                    StartLive(); thoughtView.Visibility = Visibility.Visible;
+                    thoughtParagraph.Inlines.Add(new Run(thought));
+                }
+                if (thoughtView.Visibility == Visibility.Visible) thoughtHeader.Text = "Reasoning · " + reasoningClock.Elapsed.TotalSeconds.ToString("0.0") + "s";
                 string delta = deltas.Take();
-                if (delta.Length == 0) return;
-                if (!started) { body.Children.Clear(); body.Children.Add(liveBox); started = true; }
-                live.Inlines.Add(new Run(delta)); KeepBottom();
+                if (delta.Length > 0)
+                {
+                    StartLive(); reasoningClock.Stop(); live.Inlines.Add(new Run(delta));
+                }
+                if (thought.Length > 0 || delta.Length > 0) KeepBottom();
             }
             // ponytail: append plain text during streaming, format once on completion to avoid markdown/control churn.
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
             timer.Tick += (s, e) => Flush(); timer.Start();
             send.IsEnabled = fresh.IsEnabled = prompt.IsEnabled = false; stop.IsEnabled = true;
             scope.IsEnabled = schema.IsEnabled = regenerate.IsEnabled = editLast.IsEnabled = false;
+            model.IsEnabled = reasoning.IsEnabled = refreshModels.IsEnabled = false;
             foreach (var chip in chips) chip.IsEnabled = false;
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 try
                 {
-                    string reply = retry
-                        ? await WorkbenchPackage.Instance.AiReplyAsync(lastRequest, conversation, cancellation.Token, deltas)
+                    AiReply reply = retry
+                        ? await WorkbenchPackage.Instance.AiReplyAsync(lastRequest, conversation, cancellation.Token, deltas, thoughts)
                         : await WorkbenchPackage.Instance.AiAskAsync(task, instruction, conversation, text => status.Text = text, cancellation.Token, deltas, wholeScript, schema.IsChecked == true,
-                            (messages, description) => { lastRequest = messages.ToList(); context.Text = lastContext = description; });
+                            (messages, description) => { lastRequest = messages.ToList(); context.Text = lastContext = description; }, thoughts);
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    timer.Stop();
-                    Finish(body, reply); status.Text = "Done. Review SQL before using it.";
+                    timer.Stop(); Flush(); reasoningClock.Stop();
+                    Finish(body, reply.Text); AddReasoning(body, reply.Reasoning, reasoningClock.Elapsed.TotalSeconds);
+                    var details = new List<string> { usedModel, "Reasoning: " + usedReasoning };
+                    if (reply.ReasoningUnsupported) details.Add("reasoning not supported by this model");
+                    if (reply.InputTokens.HasValue) details.Add("In: " + reply.InputTokens);
+                    if (reply.OutputTokens.HasValue) details.Add("Out: " + reply.OutputTokens);
+                    if (reply.ReasoningTokens.HasValue) details.Add("Reasoning tokens: " + reply.ReasoningTokens);
+                    status.Text = string.Join(" | ", details) + ". Review SQL before using it.";
                     if (instruction.Length > 0) Remember(instruction);
                     prompt.Clear(); selected = null; UpdateChips();
                 }
                 catch (OperationCanceledException)
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(); timer.Stop();
-                    Finish(body, deltas.Text); body.Children.Add(new TextBlock { Text = "Stopped — partial answer", FontStyle = FontStyles.Italic }); status.Text = "Stopped.";
+                    reasoningClock.Stop(); Finish(body, deltas.Text); AddReasoning(body, thoughts.Text, reasoningClock.Elapsed.TotalSeconds);
+                    body.Children.Add(new TextBlock { Text = "Stopped — partial answer", FontStyle = FontStyles.Italic }); status.Text = "Stopped.";
                 }
                 catch (Exception error) when (!(error is OutOfMemoryException))
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(); timer.Stop();
-                    Finish(body, deltas.Text); body.Children.Add(new TextBlock { Text = Problem(error), TextWrapping = TextWrapping.Wrap }); status.Text = Problem(error);
+                    reasoningClock.Stop(); Finish(body, deltas.Text); AddReasoning(body, thoughts.Text, reasoningClock.Elapsed.TotalSeconds);
+                    body.Children.Add(new TextBlock { Text = Problem(error), TextWrapping = TextWrapping.Wrap }); status.Text = Problem(error);
                 }
                 finally
                 {
@@ -376,6 +514,7 @@ namespace Querywright.Ssms
                     running = null; cancellation.Dispose();
                     send.IsEnabled = fresh.IsEnabled = prompt.IsEnabled = true; stop.IsEnabled = false;
                     scope.IsEnabled = schema.IsEnabled = true; schema.IsChecked = true;
+                    model.IsEnabled = reasoning.IsEnabled = true; refreshModels.IsEnabled = modelDiscovery == null;
                     regenerate.IsEnabled = editLast.IsEnabled = lastRequest != null;
                     foreach (var chip in chips) chip.IsEnabled = true;
                     prompt.Focus();
@@ -388,6 +527,18 @@ namespace Querywright.Ssms
             Render(body, reply);
             if (reply.Length > 0) body.Children.Add(Button("Copy answer", "Copy the whole answer as Markdown", () => { Clipboard.SetText(reply); status.Text = "Answer copied."; }));
             KeepBottom();
+        }
+
+        private void AddReasoning(StackPanel body, string text, double seconds)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            var document = new FlowDocument(new Paragraph(new Run(text)) { Margin = new Thickness(0) });
+            var content = Readable(document); content.MaxHeight = 300;
+            var header = new TextBlock { Text = "Reasoning · " + seconds.ToString("0.0") + "s" }; header.SetResourceReference(TextBlock.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
+            var expander = new Expander { Header = header, Content = content, IsExpanded = false, Margin = new Thickness(0, 0, 0, 8) };
+            expander.SetResourceReference(Control.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
+            AutomationProperties.SetName(expander, "Provider reasoning. Read-only, separate from answer.");
+            body.Children.Insert(0, expander);
         }
 
         private static string Problem(Exception error)

@@ -147,11 +147,23 @@ $info = Dialog 'ObjectInfoWindow' @('dbo.Customer', 'CREATE TABLE dbo.Customer (
 try { Layout $info 'object-info' } finally { $info.Close() }
 $columns = Dialog 'ColumnPickerDialog' @([string[]]@('Customer_Id', 'Name', 'Status'), $true)
 try { Layout $columns 'columns' } finally { $columns.Close() }
-$replace = Dialog 'AiReplaceDialog' @('SELECT 1;', 'SELECT 2;')
+$replace = Dialog 'AiReplaceDialog' @()
 try {
-    $boxes = @(Nodes $replace.Content | Where-Object { $_ -is [Windows.Controls.TextBox] })
-    Check ($boxes.Count -eq 2 -and $boxes[0].IsReadOnly -and $boxes[1].IsReadOnly -and $boxes[0].Text -eq 'SELECT 1;' -and $boxes[1].Text -eq 'SELECT 2;') 'AI replacement must show current and proposed text read-only'
+    Check (@(Nodes $replace.Content | Where-Object { $_ -is [Windows.Controls.TextBox] }).Count -eq 0) 'Native comparison tab must own the replacement preview'
+    Check (@(Nodes $replace.Content | Where-Object { $_ -is [Windows.Controls.TextBlock] -and $_.Text -like '*comparison tab*' }).Count -eq 1) 'Replacement controls must point to the native comparison tab'
     Check (@(Nodes $replace.Content | Where-Object { $_ -is [Windows.Controls.Button] -and $_.IsCancel -and $_.IsDefault }).Count -eq 1) 'AI replacement must default to Cancel'
+    Check (!$replace.ShowActivated -and !$replace.ShowInTaskbar) 'Replacement controls must leave native comparison usable'
+    $applied = $replace.GetType().GetProperty('Apply', [Reflection.BindingFlags]'Instance,NonPublic')
+    Check (!$applied.GetValue($replace)) 'Closing replacement controls must default to no edit'
     Layout $replace 'ai-replace'
+    $cancel = Nodes $replace.Content | Where-Object { $_ -is [Windows.Controls.Button] -and $_.IsCancel }
+    $cancel.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    Check (!$applied.GetValue($replace)) 'Cancel must close modeless replacement controls without applying'
+} finally { $replace.Close() }
+$replace = Dialog 'AiReplaceDialog' @()
+try {
+    $apply = Nodes $replace.Content | Where-Object { $_ -is [Windows.Controls.Button] -and $_.Content -eq '_Apply' }
+    $apply.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    Check ($applied.GetValue($replace)) 'Apply must record acceptance before closing modeless replacement controls'
 } finally { $replace.Close() }
 Write-Host "Dialog checks passed at $Scale%: filtering, hidden selections, validation, history rows, AI replacement, empty actions, scaled button layouts."

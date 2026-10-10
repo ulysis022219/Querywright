@@ -147,4 +147,11 @@ $info = Dialog 'ObjectInfoWindow' @('dbo.Customer', 'CREATE TABLE dbo.Customer (
 try { Layout $info 'object-info' } finally { $info.Close() }
 $columns = Dialog 'ColumnPickerDialog' @([string[]]@('Customer_Id', 'Name', 'Status'), $true)
 try { Layout $columns 'columns' } finally { $columns.Close() }
-Write-Host "Dialog checks passed at $Scale%: filtering, hidden selections, validation, history rows, empty actions, scaled button layouts."
+$replace = Dialog 'AiReplaceDialog' @('SELECT 1;', 'SELECT 2;')
+try {
+    $boxes = @(Nodes $replace.Content | Where-Object { $_ -is [Windows.Controls.TextBox] })
+    Check ($boxes.Count -eq 2 -and $boxes[0].IsReadOnly -and $boxes[1].IsReadOnly -and $boxes[0].Text -eq 'SELECT 1;' -and $boxes[1].Text -eq 'SELECT 2;') 'AI replacement must show current and proposed text read-only'
+    Check (@(Nodes $replace.Content | Where-Object { $_ -is [Windows.Controls.Button] -and $_.IsCancel -and $_.IsDefault }).Count -eq 1) 'AI replacement must default to Cancel'
+    Layout $replace 'ai-replace'
+} finally { $replace.Close() }
+Write-Host "Dialog checks passed at $Scale%: filtering, hidden selections, validation, history rows, AI replacement, empty actions, scaled button layouts."

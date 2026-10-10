@@ -67,13 +67,13 @@ namespace Querywright.Ssms
         });
 
         /// <summary>Selected text of the last active query window, else its whole text; empty when no query window is open.</summary>
-        internal string AiEditorText(bool selectionOnly = false)
+        internal string AiEditorText(bool selectionOnly = false, bool wholeScript = false)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             IWpfTextView view;
             try { view = GetSqlView(mustHaveFocus: false); }
             catch (Exception error) when (error is InvalidOperationException || error is System.Runtime.InteropServices.COMException) { return ""; }
-            if (!view.Selection.IsEmpty) return string.Concat(view.Selection.SelectedSpans.Select(s => s.GetText()));
+            if (!wholeScript && !view.Selection.IsEmpty) return string.Concat(view.Selection.SelectedSpans.Select(s => s.GetText()));
             return selectionOnly ? "" : view.TextSnapshot.GetText();
         }
 
@@ -106,62 +106,73 @@ namespace Querywright.Ssms
 
         internal static string AiScript(LiveMetadata.ObjectDetails details, string schema, string name) => ScriptOf(details, details.Schema ?? schema, name);
 
+        internal (string Where, string Scope, int Tables) AiContextPreview(string instruction, bool wholeScript, bool includeSchema)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var names = LiveMetadata.CaptureNames();
+            string sql = AiEditorText(wholeScript: wholeScript);
+            AiAssist.SchemaContext(includeSchema ? CurrentTables() : null, instruction + "\n" + sql, out int count, aiOptions.MaxSchemaTables);
+            return (names == null ? "No connection" : names.Value.Server + " · " + names.Value.Database,
+                !wholeScript && AiEditorText(true).Length > 0 ? "Selection (" + (sql.Count(c => c == '\n') + 1) + " lines)" : "Whole script", count);
+        }
+
         /// <summary>One AI request for the panel. A Chat task continues <paramref name="conversation"/> when it has one; any other
         /// task starts over from the query window. The reply is appended to the conversation and returned.</summary>
-        internal async Task<string> AiAskAsync(AiTask task, string instruction, List<AiMessage> conversation, Action<string> progress, CancellationToken cancellation)
+        internal async Task<string> AiAskAsync(AiTask task, string instruction, List<AiMessage> conversation, Action<string> progress, CancellationToken cancellation,
+            IProgress<string> deltas = null, bool wholeScript = false, bool includeSchema = true, Action<IReadOnlyList<AiMessage>, string> prepared = null)
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellation);
             var ai = aiOptions;
             bool followUp = task == AiTask.Chat && conversation.Count > 0;
-            if (followUp)
+            var messages = followUp ? conversation.ToList() : new List<AiMessage>();
+            string sql = AiEditorText(wholeScript: wholeScript);
+            AiAssist.Messages(task, instruction, sql, null); // validate before any server work
+            var names = LiveMetadata.CaptureNames();
+            string scope = !wholeScript && AiEditorText(true).Length > 0 ? "Selection (" + (sql.Count(c => c == '\n') + 1) + " lines)" : "Whole script";
+            var connection = LiveMetadataEnabled ? AiConnection(required: false) : null;
+            string extra = null;
+            if (task == AiTask.Fix && connection != null)
             {
-                if (string.IsNullOrWhiteSpace(instruction)) throw new InvalidOperationException("Type a question.");
-                conversation.Add(new AiMessage("user", instruction.Trim()));
+                progress("Asking SQL Server for compile errors...");
+                var errors = await Task.Run(() => AiSql.Errors(connection, sql), cancellation);
+                if (errors.Count == 0 && string.IsNullOrWhiteSpace(instruction))
+                    throw new InvalidOperationException("SQL Server reports no compile errors for this script. For an error that only shows when it runs, paste the message into the prompt box and use Fix again.");
+                extra = string.Join("\n", errors);
             }
-            else
+            else if (task == AiTask.Optimize && connection != null)
             {
-                string sql = AiEditorText();
-                AiAssist.Messages(task, instruction, sql, null); // its "select some SQL" / "describe the query" checks, before any server work
-                var connection = LiveMetadataEnabled ? AiConnection(required: false) : null;
-                string extra = null;
-                if (task == AiTask.Fix && connection != null)
-                {
-                    progress("Asking SQL Server for compile errors...");
-                    var errors = await Task.Run(() => AiSql.Errors(connection, sql), cancellation);
-                    if (errors.Count == 0 && string.IsNullOrWhiteSpace(instruction))
-                        throw new InvalidOperationException("SQL Server reports no compile errors for this script. For an error that only shows when it runs, paste the message into the prompt box and use Fix again.");
-                    extra = string.Join("\n", errors);
-                }
-                else if (task == AiTask.Optimize && connection != null)
-                {
-                    progress("Reading the estimated execution plan...");
-                    // No plan (a script that does not compile, no SHOWPLAN permission) still leaves the text to work from.
-                    try { extra = await Task.Run(() => AiSql.Plan(connection, sql), cancellation); }
-                    catch (System.Data.SqlClient.SqlException) { extra = null; }
-                }
-                string schema = null;
-                if (ai.MaxSchemaTables > 0)
-                {
-                    progress("Reading the database schema...");
-                    schema = AiAssist.SchemaContext(await AiTablesAsync(connection), instruction + "\n" + sql, ai.MaxSchemaTables);
-                }
-                conversation.Clear();
-                conversation.AddRange(AiAssist.Messages(task, instruction, sql, schema, extra));
+                progress("Reading the estimated execution plan...");
+                try { extra = await Task.Run(() => AiSql.Plan(connection, sql), cancellation); }
+                catch (System.Data.SqlClient.SqlException) { extra = null; }
             }
+            string schema = null; int tableCount = 0;
+            if (includeSchema && ai.MaxSchemaTables > 0)
+            {
+                progress("Reading the database schema...");
+                schema = AiAssist.SchemaContext(await AiTablesAsync(connection), instruction + "\n" + sql, out tableCount, ai.MaxSchemaTables);
+            }
+            await JoinableTaskFactory.SwitchToMainThreadAsync(cancellation);
+            var request = AiAssist.Messages(task, instruction, sql, schema, extra);
+            if (followUp) messages.Add(request.Last()); else messages.AddRange(request);
+            prepared?.Invoke(messages, (names == null ? "No connection" : names.Value.Server + " · " + names.Value.Database) + " | " + scope + " | Schema: " + tableCount + " tables");
             progress("Waiting for " + ai.Model + "...");
-            try
-            {
-                string reply = await AiClient.AskAsync(ai.ApiFormat, ai.BaseUrl, ai.Model, conversation.ToList(), cancellation);
-                conversation.Add(new AiMessage("assistant", reply));
-                return reply;
-            }
-            catch when (followUp) { conversation.RemoveAt(conversation.Count - 1); throw; }
+            return await AiReplyAsync(messages, conversation, cancellation, deltas);
+        }
+
+        internal async Task<string> AiReplyAsync(IReadOnlyList<AiMessage> messages, List<AiMessage> conversation, CancellationToken cancellation, IProgress<string> deltas)
+        {
+            var ai = aiOptions;
+            string reply = await AiClient.AskAsync(ai.ApiFormat, ai.BaseUrl, ai.Model, messages, cancellation, progress: deltas);
+            await JoinableTaskFactory.SwitchToMainThreadAsync(cancellation);
+            conversation.Clear(); conversation.AddRange(messages);
+            conversation.Add(new AiMessage("assistant", reply));
+            return reply;
         }
 
         /// <summary>Puts AI SQL into the last active query window: over the selection (the whole script when nothing is selected), or at the caret.</summary>
-        internal void AiInsert(string sql, bool replace)
+        internal async Task AiInsertAsync(string sql, bool replace)
         {
-            ThreadHelper.ThrowIfNotOnUIThread();
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
             var view = GetSqlView(mustHaveFocus: false);
             var snapshot = view.TextSnapshot;
             SnapshotSpan span;
@@ -169,6 +180,7 @@ namespace Querywright.Ssms
             else if (view.Selection.IsEmpty) span = new SnapshotSpan(snapshot, 0, snapshot.Length);
             else span = new SnapshotSpan(view.Selection.Start.Position, view.Selection.End.Position);
             sql = sql.Replace("\r\n", "\n").Replace("\n", NewlineOf(snapshot.GetText()));
+            if (replace && !await ShowDialogAsync(new AiReplaceDialog(span.GetText(), sql))) return;
             ReplaceText(view, span, sql, sql.Length, 0, 0, replace ? "AI replace" : "AI insert");
         }
 
@@ -176,7 +188,12 @@ namespace Querywright.Ssms
         internal async Task AiOpenAsync(string sql, bool run)
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            if (run && aiOptions.ConfirmExecution && !ConfirmRun(sql, "Run this AI-written SQL in a new query window?")) return;
+            if (run && aiOptions.ConfirmExecution)
+            {
+                var changes = AiAssist.SqlChanges(sql);
+                string warning = changes.Count == 0 ? "" : "\r\n\r\nPotential data or schema changes: " + string.Join(", ", changes) + ".";
+                if (!ConfirmRun(sql, "Run this AI-written SQL in a new query window?" + warning)) return;
+            }
             await OpenInNewQueryAsync(sql, "AI query");
             if (!run) return;
             var dte = await GetServiceAsync(typeof(SDTE));

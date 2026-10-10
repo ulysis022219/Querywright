@@ -50,9 +50,42 @@ namespace Querywright.Core
             cancellation.ThrowIfCancellationRequested();
             var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql), out var errors);
             if (errors.Count > 0) throw new FormatException("Cannot tokenize SQL for formatting.");
+            // Lines from "-- querywright:format off" through "-- querywright:format on" stay as written.
+            // ponytail: the markers must sit between statements; each formatted part has to parse on its own.
+            var output = new StringBuilder();
+            int offset = 0, kept = -1;
+            foreach (var token in tokens.Where(t => t.TokenType == TSqlTokenType.SingleLineComment))
+            {
+                var marker = RegionMarker.Match(token.Text);
+                if (!marker.Success || marker.Groups[1].Value.Equals("off", StringComparison.OrdinalIgnoreCase) != (kept < 0)) continue;
+                if (kept < 0)
+                {
+                    kept = token.Offset == 0 ? 0 : sql.LastIndexOf('\n', token.Offset - 1) + 1;
+                    if (kept < offset) { kept = -1; continue; }
+                    output.Append(FormatBatches(sql.Substring(offset, kept - offset), tokens, offset, kept, style, cancellation));
+                    if (output.Length > 0 && output[output.Length - 1] != '\n') output.AppendLine();
+                }
+                else
+                {
+                    int newline = sql.IndexOf('\n', token.Offset);
+                    offset = newline < 0 ? sql.Length : newline + 1;
+                    output.Append(sql, kept, offset - kept);
+                    kept = -1;
+                }
+            }
+            if (kept >= 0) output.Append(sql, kept, sql.Length - kept);
+            else output.Append(FormatBatches(sql.Substring(offset), tokens, offset, sql.Length, style, cancellation));
+            return output.ToString();
+        }
+
+        private static readonly Regex RegionMarker = new Regex(@"^--\s*querywright:format\s+(off|on)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        // Formats the part of the script between two offsets; tokens and their offsets belong to the whole script.
+        private static string FormatBatches(string sql, IList<TSqlParserToken> tokens, int from, int to, FormattingStyle? style, CancellationToken cancellation)
+        {
             var output = new StringBuilder();
             int offset = 0;
-            foreach (var token in tokens.Where(t => t.TokenType == TSqlTokenType.Go))
+            foreach (var token in tokens.Where(t => t.TokenType == TSqlTokenType.Go && t.Offset >= from && t.Offset < to).Select(t => new { Offset = t.Offset - from }))
             {
                 // GO repetition belongs to the client, not T-SQL. Preserve separator lines verbatim.
                 // Lexer tokens prevent GO inside strings/comments from splitting batches.

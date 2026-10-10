@@ -106,6 +106,58 @@ namespace Querywright.Core
         public RuleSeverity SW046 { get; set; } = RuleSeverity.Warning;
         [DisplayName("SW047 EXEC of a concatenated string (EXEC('...' + @x))")]
         public RuleSeverity SW047 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW048 != instead of <>")]
+        public RuleSeverity SW048 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW049 Column alias written alias = expression")]
+        public RuleSeverity SW049 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW050 TOP without parentheses")]
+        public RuleSeverity SW050 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW051 Table hint without WITH")]
+        public RuleSeverity SW051 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW052 GROUP BY ALL")]
+        public RuleSeverity SW052 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW053 SETUSER")]
+        public RuleSeverity SW053 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW054 DBCC DBREINDEX / INDEXDEFRAG / SHOWCONTIG")]
+        public RuleSeverity SW054 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW055 SQL_VARIANT")]
+        public RuleSeverity SW055 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW056 SELECT INTO")]
+        public RuleSeverity SW056 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW057 Query hint (OPTION)")]
+        public RuleSeverity SW057 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW058 Join hint")]
+        public RuleSeverity SW058 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW059 SET NOCOUNT OFF")]
+        public RuleSeverity SW059 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW060 SET FORCEPLAN ON")]
+        public RuleSeverity SW060 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW061 Procedure WITH RECOMPILE")]
+        public RuleSeverity SW061 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW062 ORDER BY on INSERT ... SELECT without TOP")]
+        public RuleSeverity SW062 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW063 PRINT in a trigger")]
+        public RuleSeverity SW063 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW064 Trigger returns a result set")]
+        public RuleSeverity SW064 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW065 TODO / FIXME / BUG / HACK comment")]
+        public RuleSeverity SW065 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW066 Cursor never deallocated")]
+        public RuleSeverity SW066 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW067 Schema-qualified column reference in SELECT list")]
+        public RuleSeverity SW067 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW068 DROP INDEX table.index")]
+        public RuleSeverity SW068 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW069 ALL in GRANT / DENY / REVOKE")]
+        public RuleSeverity SW069 { get; set; } = RuleSeverity.Warning;
+        [DisplayName("SW070 IN with a subquery")]
+        public RuleSeverity SW070 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW071 Variable-length type of length 1 or 2")]
+        public RuleSeverity SW071 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW072 Index type not specified")]
+        public RuleSeverity SW072 { get; set; } = RuleSeverity.Info;
+        [DisplayName("SW073 SQL Server 2000 system table")]
+        public RuleSeverity SW073 { get; set; } = RuleSeverity.Warning;
 
         public RuleSeverity Severity(string rule)
         {

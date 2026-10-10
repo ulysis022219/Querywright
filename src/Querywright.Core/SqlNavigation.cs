@@ -264,6 +264,35 @@ namespace Querywright.Core
             return trimmed.Length == 0 ? null : new StatementSpan(start + region.IndexOf(trimmed, StringComparison.Ordinal), trimmed.Length);
         }
 
+        /// <summary>The batch (text between GO separator lines) holding the caret, trimmed of surrounding blank space.</summary>
+        public static StatementSpan? BatchAt(string sql, int position)
+        {
+            if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
+            if (sql.Length > 1_000_000) throw new ArgumentException("Navigation input exceeds 1,000,000 characters.");
+            int start = 0, end = sql.Length;
+            foreach (var (lineStart, lineEnd) in GoLines(sql, new TSql170Parser(true)))
+            {
+                if (lineEnd <= position) start = lineEnd;
+                else { end = lineStart; break; }
+            }
+            return Trimmed(sql, start, end);
+        }
+
+        /// <summary>Everything from the top of the script through the statement holding the caret.</summary>
+        public static StatementSpan? ToCursor(string sql, int position)
+        {
+            var statement = StatementAt(sql, position);
+            return statement == null ? null : Trimmed(sql, 0, statement.Start + statement.Length);
+        }
+
+        private static StatementSpan? Trimmed(string sql, int start, int end)
+        {
+            while (start < end && char.IsWhiteSpace(sql[start])) start++;
+            while (end > start && char.IsWhiteSpace(sql[end - 1])) end--;
+            return end == start ? null : new StatementSpan(start, end - start);
+        }
+
         /// <summary>Statement extent including a trailing semicolon the parser leaves outside (e.g. after a procedure body).</summary>
         internal static (int Start, int Length) Span(TSqlStatement statement)
         {

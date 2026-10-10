@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 namespace Querywright.Core
 {
@@ -107,7 +109,7 @@ namespace Querywright.Core
             return url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase) ? url : url + "/chat/completions";
         }
 
-        public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int maxTokens = 4096, double temperature = 0.1)
+        public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int maxTokens = 4096, double temperature = 0.1, bool stream = false)
         {
             if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Set the AI model name under Tools > Options > Querywright > AI (for example deepseek-chat).");
             var body = new Dictionary<string, object?> { ["model"] = model.Trim() };
@@ -123,8 +125,8 @@ namespace Querywright.Core
             {
                 body["messages"] = messages.Select(Pair).ToList();
                 body["max_tokens"] = maxTokens;
-                body["stream"] = false;
             }
+            body["stream"] = stream;
             body["temperature"] = temperature;
             return MiniJson.Write(body);
         }
@@ -202,7 +204,11 @@ namespace Querywright.Core
         /// (whole or as words of the name), then their foreign-key neighbours. A small catalog is sent whole.</summary>
         // ponytail: name matching, not embeddings; "customers who bought" finds Customer/Customers but not a table named Buyer.
         public static string SchemaContext(IReadOnlyList<SchemaTable>? tables, string? text, int maxTables = 30, int maxChars = 24_000)
+            => SchemaContext(tables, text, out _, maxTables, maxChars);
+
+        public static string SchemaContext(IReadOnlyList<SchemaTable>? tables, string? text, out int tableCount, int maxTables = 30, int maxChars = 24_000)
         {
+            tableCount = 0;
             if (tables == null || tables.Count == 0 || maxTables <= 0) return "";
             var words = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (Match word in Word.Matches(text ?? ""))
@@ -240,7 +246,9 @@ namespace Querywright.Core
                 string line = Line(table);
                 if (lines.Length + line.Length > maxChars) break;
                 lines.Append(line).Append('\n');
+                tableCount++;
             }
+            chosen = chosen.Take(tableCount).ToList();
             if (chosen.Count < tables.Count)
             {
                 // Names only for the rest, so the model can say which table it would need rather than invent one.
@@ -249,6 +257,32 @@ namespace Querywright.Core
                 if (lines.Length + names.Length <= maxChars + 6000) lines.Append(names).Append('\n');
             }
             return lines.ToString().TrimEnd('\n');
+        }
+
+        /// <summary>Conservative run warning from ScriptDom tokens; quoted names, strings and comments cannot trigger it.</summary>
+        public static IReadOnlyList<string> SqlChanges(string sql)
+        {
+            var parser = new TSql170Parser(true);
+            var script = parser.Parse(new StringReader(sql), out var errors);
+            var changes = new List<string>();
+            var words = new HashSet<string>(new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "DROP", "ALTER", "CREATE", "EXEC", "EXECUTE", "GRANT", "REVOKE", "DENY" }, StringComparer.OrdinalIgnoreCase);
+            foreach (var token in script.ScriptTokenStream ?? Array.Empty<TSqlParserToken>())
+            {
+                if (token.TokenType == TSqlTokenType.EndOfFile || token.TokenType == TSqlTokenType.Identifier || token.TokenType == TSqlTokenType.QuotedIdentifier) continue;
+                string word = token.Text.ToUpperInvariant();
+                if (words.Contains(word) && !changes.Contains(word)) changes.Add(word);
+                if (token.TokenType == TSqlTokenType.Into && !changes.Contains("INTO")) changes.Add("INTO");
+            }
+            var execution = new ExecutionWarning(); script.Accept(execution);
+            if (execution.Executes && !changes.Contains("EXEC") && !changes.Contains("EXECUTE")) changes.Add("EXEC");
+            if (errors.Count > 0) changes.Add("Unrecognized SQL (parse errors; effects unknown)");
+            return changes;
+        }
+
+        private sealed class ExecutionWarning : TSqlFragmentVisitor
+        {
+            internal bool Executes;
+            public override void ExplicitVisit(ExecuteStatement node) { Executes = true; }
         }
 
         private static string Key(SchemaTable table) => table.Schema + "." + table.Name;

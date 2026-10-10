@@ -78,6 +78,9 @@ jobs:
           Write-Output "Version $base.$env:GITHUB_RUN_NUMBER"
       - name: Build VSIX
         run: dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj
+      - name: AI HTTP fixture checks
+        shell: powershell
+        run: scripts/Test-AiClient.ps1
       - name: Dialog layout and interaction checks
         shell: powershell
         run: |
@@ -116,6 +119,7 @@ jobs:
         shell: powershell
         run: |
           Get-Process vs_SSMS -ErrorAction SilentlyContinue | Wait-Process
+          scripts/Test-AiPanel.ps1 -Out e2e/ai-panel
           scripts/Test-Ssms.ps1 -Package (Resolve-Path src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.prior.outputs.e2e != 'skip'

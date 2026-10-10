@@ -102,38 +102,75 @@ namespace Querywright.Ssms
 
     internal static class AiClient
     {
-        // ponytail: one shared client, no streaming; the answer appears when the provider has finished it.
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
 
-        internal static async Task<string> AskAsync(AiApiFormat format, string baseUrl, string model, IReadOnlyList<AiMessage> messages, CancellationToken cancellation, int maxTokens = 4096)
+        internal static async Task<string> AskAsync(AiApiFormat format, string baseUrl, string model, IReadOnlyList<AiMessage> messages, CancellationToken cancellation, int maxTokens = 4096, IProgress<string> progress = null)
         {
             bool anthropic = format == AiApiFormat.Anthropic;
             string url = AiAssist.Endpoint(baseUrl, anthropic), key = AiKey.Read();
             if (key.Length == 0 && !new Uri(url).IsLoopback)
                 throw new InvalidOperationException("Enter your AI provider API key under Tools > Options > Querywright > AI.");
-            using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
             {
-                request.Content = new StringContent(AiAssist.RequestBody(model, messages, anthropic, maxTokens), Encoding.UTF8, "application/json");
-                if (anthropic)
+                timeout.CancelAfter(TimeSpan.FromMinutes(5));
+                try
                 {
-                    request.Headers.TryAddWithoutValidation("x-api-key", key);
-                    request.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+                    return await PostAsync(progress != null).ConfigureAwait(false);
                 }
-                else if (key.Length > 0) request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + key);
-                HttpResponseMessage response;
-                try { response = await Http.SendAsync(request, cancellation).ConfigureAwait(false); }
-                catch (HttpRequestException error) { throw new InvalidOperationException("Could not reach the AI provider at " + new Uri(url).Host + ": " + (error.InnerException?.Message ?? error.Message)); }
-                catch (TaskCanceledException) when (!cancellation.IsCancellationRequested) { throw new InvalidOperationException("The AI provider did not answer in time."); }
-                using (response)
+                catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { throw new InvalidOperationException("The AI provider did not answer in time."); }
+                catch (Exception error) when (timeout.IsCancellationRequested && !(error is OutOfMemoryException))
                 {
-                    string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    if (response.IsSuccessStatusCode) return AiAssist.ReplyText(body, anthropic);
-                    // The provider's own error text when it sent one (bad key, unknown model, no credit); never the key.
-                    try { AiAssist.ReplyText(body, anthropic); }
-                    catch (InvalidOperationException error) when (error.Message.StartsWith("AI provider error", StringComparison.Ordinal))
-                    { throw new InvalidOperationException(error.Message + " (HTTP " + (int)response.StatusCode + ")"); }
-                    catch (InvalidOperationException) { }
-                    throw new InvalidOperationException("The AI provider answered HTTP " + (int)response.StatusCode + " " + response.ReasonPhrase + ". Check the base URL, model and API key.");
+                    if (cancellation.IsCancellationRequested) throw new OperationCanceledException(cancellation);
+                    throw new InvalidOperationException("The AI provider did not answer in time.");
+                }
+                catch (HttpRequestException) { throw new InvalidOperationException("Could not reach the AI provider. Check the base URL and connection."); }
+
+                async Task<string> PostAsync(bool streaming)
+                {
+                    using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                    {
+                        request.Content = new StringContent(AiAssist.RequestBody(model, messages, anthropic, maxTokens, stream: streaming), Encoding.UTF8, "application/json");
+                        if (anthropic)
+                        {
+                            request.Headers.TryAddWithoutValidation("x-api-key", key);
+                            request.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+                        }
+                        else if (key.Length > 0) request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + key);
+                        using (var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false))
+                        using (timeout.Token.Register(() => response.Dispose()))
+                        {
+                            if (response.IsSuccessStatusCode && streaming && response.Content.Headers.ContentType?.MediaType == "text/event-stream")
+                            {
+                                var parser = new AiStream(anthropic);
+                                var answer = new StringBuilder();
+                                using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                                using (var reader = new StreamReader(stream, Encoding.UTF8))
+                                using (timeout.Token.Register(() => stream.Dispose()))
+                                {
+                                    while (!parser.Done)
+                                    {
+                                        timeout.Token.ThrowIfCancellationRequested();
+                                        string line = await reader.ReadLineAsync().ConfigureAwait(false);
+                                        string delta = parser.Line(line ?? "");
+                                        if (answer.Length + delta.Length > 2_000_000) throw new InvalidOperationException("The AI answer is too large to display.");
+                                        answer.Append(delta); if (delta.Length > 0) progress.Report(delta);
+                                        if (line == null) { parser.Finish(); break; }
+                                    }
+                                }
+                                timeout.Token.ThrowIfCancellationRequested();
+                                if (string.IsNullOrWhiteSpace(answer.ToString())) throw new InvalidOperationException("The AI provider returned an empty answer.");
+                                return answer.ToString();
+                            }
+                            string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                            timeout.Token.ThrowIfCancellationRequested();
+                            if (streaming && AiStream.Rejected((int)response.StatusCode, body)) return await PostAsync(false).ConfigureAwait(false);
+                            if (!response.IsSuccessStatusCode)
+                                throw new InvalidOperationException("The AI provider answered HTTP " + (int)response.StatusCode + ". Check the base URL, model, API key and account credit.");
+                            // Provider error bodies can echo credentials; report only local diagnostic text.
+                            try { return AiAssist.ReplyText(body, anthropic); }
+                            catch (InvalidOperationException) { throw new InvalidOperationException("The AI provider returned an invalid or empty answer. Check the base URL and model."); }
+                        }
+                    }
                 }
             }
         }

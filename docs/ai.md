@@ -27,17 +27,77 @@ Fix adds SQL Server's compile errors; Optimize adds the estimated plan XML. Tabl
 
 | Command | What it does |
 | --- | --- |
-| AI assistant (Alt+Z) | Dockable panel: write a query, change the selection, explain, fix, optimize, ask follow-ups. Recent prompts are kept in `%LocalAppData%\Querywright\ai-prompts.json`. |
+| AI assistant (Alt+Z) | Dockable chat transcript: write a query, change the selection, explain, fix, optimize, ask follow-ups. Up in an empty prompt recalls the last prompt. Recent prompts are kept in `%LocalAppData%\Querywright\ai-prompts.json`. |
 | AI: explain SQL | Explains the selection or script. |
 | AI: fix errors | Compiles each GO batch with `SET NOEXEC ON` (nothing runs) and asks for a corrected script. |
 | AI: optimize query | Reads the estimated plan with `SET SHOWPLAN_XML ON` (nothing runs) and asks for a faster rewrite. |
 | AI: complete at caret | Inserts the model's continuation at the caret. Ctrl+Z removes it. |
 | Copy MCP configuration | Copies the client configuration, including the access token. |
 
-The panel's answer can be inserted at the caret, put over the selection, opened in a new query window, run there, or copied.
+## Chat panel
 
-Limits: completion is a command, not grey text while you type; answers arrive whole, not streamed; Fix sees compile
+The panel uses a Codex-style layout: a scrolling transcript, user cards, spacious assistant replies and a rounded
+composer at the bottom. Colors follow the SSMS light, dark or blue theme. Prose uses the normal UI font; SQL uses
+Consolas with ScriptDom keyword, string and comment coloring. Markdown headings, lists, bold, italic, inline code,
+fenced code and simple tables are rendered as text only; HTML, links and images are never loaded or opened.
+
+Each SQL block has its own Copy, Insert, Replace, New window and Run actions. Earlier replies remain visible;
+scrolling up suspends automatic scrolling until you return to the bottom. Explain, Fix, Optimize, Change selection
+and Write query chips choose the next task. Without a chip, the first prompt writes a query and subsequent prompts
+follow up. A chip starts fresh model context while earlier messages remain visible. New conversation clears both.
+Enter or Ctrl+Enter sends; Shift+Enter inserts a newline. The prompt grows to six lines. Example prompts only fill
+the composer; they do not send anything.
+
+Answers stream as text, refreshed at most about 20 times a second; completed and stopped replies receive Markdown
+formatting. Stop cancels the network request and leaves a clearly marked partial answer. A broken stream keeps its
+partial text and reports failure. Explicit provider rejection of streaming retries once without streaming; providers
+that return ordinary JSON also work. Failed requests do not add a turn to model history. Stopped partial answers
+stay visible; they are not sent back as completed assistant turns.
+
+The context bar shows server/database, Selection (line count) or Whole script, and the number of schema definitions.
+Before Send, the count is a cached preview; while sending, it shows the actual count. Click scope to toggle editor
+selection versus whole script. Uncheck Include schema to omit new schema context for one message; it resets after
+the request. Previously sent schema remains in follow-up history: use New conversation to discard that history.
+Fix and Optimize additionally send compile errors or estimated plan XML. No query results are collected or sent.
+
+Replace opens a read-only side-by-side preview with Apply and Cancel; Cancel is the default. If the editor changes
+while the preview is open, Apply refuses the stale edit. Run still goes through the existing confirmation option;
+its confirmation flags ScriptDom-detected data/schema writes, execution, SELECT INTO and unrecognized SQL.
+
+Regenerate retries the last request with its original SQL/schema context. Edit last prompt fills the composer;
+Send replaces that prompt/reply using current editor context. Copy answer copies the entire Markdown response.
+Transcripts remain in memory only; full conversation storage, slash templates, model switching, token usage, actual
+plans and Messages-pane capture are deferred. Inline ghost completion is outside this round; it needs editor
+adornments, cancellation and a separate acceptance/undo path. The existing completion command remains available.
+
+Limits: completion is a command, not grey text while you type; Fix sees compile
 errors only (a missing table or a runtime error is not found by `NOEXEC`).
+
+## Not yet run in SSMS
+
+Automated Core checks cover markdown, token coloring, SSE framing, schema counts and SQL warnings. Local HTTP
+fixtures cover both stream formats, fallback, errors, truncation and cancellation without contacting a provider.
+Offscreen panel/dialog checks cover per-block actions, theme resource changes and 100/125/150/200% layout. Run:
+
+```powershell
+dotnet run --project tests/Querywright.Checks
+dotnet build src/Querywright.Ssms
+powershell -NoProfile -File scripts/Test-AiClient.ps1
+powershell -NoProfile -STA -File scripts/Test-AiPanel.ps1 -Out artifacts/ai-panel
+100,125,150,200 | ForEach-Object { powershell -NoProfile -STA -File scripts/Test-Dialogs.ps1 -Scale $_ }
+powershell -NoProfile -File scripts/Test-Package.ps1
+```
+
+`Test-AiPanel.ps1` loads SDK assemblies from an installed SSMS 22 without starting SSMS; its screenshots use fixture
+theme dictionaries, not a claim of hands-on host validation. Hands-on panel checks still required:
+
+- SSMS 22 light and dark themes at 100% and 150% scaling; docked and floating; keyboard navigation and long SQL.
+- Send multiple prompts; scroll up during a reply; recall a prompt with Up; send with Enter/Ctrl+Enter and add a line with Shift+Enter.
+- Multiple SQL blocks: each action must use its own block. Run with confirmation on and off against a disposable database.
+- DeepSeek/OpenAI-compatible and Anthropic-format streaming; Stop mid-answer; non-streaming provider fallback; interrupted connection.
+- Selection/whole-script toggle, schema off for one message, schema count after loading, changed active connection.
+- Replace Apply/Cancel; edit the original buffer during preview and confirm stale Apply is refused.
+- Regenerate preserves original context; edit/resend replaces only the last exchange; Copy answer preserves Markdown.
 
 ## MCP server
 

@@ -26,7 +26,7 @@ namespace Querywright.Ssms
     [ProvideAutoLoad(VSConstants.UICONTEXT.ShellInitialized_string, PackageAutoLoadFlags.BackgroundLoad)]
     [ProvideOptionPage(typeof(WorkbenchOptions), "Querywright", "General", 0, 0, true)]
     [Guid("a13c1b0c-af94-4f53-8d06-edf816e39450")]
-    public sealed class WorkbenchPackage : AsyncPackage
+    public sealed partial class WorkbenchPackage : AsyncPackage
     {
         private IComponentModel components;
         private IVsTextManager textManager;
@@ -238,6 +238,7 @@ namespace Querywright.Ssms
             SnippetList();
             OfflineSchemaNow();
             Instance = this;
+            InitializeAi(Add);
             ServerColorMenu.Start();
             PriorityCommands.Start(this);
             ActivityLog.TryLogInformation("Querywright", "Package initialized");
@@ -1616,6 +1617,7 @@ namespace Querywright.Ssms
             {
                 if (Instance == this) Instance = null;
                 analysisCancellation?.Cancel();
+                StopAi();
                 errorList?.Dispose();
             }
             base.Dispose(disposing);

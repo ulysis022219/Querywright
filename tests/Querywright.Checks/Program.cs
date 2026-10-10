@@ -1405,4 +1405,52 @@ Check(Names(Sug("SELECT p.| FROM dbo.People p", new CompletionOptions { ColumnsA
 Check(Names(Sug("SELECT o.pi| FROM dbo.Orders o")).Contains("PersonId") && Names(Sug("SELECT o.otal| FROM dbo.Orders o")).Contains("Total"), "word-start and substring matches listed");
 var ranked = Names(Sug("SELECT o.t| FROM dbo.Orders o"));
 Check(ranked[0].StartsWith("Total") && Array.IndexOf(ranked, "Total") < Array.IndexOf(ranked, "PersonId") || !ranked.Contains("PersonId"), "prefix matches before others");
-Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes, object refactors, stress, fuzz, the schema cache, text tools, rules SW048-SW073 and suggestions. SSMS integration not tested.");
+// AI assistant: JSON, prompt building, provider wire formats, MCP protocol. No network or SSMS involved.
+var jsonValue = MiniJson.Parse("{\"a\":[1,2.5,\"x\\n\\t\",true,null],\"b\":{\"c\":\"d\"}}");
+Check(MiniJson.Text(MiniJson.Get(jsonValue, "b"), "c") == "d" && MiniJson.Get(jsonValue, "a") is List<object?> jsonList && jsonList.Count == 5 && (double)jsonList[1]! == 2.5 && (string)jsonList[2]! == "x\n\t", "json parse");
+Check(MiniJson.Write(MiniJson.Parse(MiniJson.Write(jsonValue))) == MiniJson.Write(jsonValue) && MiniJson.Write(new Dictionary<string, object?> { ["q"] = "a\"b\\c\n" }) == "{\"q\":\"a\\\"b\\\\c\\n\"}", "json round trip and escaping");
+Throws<FormatException>(() => MiniJson.Parse("{\"a\":"), "json syntax error");
+Throws<InvalidOperationException>(() => AiAssist.Messages(AiTask.Generate, " ", "SELECT 1", null), "generate needs a prompt");
+Throws<InvalidOperationException>(() => AiAssist.Messages(AiTask.Explain, null, "  ", null), "explain needs SQL");
+var aiMessages = AiAssist.Messages(AiTask.Fix, null, "SELEC 1", "CREATE TABLE dbo.People (Id int)", "Line 1, Msg 102: Incorrect syntax");
+Check(aiMessages[0].Role == "system" && aiMessages.Last().Role == "user" && aiMessages.Last().Content.Contains("SELEC 1") && aiMessages.Last().Content.Contains("Msg 102") && aiMessages.Any(m => m.Content.Contains("dbo.People")), "fix prompt carries script, errors and schema");
+Check(AiAssist.Endpoint("https://api.deepseek.com/", false) == "https://api.deepseek.com/chat/completions" && AiAssist.Endpoint("https://api.openai.com/v1", false) == "https://api.openai.com/v1/chat/completions"
+    && AiAssist.Endpoint("https://api.anthropic.com", true) == "https://api.anthropic.com/v1/messages" && AiAssist.Endpoint("http://localhost:11434/v1/chat/completions", false) == "http://localhost:11434/v1/chat/completions", "provider endpoints");
+Throws<InvalidOperationException>(() => AiAssist.Endpoint("api.deepseek.com", false), "endpoint needs a scheme");
+var openAiBody = MiniJson.Parse(AiAssist.RequestBody("deepseek-chat", aiMessages, false));
+Check(MiniJson.Text(openAiBody, "model") == "deepseek-chat" && MiniJson.Get(openAiBody, "messages") is List<object?> sentMessages && sentMessages.Count == aiMessages.Count && MiniJson.Text(sentMessages[0], "role") == "system", "OpenAI-compatible request");
+var anthropicBody = MiniJson.Parse(AiAssist.RequestBody("some-model", aiMessages, true));
+Check(MiniJson.Get(anthropicBody, "system") is string && MiniJson.Get(anthropicBody, "messages") is List<object?> anthropicMessages && anthropicMessages.All(m => MiniJson.Text(m, "role") != "system") && MiniJson.Get(anthropicBody, "max_tokens") is double, "Anthropic request keeps system apart");
+Check(AiAssist.ReplyText("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}", false) == "hi" && AiAssist.ReplyText("{\"content\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"text\",\"text\":\"b\"}]}", true) == "ab", "provider replies");
+Throws<InvalidOperationException>(() => AiAssist.ReplyText("{\"error\":{\"message\":\"bad key\"}}", false), "provider error surfaces");
+Throws<InvalidOperationException>(() => AiAssist.ReplyText("<html>", false), "non-JSON reply");
+Check(AiAssist.ExtractSql("Here:\n```sql\nSELECT 1;\n```\nand\n```text\nnote\n```") == "SELECT 1;" && AiAssist.ExtractSql("```\nSELECT 2;\n```") == "SELECT 2;" && AiAssist.ExtractSql("no code") == null, "SQL taken from code blocks");
+Check(AiAssist.CompletionText("```sql\nWHERE Id = 1<CURSOR>\n```") == "WHERE Id = 1" && AiAssist.CompletionWindow("SELECT  FROM t", 7) == "SELECT <CURSOR> FROM t", "completion window and text");
+var aiBatches = AiAssist.Batches("SELECT 1;\nGO\n\nSELECT 2;\ngo 3 -- again\nSELECT 3;");
+Check(aiBatches.Count == 3 && aiBatches[0].Line == 1 && aiBatches[1].Text.Contains("SELECT 2") && aiBatches[2].Text.Contains("SELECT 3") && aiBatches[1].Line == 2 && aiBatches[2].Line == 5 && AiAssist.Batches(" \nGO\n").Count == 0, "GO batches with line numbers");
+var aiCatalog = Enumerable.Range(0, 50).Select(i => new SchemaTable("dbo", "T" + i, "Id", "Value")).Append(new SchemaTable("sales", "Invoices", "InvoiceId", "Total")).ToArray();
+string aiSchema = AiAssist.SchemaContext(aiCatalog, "total of invoices per month", 5);
+Check(aiSchema.Contains("sales.Invoices") && aiSchema.Contains("InvoiceId") && aiSchema.IndexOf("dbo.T40") > aiSchema.IndexOf("Other objects") && aiSchema.IndexOf("Other objects") > 0
+    && AiAssist.SchemaContext(aiCatalog, "x", 30, 200).IndexOf("Other objects") <= 201, "schema context details mentioned tables, names the rest and is capped");
+var mcpServer = new McpProtocol("test", "1.0", new[]
+{
+    new McpTool("echo", "Echo", a => "got " + McpProtocol.Argument(a, "text") + " x" + McpProtocol.Argument(a, "times", 1), true, ("text", "Text"), ("times#?", "Count")),
+    new McpTool("refuse", "Fails", a => throw new InvalidOperationException("declined"), false),
+});
+object? Mcp(string request) => MiniJson.Parse(mcpServer.Handle(request)!);
+var mcpStart = Mcp("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\"}}");
+Check(MiniJson.Text(MiniJson.Get(mcpStart, "result"), "protocolVersion") == "2025-03-26" && MiniJson.Text(MiniJson.Get(MiniJson.Get(mcpStart, "result"), "serverInfo"), "name") == "test" && (double)MiniJson.Get(mcpStart, "id")! == 1, "MCP initialize");
+Check(mcpServer.Handle("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}") == null, "MCP notification gets no reply");
+var mcpList = (List<object?>)MiniJson.Get(MiniJson.Get(Mcp("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"), "result"), "tools")!;
+var echoSchema = MiniJson.Get(mcpList[0], "inputSchema");
+Check(mcpList.Count == 2 && MiniJson.Text(mcpList[0], "name") == "echo" && MiniJson.Text(MiniJson.Get(MiniJson.Get(echoSchema, "properties"), "times"), "type") == "integer"
+    && MiniJson.Write(MiniJson.Get(echoSchema, "required")) == "[\"text\"]" && MiniJson.Get(MiniJson.Get(mcpList[1], "annotations"), "readOnlyHint") is false, "MCP tool list and schemas");
+object? McpCall(string name, string arguments) => MiniJson.Get(Mcp("{\"jsonrpc\":\"2.0\",\"id\":\"c\",\"method\":\"tools/call\",\"params\":{\"name\":\"" + name + "\",\"arguments\":" + arguments + "}}"), "result");
+string? McpText(object? result) => MiniJson.Text(((List<object?>)MiniJson.Get(result, "content")!)[0], "text");
+Check(McpText(McpCall("echo", "{\"text\":\"hi\",\"times\":3}")) == "got hi x3" && MiniJson.Get(McpCall("echo", "{\"text\":\"hi\"}"), "isError") is false, "MCP tool call");
+Check(McpText(McpCall("echo", "{}")) == "Missing argument: text" && MiniJson.Get(McpCall("echo", "{}"), "isError") is true, "MCP missing argument is a tool error");
+Check(McpText(McpCall("refuse", "{}")) == "declined" && MiniJson.Get(McpCall("refuse", "{}"), "isError") is true, "MCP handler refusal is a tool error");
+Check((double)MiniJson.Get(MiniJson.Get(Mcp("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"nope\"}}"), "error"), "code")! == -32602
+    && (double)MiniJson.Get(MiniJson.Get(Mcp("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"resources/list\"}"), "error"), "code")! == -32601
+    && (double)MiniJson.Get(MiniJson.Get(Mcp("not json"), "error"), "code")! == -32700, "MCP protocol errors");
+Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes, object refactors, stress, fuzz, the schema cache, text tools, rules SW048-SW073, suggestions and the AI/MCP protocol layer. SSMS integration not tested.");

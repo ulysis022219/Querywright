@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 namespace Querywright.Core
 {
@@ -107,9 +109,13 @@ namespace Querywright.Core
             return url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase) ? url : url + "/chat/completions";
         }
 
-        public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int maxTokens = 4096, double temperature = 0.1)
+        public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int maxTokens = 4096, double? temperature = 0.1, bool stream = false,
+            AiReasoningLevel reasoning = AiReasoningLevel.Off, string? extraRequestJson = null, string? baseUrl = null)
         {
-            if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Set the AI model name under Tools > Options > Querywright > AI (for example deepseek-chat).");
+            if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Set the AI model name under Tools > Options > Querywright > AI.");
+            if (maxTokens <= 0) throw new ArgumentOutOfRangeException(nameof(maxTokens));
+            if (temperature.HasValue && (double.IsNaN(temperature.Value) || double.IsInfinity(temperature.Value) || temperature.Value < 0 || temperature.Value > 2))
+                throw new ArgumentOutOfRangeException(nameof(temperature));
             var body = new Dictionary<string, object?> { ["model"] = model.Trim() };
             if (anthropic)
             {
@@ -123,9 +129,24 @@ namespace Querywright.Core
             {
                 body["messages"] = messages.Select(Pair).ToList();
                 body["max_tokens"] = maxTokens;
-                body["stream"] = false;
             }
-            body["temperature"] = temperature;
+            body["stream"] = stream;
+            if (temperature.HasValue) body["temperature"] = temperature.Value;
+            foreach (var option in AiProvider.RequestOptions(anthropic, model, reasoning, maxTokens, baseUrl)) body[option.Key] = option.Value;
+            if (body.ContainsKey("max_completion_tokens")) body.Remove("max_tokens");
+            if (stream && !anthropic && (AiProvider.Host(baseUrl, "api.openai.com") || AiProvider.Host(baseUrl, "api.deepseek.com")))
+                body["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true };
+            AiProvider.MergeExtra(body, extraRequestJson, reasoning);
+            if (reasoning != AiReasoningLevel.Off || AiProvider.Host(baseUrl, anthropic ? "api.anthropic.com" : "api.openai.com")) body.Remove("temperature");
+            if (body.TryGetValue("temperature", out var sentTemperature) && sentTemperature == null) body.Remove("temperature");
+            if (!stream) body.Remove("stream_options");
+            if (anthropic && MiniJson.Text(MiniJson.Get(body, "thinking"), "type") == "enabled")
+            {
+                int? budget = AiProvider.TokenCount(MiniJson.Get(body, "thinking"), "budget_tokens");
+                if (!budget.HasValue || budget.Value < 1024) throw new InvalidOperationException("Anthropic thinking budget_tokens must be an integer of at least 1024.");
+                int cap = AiProvider.TokenCount(body, "max_tokens") ?? maxTokens;
+                if (cap <= budget.Value) body["max_tokens"] = checked(budget.Value + maxTokens);
+            }
             return MiniJson.Write(body);
         }
 
@@ -148,7 +169,7 @@ namespace Querywright.Core
                 var first = (MiniJson.Get(root, "choices") as List<object?>)?.FirstOrDefault();
                 var content = MiniJson.Get(MiniJson.Get(first, "message"), "content");
                 // Some gateways return content as a list of parts.
-                text = content as string ?? (content is List<object?> list ? string.Concat(list.Select(p => MiniJson.Text(p, "text"))) : null);
+                text = content as string ?? (content is List<object?> list ? string.Concat(list.Where(p => MiniJson.Text(p, "type") == null || MiniJson.Text(p, "type") == "text").Select(p => MiniJson.Text(p, "text"))) : null);
             }
             if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("The AI provider returned an empty answer.");
             return text!.Trim();
@@ -202,7 +223,11 @@ namespace Querywright.Core
         /// (whole or as words of the name), then their foreign-key neighbours. A small catalog is sent whole.</summary>
         // ponytail: name matching, not embeddings; "customers who bought" finds Customer/Customers but not a table named Buyer.
         public static string SchemaContext(IReadOnlyList<SchemaTable>? tables, string? text, int maxTables = 30, int maxChars = 24_000)
+            => SchemaContext(tables, text, out _, maxTables, maxChars);
+
+        public static string SchemaContext(IReadOnlyList<SchemaTable>? tables, string? text, out int tableCount, int maxTables = 30, int maxChars = 24_000)
         {
+            tableCount = 0;
             if (tables == null || tables.Count == 0 || maxTables <= 0) return "";
             var words = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (Match word in Word.Matches(text ?? ""))
@@ -240,7 +265,9 @@ namespace Querywright.Core
                 string line = Line(table);
                 if (lines.Length + line.Length > maxChars) break;
                 lines.Append(line).Append('\n');
+                tableCount++;
             }
+            chosen = chosen.Take(tableCount).ToList();
             if (chosen.Count < tables.Count)
             {
                 // Names only for the rest, so the model can say which table it would need rather than invent one.
@@ -249,6 +276,32 @@ namespace Querywright.Core
                 if (lines.Length + names.Length <= maxChars + 6000) lines.Append(names).Append('\n');
             }
             return lines.ToString().TrimEnd('\n');
+        }
+
+        /// <summary>Conservative run warning from ScriptDom tokens; quoted names, strings and comments cannot trigger it.</summary>
+        public static IReadOnlyList<string> SqlChanges(string sql)
+        {
+            var parser = new TSql170Parser(true);
+            var script = parser.Parse(new StringReader(sql), out var errors);
+            var changes = new List<string>();
+            var words = new HashSet<string>(new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "DROP", "ALTER", "CREATE", "EXEC", "EXECUTE", "GRANT", "REVOKE", "DENY" }, StringComparer.OrdinalIgnoreCase);
+            foreach (var token in script.ScriptTokenStream ?? Array.Empty<TSqlParserToken>())
+            {
+                if (token.TokenType == TSqlTokenType.EndOfFile || token.TokenType == TSqlTokenType.Identifier || token.TokenType == TSqlTokenType.QuotedIdentifier) continue;
+                string word = token.Text.ToUpperInvariant();
+                if (words.Contains(word) && !changes.Contains(word)) changes.Add(word);
+                if (token.TokenType == TSqlTokenType.Into && !changes.Contains("INTO")) changes.Add("INTO");
+            }
+            var execution = new ExecutionWarning(); script.Accept(execution);
+            if (execution.Executes && !changes.Contains("EXEC") && !changes.Contains("EXECUTE")) changes.Add("EXEC");
+            if (errors.Count > 0) changes.Add("Unrecognized SQL (parse errors; effects unknown)");
+            return changes;
+        }
+
+        private sealed class ExecutionWarning : TSqlFragmentVisitor
+        {
+            internal bool Executes;
+            public override void ExplicitVisit(ExecuteStatement node) { Executes = true; }
         }
 
         private static string Key(SchemaTable table) => table.Schema + "." + table.Name;

@@ -1489,3 +1489,104 @@ Check(schemaSent == 1 && cappedSchemaSent == 0, "schema preview counts definitio
 var allAiWrites = AiAssist.SqlChanges("INSERT dbo.t (Id) VALUES (1); UPDATE dbo.t SET Id=2; DELETE FROM dbo.t; MERGE dbo.t AS t USING (SELECT 1 AS Id) AS s ON t.Id=s.Id WHEN MATCHED THEN UPDATE SET Id=s.Id; TRUNCATE TABLE dbo.t; DROP TABLE dbo.t; ALTER TABLE dbo.t ADD Value int; CREATE TABLE dbo.x (Id int); EXEC dbo.p;");
 Check(new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "DROP", "ALTER", "CREATE", "EXEC" }.All(allAiWrites.Contains), "AI run warning covers every requested write operation");
 Console.WriteLine($"PASS: {checks} total checks including AI markdown, streaming and SQL safety. SSMS integration not tested.");
+
+// Provider metadata and reasoning remain separate from answer text; fixtures use fictional model IDs.
+Check(AiProvider.Models("""{"data":[{"id":"fixture-fast"},{"id":"fixture-think"},{"id":"fixture-fast"},{"id":" "},{"id":3}]}""")
+    .SequenceEqual(new[] { "fixture-fast", "fixture-think" }), "model list preserves provider IDs and removes duplicates and invalid IDs");
+Check(AiProvider.ModelsNext("""{"data":[],"has_more":true,"last_id":"fixture-next"}""") == "fixture-next"
+    && AiProvider.ModelsNext("""{"data":[],"has_more":false,"last_id":"fixture-last"}""") == null, "model-list pagination follows has_more and last_id");
+Throws<InvalidOperationException>(() => AiProvider.Models("""{"error":{"message":"not supported"}}"""), "model-list failure keeps manual entry path");
+Throws<InvalidOperationException>(() => AiProvider.ModelsNext("""{"has_more":true}"""), "model-list pagination refuses missing cursor");
+
+var reasonOffBody = MiniJson.Parse(AiAssist.RequestBody("fixture-fast", aiMessages, false));
+Check(MiniJson.Get(reasonOffBody, "reasoning_effort") == null && MiniJson.Get(reasonOffBody, "thinking") == null, "reasoning Off sends no reasoning fields");
+foreach (var level in new[] { AiReasoningLevel.Low, AiReasoningLevel.Medium, AiReasoningLevel.High })
+{
+    var effortBody = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, false, reasoning: level));
+    Check(MiniJson.Text(effortBody, "reasoning_effort") == level.ToString().ToLowerInvariant() && MiniJson.Get(effortBody, "temperature") == null,
+        "OpenAI-compatible effort mapping and omitted temperature " + level);
+    var budgetBody = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, true, reasoning: level));
+    double budget = (double)MiniJson.Get(MiniJson.Get(budgetBody, "thinking"), "budget_tokens")!;
+    Check(MiniJson.Text(MiniJson.Get(budgetBody, "thinking"), "type") == "enabled" && budget >= 1024 && (double)MiniJson.Get(budgetBody, "max_tokens")! > budget
+        && MiniJson.Get(budgetBody, "temperature") == null, "Anthropic manual budget fits output cap " + level);
+}
+var documentedOpenAiBody = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, false, stream: true, reasoning: AiReasoningLevel.High, baseUrl: "https://api.openai.com/v1"));
+Check(MiniJson.Get(documentedOpenAiBody, "max_tokens") == null && (double)MiniJson.Get(documentedOpenAiBody, "max_completion_tokens")! == 4096
+    && MiniJson.Get(MiniJson.Get(documentedOpenAiBody, "stream_options"), "include_usage") is true, "official OpenAI token cap and streaming usage options");
+var deepSeekThinkingBody = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, false, reasoning: AiReasoningLevel.Medium, baseUrl: "https://api.deepseek.com/v1"));
+Check(MiniJson.Text(MiniJson.Get(deepSeekThinkingBody, "thinking"), "type") == "enabled" && MiniJson.Text(deepSeekThinkingBody, "reasoning_effort") == "high"
+    && MiniJson.Get(deepSeekThinkingBody, "max_tokens") is double, "documented DeepSeek thinking switch and medium-to-high effort mapping");
+Check(MiniJson.Get(MiniJson.Parse(AiAssist.RequestBody("fixture-fast", aiMessages, true, baseUrl: "https://api.anthropic.com")), "temperature") == null
+    && MiniJson.Get(MiniJson.Parse(AiAssist.RequestBody("fixture-fast", aiMessages, false, temperature: null)), "temperature") == null,
+    "official Anthropic and explicit null omit temperature");
+var extraBody = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, false, reasoning: AiReasoningLevel.Low,
+    extraRequestJson: """{"reasoning_effort":"high","temperature":null,"max_tokens":5000,"vendor_option":true}"""));
+Check(MiniJson.Text(extraBody, "reasoning_effort") == "high" && MiniJson.Get(extraBody, "temperature") == null
+    && (double)MiniJson.Get(extraBody, "max_tokens")! == 5000 && MiniJson.Get(extraBody, "vendor_option") is true, "custom options override mapped fields safely");
+string extraThinking = """{"thinking":{"type":"enabled","budget_tokens":1024},"reasoning_effort":"high","vendor":{"enable_thinking":true},"output_config":{"effort":"high","format":"json"},"max_tokens":5000}""";
+string extraOff = AiAssist.RequestBody("fixture-fast", aiMessages, false, extraRequestJson: extraThinking);
+Check(!extraOff.Contains("thinking") && !extraOff.Contains("reasoning") && !extraOff.Contains("effort") && extraOff.Contains("\"format\":\"json\"")
+    && (double)MiniJson.Get(MiniJson.Parse(extraOff), "max_tokens")! == 5000 && !AiProvider.WithoutReasoningJson(extraThinking)!.Contains("thinking"),
+    "Off and fallback strip nested reasoning options and keep other custom fields");
+var raisedBudgetBody = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, true, reasoning: AiReasoningLevel.Low,
+    extraRequestJson: """{"thinking":{"type":"enabled","budget_tokens":6000},"max_tokens":1000}"""));
+Check((double)MiniJson.Get(raisedBudgetBody, "max_tokens")! > 6000, "custom Anthropic budget raises too-small output cap");
+var adaptiveBody = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, true, reasoning: AiReasoningLevel.High,
+    extraRequestJson: """{"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}"""));
+Check(MiniJson.Text(MiniJson.Get(adaptiveBody, "thinking"), "type") == "adaptive" && MiniJson.Get(MiniJson.Get(adaptiveBody, "thinking"), "budget_tokens") == null,
+    "extra JSON supports adaptive provider options without model guessing");
+foreach (string protectedField in new[] { "messages", "system", "model", "stream", "API_KEY", "authorization", "headers" })
+    Throws<InvalidOperationException>(() => AiAssist.RequestBody("fixture-fast", aiMessages, false, extraRequestJson: "{\"" + protectedField + "\":\"fixture\"}"), "protected extra field " + protectedField);
+foreach (string invalidExtra in new[] { "[]", "{broken}", "{\"max_tokens\":0}", "{\"max_tokens\":1.5}", "{\"temperature\":\"high\"}", "{\"temperature\":1e999}", "{\"thinking\":\"on\"}", "{\"reasoning_effort\":true}", "{\"vendor\":{\"api_key\":\"fixture\"}}", new string(' ', 16_384) + "{}" })
+    Throws<InvalidOperationException>(() => AiAssist.RequestBody("fixture-fast", aiMessages, false, extraRequestJson: invalidExtra), "invalid or unsafe extra JSON");
+Throws<InvalidOperationException>(() => AiAssist.RequestBody("fixture-think", aiMessages, true, reasoning: AiReasoningLevel.Low,
+    extraRequestJson: """{"thinking":{"type":"enabled","budget_tokens":100}}"""), "Anthropic budget minimum enforced after custom merge");
+Throws<ArgumentOutOfRangeException>(() => AiAssist.RequestBody("fixture-fast", aiMessages, false, maxTokens: 0), "request token limit must be positive");
+Throws<ArgumentOutOfRangeException>(() => AiAssist.RequestBody("fixture-fast", aiMessages, false, reasoning: (AiReasoningLevel)99), "reasoning level must be recognized");
+
+var reasoningReply = AiProvider.Reply("""{"choices":[{"message":{"content":"```sql\nSELECT 1;\n```","reasoning_content":"```sql\nDELETE dbo.Hidden;\n```"}}],"usage":{"prompt_tokens":11,"completion_tokens":7,"completion_tokens_details":{"reasoning_tokens":3}}}""", false);
+Check(AiAssist.ExtractSql(reasoningReply.Text) == "SELECT 1;" && reasoningReply.Reasoning.Contains("DELETE dbo.Hidden") && !reasoningReply.Text.Contains("DELETE")
+    && reasoningReply.InputTokens == 11 && reasoningReply.OutputTokens == 7 && reasoningReply.ReasoningTokens == 3, "OpenAI-compatible reasoning and usage stay separate from runnable SQL");
+var anthropicReasoningReply = AiProvider.Reply("""{"content":[{"type":"thinking","thinking":"private plan","signature":"fixture-signature"},{"type":"redacted_thinking","data":"fixture-hidden"},{"type":"text","text":"answer"}],"usage":{"input_tokens":12,"output_tokens":9,"output_tokens_details":{"thinking_tokens":4}}}""", true);
+Check(anthropicReasoningReply.Text == "answer" && anthropicReasoningReply.Reasoning == "private plan" && anthropicReasoningReply.InputTokens == 12
+    && anthropicReasoningReply.OutputTokens == 9 && anthropicReasoningReply.ReasoningTokens == 4 && !anthropicReasoningReply.Reasoning.Contains("signature"), "Anthropic thinking blocks and token breakdown exclude signatures and redacted content");
+var unknownUsageReply = AiProvider.Reply("""{"choices":[{"message":{"content":"answer"}}],"usage":{"prompt_tokens":-1,"completion_tokens":2.5,"completion_tokens_details":{"reasoning_tokens":"3"}}}""", false);
+Check(unknownUsageReply.InputTokens == null && unknownUsageReply.OutputTokens == null && unknownUsageReply.ReasoningTokens == null
+    && AiProvider.Reply("""{"content":[{"type":"text","text":"answer"}]}""", true).InputTokens == null, "missing or malformed usage remains unknown");
+Check(AiAssist.ReplyText("""{"choices":[{"message":{"content":[{"type":"thinking","text":"hidden"},{"type":"text","text":"answer"}]}}]}""", false) == "answer", "content-part thinking cannot enter answer text");
+
+var reasoningStream = new AiStream(false);
+Check(StreamEvent(reasoningStream, """data: {"choices":[{"index":0,"delta":{"reasoning_content":"private plan"}}]}""") == "" && reasoningStream.ReasoningDelta == "private plan",
+    "OpenAI-compatible reasoning delta does not become answer delta");
+Check(reasoningStream.Line(": keepalive") == "" && reasoningStream.ReasoningDelta == "", "reasoning delta resets on every line");
+Check(StreamEvent(reasoningStream, """data: {"choices":[{"index":0,"delta":{"content":"answer","reasoning_content":"more thought"}}]}""") == "answer"
+    && reasoningStream.ReasoningDelta == "more thought", "simultaneous answer and reasoning deltas remain separate");
+Check(StreamEvent(reasoningStream, """data: {"choices":[],"usage":{"prompt_tokens":21,"completion_tokens":13,"completion_tokens_details":{"reasoning_tokens":8}}}""") == ""
+    && reasoningStream.InputTokens == 21 && reasoningStream.OutputTokens == 13 && reasoningStream.ReasoningTokens == 8, "usage-only stream chunk retained without answer text");
+Check(StreamEvent(reasoningStream, "data: [DONE]") == "" && reasoningStream.Done && reasoningStream.InputTokens == 21, "stream completion retains usage");
+var thinkingStream = new AiStream(true);
+Check(StreamEvent(thinkingStream, """data: {"type":"message_start","message":{"usage":{"input_tokens":31,"output_tokens":1}}}""") == "" && thinkingStream.InputTokens == 31,
+    "Anthropic message_start records initial usage");
+Check(StreamEvent(thinkingStream, """data: {"type":"content_block_start","content_block":{"type":"thinking","thinking":"start "}}""") == "" && thinkingStream.ReasoningDelta == "start "
+    && StreamEvent(thinkingStream, """data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"thought"}}""") == "" && thinkingStream.ReasoningDelta == "thought", "Anthropic thinking starts and deltas remain separate");
+Check(StreamEvent(thinkingStream, """data: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"fixture-signature"}}""") == "" && thinkingStream.ReasoningDelta == "", "thinking signatures are never displayed");
+Check(StreamEvent(thinkingStream, """data: {"type":"message_delta","usage":{"output_tokens":19,"output_tokens_details":{"thinking_tokens":10}}}""") == ""
+    && thinkingStream.InputTokens == 31 && thinkingStream.OutputTokens == 19 && thinkingStream.ReasoningTokens == 10, "Anthropic cumulative final usage preserves initial input count");
+
+string requestedReasoning = AiAssist.RequestBody("fixture-think", aiMessages, false, reasoning: AiReasoningLevel.High);
+Check(AiProvider.ReasoningRejected(400, """{"error":{"message":"reasoning_effort is not supported"}}""", false, requestedReasoning)
+    && !AiProvider.ReasoningRejected(400, """{"error":{"message":"reasoning_effort is not supported"}}""", false, AiAssist.RequestBody("fixture-fast", aiMessages, false)), "reasoning retry requires field actually sent");
+Check(!AiProvider.ReasoningRejected(401, """{"error":"reasoning_effort unsupported"}""", false, requestedReasoning)
+    && !AiProvider.ReasoningRejected(400, """{"error":"invalid API key for reasoning_effort"}""", false, requestedReasoning)
+    && !AiProvider.ReasoningRejected(400, """{"error":"insufficient credit for reasoning_effort"}""", false, requestedReasoning)
+    && !AiProvider.ReasoningRejected(400, """{"error":"invalid model"}""", false, requestedReasoning), "reasoning fallback excludes auth credit and unrelated errors");
+string requestedThinking = AiAssist.RequestBody("fixture-think", aiMessages, true, reasoning: AiReasoningLevel.Low);
+Check(AiProvider.ReasoningRejected(400, """{"error":{"message":"thinking.type.enabled is not supported"}}""", true, requestedThinking)
+    && AiProvider.ReasoningRejected(400, """{"error":{"message":"unknown parameter","param":"budget_tokens"}}""", true, requestedThinking)
+    && !AiProvider.ReasoningRejected(400, """{"error":"invalid type"}""", true, requestedThinking), "Anthropic retry names thinking or budget field rather than generic nested type");
+Console.WriteLine($"PASS: {checks} total checks including provider models, reasoning and usage. SSMS integration not tested.");
+
+Check(!AiStream.Rejected(400, "{\"error\":{\"message\":\"stream not supported; credit exhausted\"}}"), "stream fallback must not retry billing failures");
+Check(!AiStream.Rejected(400, "{\"error\":{\"message\":\"stream not supported; invalid api_key\"}}"), "stream fallback must not retry credential failures");
+Check(!AiAssist.RequestBody("fixture-model", aiMessages, false, baseUrl: "https://api.openai.com/v1").Contains("\"temperature\""), "official OpenAI omits temperature even when effort is omitted");
+Console.WriteLine($"PASS: {checks} total checks including provider fallback and default reasoning compatibility. SSMS integration not tested.");

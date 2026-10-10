@@ -109,9 +109,13 @@ namespace Querywright.Core
             return url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase) ? url : url + "/chat/completions";
         }
 
-        public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int maxTokens = 4096, double temperature = 0.1, bool stream = false)
+        public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int maxTokens = 4096, double? temperature = 0.1, bool stream = false,
+            AiReasoningLevel reasoning = AiReasoningLevel.Off, string? extraRequestJson = null, string? baseUrl = null)
         {
-            if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Set the AI model name under Tools > Options > Querywright > AI (for example deepseek-chat).");
+            if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Set the AI model name under Tools > Options > Querywright > AI.");
+            if (maxTokens <= 0) throw new ArgumentOutOfRangeException(nameof(maxTokens));
+            if (temperature.HasValue && (double.IsNaN(temperature.Value) || double.IsInfinity(temperature.Value) || temperature.Value < 0 || temperature.Value > 2))
+                throw new ArgumentOutOfRangeException(nameof(temperature));
             var body = new Dictionary<string, object?> { ["model"] = model.Trim() };
             if (anthropic)
             {
@@ -127,7 +131,22 @@ namespace Querywright.Core
                 body["max_tokens"] = maxTokens;
             }
             body["stream"] = stream;
-            body["temperature"] = temperature;
+            if (temperature.HasValue) body["temperature"] = temperature.Value;
+            foreach (var option in AiProvider.RequestOptions(anthropic, model, reasoning, maxTokens, baseUrl)) body[option.Key] = option.Value;
+            if (body.ContainsKey("max_completion_tokens")) body.Remove("max_tokens");
+            if (stream && !anthropic && (AiProvider.Host(baseUrl, "api.openai.com") || AiProvider.Host(baseUrl, "api.deepseek.com")))
+                body["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true };
+            AiProvider.MergeExtra(body, extraRequestJson, reasoning);
+            if (reasoning != AiReasoningLevel.Off || AiProvider.Host(baseUrl, anthropic ? "api.anthropic.com" : "api.openai.com")) body.Remove("temperature");
+            if (body.TryGetValue("temperature", out var sentTemperature) && sentTemperature == null) body.Remove("temperature");
+            if (!stream) body.Remove("stream_options");
+            if (anthropic && MiniJson.Text(MiniJson.Get(body, "thinking"), "type") == "enabled")
+            {
+                int? budget = AiProvider.TokenCount(MiniJson.Get(body, "thinking"), "budget_tokens");
+                if (!budget.HasValue || budget.Value < 1024) throw new InvalidOperationException("Anthropic thinking budget_tokens must be an integer of at least 1024.");
+                int cap = AiProvider.TokenCount(body, "max_tokens") ?? maxTokens;
+                if (cap <= budget.Value) body["max_tokens"] = checked(budget.Value + maxTokens);
+            }
             return MiniJson.Write(body);
         }
 
@@ -150,7 +169,7 @@ namespace Querywright.Core
                 var first = (MiniJson.Get(root, "choices") as List<object?>)?.FirstOrDefault();
                 var content = MiniJson.Get(MiniJson.Get(first, "message"), "content");
                 // Some gateways return content as a list of parts.
-                text = content as string ?? (content is List<object?> list ? string.Concat(list.Select(p => MiniJson.Text(p, "text"))) : null);
+                text = content as string ?? (content is List<object?> list ? string.Concat(list.Where(p => MiniJson.Text(p, "type") == null || MiniJson.Text(p, "type") == "text").Select(p => MiniJson.Text(p, "text"))) : null);
             }
             if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("The AI provider returned an empty answer.");
             return text!.Trim();

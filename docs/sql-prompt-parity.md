@@ -2,7 +2,7 @@
 
 Researched September 28, 2026 from public sources (Redgate's own docs site was not reachable from
 the build environment; entries marked *unconfirmed* need checking against a live SQL Prompt).
-AI features are out of scope. Status: done (core checked), host (wired, unverified in SSMS), missing.
+AI features (assistant panel, fix, optimize, completion, MCP server) use a provider of your choice and are described in [ai.md](ai.md); host-wired, unverified in SSMS. Status: done (core checked), host (wired, unverified in SSMS), missing.
 
 ## 1. Editor behavior (what makes it feel like SQL Prompt)
 
@@ -10,7 +10,11 @@ AI features are out of scope. Status: done (core checked), host (wired, unverifi
 |---|---|---|---|
 | Suggestions as you type | Popup on every identifier, keyword, after `.`/space | host (live connection metadata or offline schema; keywords, functions, variables, CTEs, aliases, snippets) | — |
 | Ctrl+Space / refresh suggestions | Show list; Ctrl+Shift+D refreshes metadata | host (Ctrl+Space is the editor's own; Ctrl+Shift+D bound) | — |
-| JOIN ON suggestions | Proposes join conditions from foreign keys | host (FKs from live metadata or offline DDL) | — |
+| JOIN ON suggestions | Proposes join conditions from foreign keys | host (FKs from live metadata or offline DDL; equally named columns second) | run in SSMS |
+| Matching while typing | Prefix, camel-case and substring matches, best match selected | done (core checks) + host list manager compiled, not yet run in SSMS | run in SSMS |
+| Join table suggestions | After JOIN, related tables with their ON clause first | done + host | run in SSMS |
+| Alias assignment | Alias inserted with the table; prefixes to ignore, custom aliases, AS, capitals | done + host (options, off by default) | run in SSMS |
+| Commit keys | Choose which keys insert the selected suggestion | host (space, `.`, `,`, parentheses, `;`; Tab and Enter fixed) | run in SSMS |
 | Column picker | Tick columns in a list for SELECT/INSERT | host (Querywright > Pick columns for *: checkbox list replaces `*` or `alias.*`) | — |
 | INSERT/EXEC parameter fill | Expands column list / parameters for INSERT and EXEC | host (Tab after `INSERT INTO t` / `EXEC p`; generated columns skipped; procedures from the connection or the script) | — |
 | Snippet shortcut + Tab | `ssf` Tab → `SELECT * FROM` | host (also listed in the popup; Tab expands with the list open) | — |
@@ -77,7 +81,7 @@ internals, the commands report that and do nothing.
 
 ## 6. Code analysis (as-you-type squiggles + Error List)
 
-Querywright rules today: SW001–SW047, mapped in analysis-rules.md, with inline `-- querywright-disable`
+Querywright rules today: SW001–SW073, mapped in analysis-rules.md, with inline `-- querywright-disable`
 suppression. Remaining syntax-only candidates:
 
 | SQL Prompt | Meaning |
@@ -85,11 +89,44 @@ suppression. Remaining syntax-only candidates:
 | PE002 | Unqualified table/view name (needs default-schema awareness to avoid noise) |
 | ST011 / ST012 | Temp table vs table variable hints |
 
-Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: host (fix at caret / fix all for SW001, SW003, SW009, SW010, SW015, SW016, SW017; every fix must re-parse).
+Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: host (fix at caret / fix all for SW001, SW003, SW004, SW009, SW010, SW015, SW016, SW017, SW040, SW048–SW051; every fix must re-parse).
+
+## 7. Checked against the shipped product (October 10, 2026)
+
+Command names, rule IDs and option names were read from the SQL Prompt 11.5.5 installer by static inspection
+(nothing was executed, no code or text copied). Status: done = covered by the core checks; host = wired into
+the SSMS menu and compiled, not yet run in SSMS.
+
+| SQL Prompt feature | Querywright |
+|---|---|
+| Execute current batch | done (batch at the caret) + host (Querywright > Execute current batch) |
+| Execute to cursor | done (script start through the statement at the caret) + host |
+| Unformat | done (one line per batch, strings, names and `--` comments kept) + host |
+| Add commas / add quotes and commas | done + host (selection, or the whole window) |
+| Remove comments | done + host |
+| sp_executesql to plain SQL | done (literal statement and parameter list only) + host |
+| Inline EXEC | done (single-batch body without RETURN; return-value capture rejected) + host (definition read from the connected database, read-only) |
+| INSERT to UPDATE | done (single-row VALUES with a column list; placeholder `WHERE 1 = 0`) + host |
+| Formatting disabled regions | done: `-- querywright:format off` ... `-- querywright:format on`, between statements |
+| Code analysis rules | 73 rules (SW048–SW073 added), 13 with fixes |
+| Comment / uncomment selection | core only; SSMS already has Ctrl+K, Ctrl+C / Ctrl+U |
+| Suggestion matching, ranking, aliases, join suggestions, commit keys | see section 1 and features.md "Suggestion matching and ranking". Option names came from the installer; its default values and ranking code were not read, so defaults and tie-breaks here are Querywright's own |
+
+Not implemented:
+
+- Rules: ST003, DEP023 (Insert semicolons command covers it), MI006 (Unused declarations command covers it),
+  EI011–EI023 cursor-state rules, PE010, PE015, PE018, ST004, EI030, SC005, SC006, DEP025, DEP027 and the
+  metadata-dependent TBL001–TBL005.
+- Several named formatting styles with an active-style switch, bulk format of open tabs, bulk code analysis of a folder.
+- Snippet manager window and create snippet from selection, options import/export, command palette,
+  Select in Object Explorer, close unmodified tabs, duplicate tab, password breach check.
+- Suggestions: bracketed-name option, join conditions matched by data type alone or on part of a composite key,
+  item icons and filter tabs, usage ranking kept between SSMS sessions, turning off Tab or Enter as commit keys.
+- AI features: see [ai.md](ai.md). Not matched: grey inline completion while typing, streamed answers.
 
 ## Remaining
 
-Everything above is at least host-wired; SSMS e2e covers the scenarios listed in features.md.
+Sections 1–6 are at least host-wired; SSMS e2e covers the scenarios listed in features.md. Section 7 lists what is still missing.
 
 ## Sources
 

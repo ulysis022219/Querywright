@@ -31,6 +31,9 @@
       <Group guid="CommandsGuid" id="ResultsParentGroup" priority="0x0500">
         <Parent guid="CommandsGuid" id="QuerywrightMenu" />
       </Group>
+      <Group guid="CommandsGuid" id="AiGroup" priority="0x0550">
+        <Parent guid="CommandsGuid" id="QuerywrightMenu" />
+      </Group>
       <Group guid="CommandsGuid" id="SettingsGroup" priority="0x0600">
         <Parent guid="CommandsGuid" id="QuerywrightMenu" />
       </Group>
@@ -242,6 +245,70 @@
         <Parent guid="CommandsGuid" id="SettingsGroup" />
         <Strings><ButtonText>Check for updates...</ButtonText></Strings>
       </Button>
+      <Button guid="CommandsGuid" id="ExecuteBatch" priority="0x0062" type="Button">
+        <Parent guid="CommandsGuid" id="SuggestGroup" />
+        <Strings><ButtonText>Execute current batch</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="ExecuteToCursor" priority="0x0064" type="Button">
+        <Parent guid="CommandsGuid" id="SuggestGroup" />
+        <Strings><ButtonText>Execute to cursor</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="Unformat" priority="0x00B0" type="Button">
+        <Parent guid="CommandsGuid" id="FormatGroup" />
+        <Strings><ButtonText>Unformat selection/document</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AddCommas" priority="0x00B2" type="Button">
+        <Parent guid="CommandsGuid" id="FormatGroup" />
+        <Strings><ButtonText>Add commas to lines</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AddQuotesAndCommas" priority="0x00B4" type="Button">
+        <Parent guid="CommandsGuid" id="FormatGroup" />
+        <Strings><ButtonText>Add quotes and commas to lines</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="RemoveComments" priority="0x00B6" type="Button">
+        <Parent guid="CommandsGuid" id="FormatGroup" />
+        <Strings><ButtonText>Remove comments</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="ExecuteSqlToPlain" priority="0x00A2" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Convert sp_executesql to SQL</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="InlineExec" priority="0x00A4" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Inline EXEC</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="InsertToUpdate" priority="0x00A6" type="Button">
+        <Parent guid="CommandsGuid" id="RefactorGroup" />
+        <Strings><ButtonText>Convert INSERT to UPDATE</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AiPanel" priority="0x0010" type="Button">
+        <Parent guid="CommandsGuid" id="AiGroup" />
+        <Strings><ButtonText>AI assistant</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AiExplain" priority="0x0020" type="Button">
+        <Parent guid="CommandsGuid" id="AiGroup" />
+        <Strings><ButtonText>AI: explain SQL</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AiFix" priority="0x0030" type="Button">
+        <Parent guid="CommandsGuid" id="AiGroup" />
+        <Strings><ButtonText>AI: fix errors</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AiOptimize" priority="0x0040" type="Button">
+        <Parent guid="CommandsGuid" id="AiGroup" />
+        <Strings><ButtonText>AI: optimize query</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AiComplete" priority="0x0050" type="Button">
+        <Parent guid="CommandsGuid" id="AiGroup" />
+        <Strings><ButtonText>AI: complete at caret</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="CopyMcpConfiguration" priority="0x0060" type="Button">
+        <Parent guid="CommandsGuid" id="AiGroup" />
+        <Strings><ButtonText>Copy MCP configuration</ButtonText></Strings>
+      </Button>
+      <Button guid="CommandsGuid" id="AiOptionsCommand" priority="0x0070" type="Button">
+        <Parent guid="CommandsGuid" id="AiGroup" />
+        <Strings><ButtonText>AI options...</ButtonText></Strings>
+      </Button>
     </Buttons>
   </Commands>
   <CommandPlacements>
@@ -287,6 +354,7 @@
     <KeyBinding guid="CommandsGuid" id="RefreshMetadata" editor="guidVSStd97" key1="D" mod1="Control Shift" />
     <!-- Some SSMS 22 installs have no Edit.GoToDefinition and leave F12 unbound. -->
     <KeyBinding guid="CommandsGuid" id="GoToDefinition" editor="guidVSStd97" key1="VK_F12" />
+    <KeyBinding guid="CommandsGuid" id="AiPanel" editor="guidVSStd97" key1="Z" mod1="Alt" />
   </KeyBindings>
   <Symbols>
     <GuidSymbol name="PackageGuid" value="{a13c1b0c-af94-4f53-8d06-edf816e39450}" />
@@ -347,6 +415,23 @@
       <IDSymbol name="UnwrapDynamicSql" value="0x012B" />
       <IDSymbol name="CheckForUpdates" value="0x012C" />
       <IDSymbol name="SearchCode" value="0x012D" />
+      <IDSymbol name="ExecuteBatch" value="0x012E" />
+      <IDSymbol name="ExecuteToCursor" value="0x012F" />
+      <IDSymbol name="Unformat" value="0x0130" />
+      <IDSymbol name="AddCommas" value="0x0131" />
+      <IDSymbol name="AddQuotesAndCommas" value="0x0132" />
+      <IDSymbol name="RemoveComments" value="0x0133" />
+      <IDSymbol name="ExecuteSqlToPlain" value="0x0134" />
+      <IDSymbol name="InlineExec" value="0x0135" />
+      <IDSymbol name="InsertToUpdate" value="0x0136" />
+      <IDSymbol name="AiPanel" value="0x0180" />
+      <IDSymbol name="AiExplain" value="0x0181" />
+      <IDSymbol name="AiFix" value="0x0182" />
+      <IDSymbol name="AiOptimize" value="0x0183" />
+      <IDSymbol name="AiComplete" value="0x0184" />
+      <IDSymbol name="CopyMcpConfiguration" value="0x0185" />
+      <IDSymbol name="AiOptionsCommand" value="0x0186" />
+      <IDSymbol name="AiGroup" value="0x10C0" />
       <IDSymbol name="EditorGroup" value="0x1050" />
     </GuidSymbol>
     <GuidSymbol name="guidSqlEditorGroup" value="{33F13AC3-80BB-4ECB-85BC-225435603A5E}">

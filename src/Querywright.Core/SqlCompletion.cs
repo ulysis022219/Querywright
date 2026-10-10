@@ -73,8 +73,48 @@ namespace Querywright.Core
         public string Name { get; }
         public string InsertText { get; }
         public string Description { get; }
-        internal CompletionItem(string name, string insert, string description)
-        { Name = name; InsertText = insert; Description = description; }
+        /// <summary>Listed ahead of everything but an exact match (join suggestions).</summary>
+        public bool Promoted { get; }
+        // Separate overload, not an optional parameter: scripts/Test-Dialogs.ps1 builds items by reflection.
+        internal CompletionItem(string name, string insert, string description) : this(name, insert, description, false) { }
+        internal CompletionItem(string name, string insert, string description, bool promoted)
+        { Name = name; InsertText = insert; Description = description; Promoted = promoted; }
+    }
+
+    /// <summary>How well typed text matches a candidate name; a higher value lists first.</summary>
+    public enum MatchKind { None, Substring, Camel, Prefix, Exact }
+
+    /// <summary>How completion lists, orders and inserts candidates.</summary>
+    public sealed class CompletionOptions
+    {
+        public bool QualifySingleTable { get; set; } = true;
+        /// <summary>False returns every candidate in rank order, for a host that filters while the user types.</summary>
+        public bool Filter { get; set; } = true;
+        /// <summary>Typed "oi" or "OI" matches OrderId and order_id.</summary>
+        public bool CamelHumps { get; set; } = true;
+        /// <summary>Typed "ord" also matches SalesOrder, listed after prefix and word-start matches.</summary>
+        public bool MatchAnywhere { get; set; } = true;
+        /// <summary>A table chosen after FROM or JOIN is inserted with a generated alias.</summary>
+        public bool AliasTables { get; set; }
+        public bool AliasWithAs { get; set; }
+        public bool UppercaseAliases { get; set; }
+        /// <summary>Name prefixes left out of generated aliases, e.g. "tbl".</summary>
+        public IReadOnlyList<string> IgnoredPrefixes { get; set; } = Array.Empty<string>();
+        /// <summary>Table name to alias; the dictionary's comparer decides case sensitivity.</summary>
+        public IReadOnlyDictionary<string, string>? Aliases { get; set; }
+        /// <summary>False drops the schema of tables in the default schema.</summary>
+        public bool QualifyObjects { get; set; } = true;
+        /// <summary>After JOIN, tables linked by a foreign key lead the list and insert their ON condition.</summary>
+        public bool JoinTables { get; set; } = true;
+        /// <summary>After ON, also offers conditions on columns that share a name and type.</summary>
+        public bool JoinNameMatches { get; set; } = true;
+        /// <summary>Writes join conditions as earlier = joined instead of joined = earlier.</summary>
+        public bool SwapJoinOrder { get; set; }
+        /// <summary>False keeps columns in table definition order.</summary>
+        public bool ColumnsAlphabetical { get; set; }
+        /// <summary>After a table source only the keywords that can follow it are listed; nothing is listed where a new alias is typed.</summary>
+        public bool ContextKeywords { get; set; } = true;
+        public int MaxItems { get; set; } = 200;
     }
 
     public sealed class CompletionResult
@@ -83,8 +123,10 @@ namespace Querywright.Core
         public int Length { get; }
         public IReadOnlyList<CompletionItem> Items { get; }
         public string Limitation { get; }
-        internal CompletionResult(int start, int length, IEnumerable<CompletionItem> items, string limitation = "")
-        { Start = start; Length = length; Items = items.ToArray(); Limitation = limitation; }
+        /// <summary>The word at the caret may be a new alias: a host should not commit on punctuation or space.</summary>
+        public bool Soft { get; }
+        internal CompletionResult(int start, int length, IEnumerable<CompletionItem> items, string limitation = "", bool soft = false)
+        { Start = start; Length = length; Items = items.ToArray(); Limitation = limitation; Soft = soft; }
     }
 
     public sealed class TextEdit
@@ -98,8 +140,107 @@ namespace Querywright.Core
     public static class SqlCompletion
     {
         private const string Marker = "__QuerywrightCompletionMarker__";
-        private const int MaxItems = 200;
         private static string Quote(string name) => "[" + name.Replace("]", "]]") + "]";
+
+        // What can follow a table source: clause keywords first in mind, statement starts for scripts without semicolons.
+        private static readonly string[] FollowKeywords =
+        {
+            "AS", "BEGIN", "CROSS APPLY", "CROSS JOIN", "DECLARE", "DELETE", "END", "EXCEPT", "EXEC", "FOR", "FULL JOIN", "GO", "GROUP BY",
+            "HAVING", "IF", "INNER JOIN", "INSERT", "INTERSECT", "JOIN", "LEFT JOIN", "ON", "OPTION", "ORDER BY", "OUTER APPLY", "PIVOT",
+            "RETURN", "RIGHT JOIN", "SELECT", "SET", "UNION", "UNION ALL", "UNPIVOT", "UPDATE", "WHERE", "WITH"
+        };
+
+        // Word starts: after a non-alphanumeric, at a letter/digit switch, at an upper after a lower, and at the last upper of an acronym.
+        private static List<int> Humps(string name)
+        {
+            var result = new List<int>();
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i], p = i > 0 ? name[i - 1] : '\0';
+                if (!char.IsLetterOrDigit(c)) continue;
+                if (!char.IsLetterOrDigit(p) || char.IsDigit(c) != char.IsDigit(p) ||
+                    char.IsUpper(c) && (char.IsLower(p) || i + 1 < name.Length && char.IsLower(name[i + 1]))) result.Add(i);
+            }
+            return result;
+        }
+
+        // Typed text read as the starts of consecutive words, the first word included: "oi" and "ordi" match OrderId.
+        private static bool Camel(string name, string typed, List<int>? hits)
+        {
+            if (typed.Length < 2 || typed.Length > 32 || name.Length > 128) return false;
+            var humps = Humps(name);
+            if (humps.Count < 2 || humps[0] != 0) return false;
+            var dead = new HashSet<int>();
+            bool Walk(int t, int h)
+            {
+                if (dead.Contains(t * 256 + h)) return false;
+                int limit = h + 1 < humps.Count ? humps[h + 1] : name.Length;
+                for (int k = 0; t + k < typed.Length && humps[h] + k < limit && char.ToUpperInvariant(typed[t + k]) == char.ToUpperInvariant(name[humps[h] + k]); k++)
+                {
+                    bool done = t + k + 1 == typed.Length;
+                    for (int next = h + 1; !done && next < humps.Count; next++) done = Walk(t + k + 1, next);
+                    if (!done) continue;
+                    for (int n = 0; n <= k; n++) hits?.Add(humps[h] + n);
+                    return true;
+                }
+                dead.Add(t * 256 + h);
+                return false;
+            }
+            return Walk(0, 0);
+        }
+
+        /// <summary>Classifies how <paramref name="typed"/> matches a candidate name; empty text matches everything as a prefix.</summary>
+        public static MatchKind Match(string name, string typed, bool camelHumps = true, bool anywhere = true)
+        {
+            if (name == null) throw new ArgumentNullException(nameof(name));
+            if (string.IsNullOrEmpty(typed)) return MatchKind.Prefix;
+            if (name.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) return name.Length == typed.Length ? MatchKind.Exact : MatchKind.Prefix;
+            if (camelHumps && Camel(name, typed, null)) return MatchKind.Camel;
+            return anywhere && name.IndexOf(typed, StringComparison.OrdinalIgnoreCase) >= 0 ? MatchKind.Substring : MatchKind.None;
+        }
+
+        /// <summary>Character positions of <paramref name="name"/> that the typed text matched, ascending, for highlighting.</summary>
+        public static IReadOnlyList<int> Highlights(string name, string typed, bool camelHumps = true)
+        {
+            var hits = new List<int>();
+            var kind = Match(name, typed, camelHumps);
+            if (string.IsNullOrEmpty(typed) || kind == MatchKind.None) return hits;
+            if (kind == MatchKind.Camel) { Camel(name, typed, hits); hits.Sort(); return hits; }
+            int at = kind == MatchKind.Substring ? name.IndexOf(typed, StringComparison.OrdinalIgnoreCase) : 0;
+            for (int i = 0; i < typed.Length; i++) hits.Add(at + i);
+            return hits;
+        }
+
+        private static bool Plain(string name) => name.Length > 0 && QuoteIfNeeded(name) == name;
+
+        /// <summary>Alias for a table: a user-defined one, else the initials of the name's words (OrderDetails gives od),
+        /// with a number appended while it is reserved or already in <paramref name="taken"/>.</summary>
+        public static string Alias(string name, CompletionOptions? options = null, ICollection<string>? taken = null)
+        {
+            if (string.IsNullOrEmpty(name)) throw new ArgumentException("Name must be nonempty.", nameof(name));
+            options ??= new CompletionOptions();
+            string? alias = options.Aliases != null && options.Aliases.TryGetValue(name, out var chosen) && chosen != null && Plain(chosen) ? chosen : null;
+            if (alias == null)
+            {
+                string stem = name;
+                foreach (var ignored in options.IgnoredPrefixes)
+                    if (!string.IsNullOrEmpty(ignored) && stem.Length > ignored.Length && stem.StartsWith(ignored, StringComparison.OrdinalIgnoreCase))
+                    { stem = stem.Substring(ignored.Length); break; }
+                alias = new string(Humps(stem).Select(i => stem[i]).Where(char.IsLetter).ToArray());
+                alias = options.UppercaseAliases ? alias.ToUpperInvariant() : alias.ToLowerInvariant();
+                if (alias.Length == 0 || !Plain(alias) && !Plain(alias + "2")) alias = options.UppercaseAliases ? "T" : "t";
+            }
+            string result = alias;
+            for (int n = 2; !Plain(result) || taken != null && taken.Contains(result); n++) result = alias + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return result;
+        }
+
+        private static bool Refers(SchemaForeignKey key, SchemaTable table, StringComparer names) =>
+            names.Equals(key.ReferencedSchema, table.Schema) && names.Equals(key.ReferencedTable, table.Name);
+
+        private static string Condition(string left, string right, IEnumerable<(string L, string R)> pairs, bool swap) =>
+            string.Join(" AND ", pairs.Select(p => swap ? right + "." + QuoteIfNeeded(p.R) + " = " + left + "." + QuoteIfNeeded(p.L)
+                : left + "." + QuoteIfNeeded(p.L) + " = " + right + "." + QuoteIfNeeded(p.R)));
         private static string ColumnDescription(SchemaTable? table, string column, string source) =>
             "column " + (table?.TypeOf(column) is string type ? type + " " : "") + (table?.NoteOf(column) is string note ? note + " " : "") + source;
 
@@ -224,9 +365,20 @@ namespace Querywright.Core
         public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable>? tables,
             string defaultSchema = "dbo", bool caseSensitive = false, IReadOnlyList<string>? databases = null,
             IReadOnlyList<SchemaProcedure>? procedures = null, bool qualifySingleTable = true,
-            Func<string, IReadOnlyList<SchemaTable>?>? otherDatabase = null)
+            Func<string, IReadOnlyList<SchemaTable>?>? otherDatabase = null) =>
+            // The plain list: prefix-ranked candidates, alphabetical columns, no join tables or contextual keywords.
+            Complete(sql, position, tables, new CompletionOptions
+            {
+                QualifySingleTable = qualifySingleTable, JoinTables = false, JoinNameMatches = false, ColumnsAlphabetical = true, ContextKeywords = false,
+                CamelHumps = false, MatchAnywhere = false
+            }, defaultSchema, caseSensitive, databases, procedures, otherDatabase);
+
+        public static CompletionResult Complete(string sql, int position, IReadOnlyList<SchemaTable>? tables, CompletionOptions options,
+            string defaultSchema = "dbo", bool caseSensitive = false, IReadOnlyList<string>? databases = null,
+            IReadOnlyList<SchemaProcedure>? procedures = null, Func<string, IReadOnlyList<SchemaTable>?>? otherDatabase = null)
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));
+            if (options == null) throw new ArgumentNullException(nameof(options));
             if (position < 0 || position > sql.Length) throw new ArgumentOutOfRangeException(nameof(position));
             if (sql.Length > 1_000_000) throw new ArgumentException("Completion input exceeds 1,000,000 characters.");
             var catalog = tables ?? Array.Empty<SchemaTable>();
@@ -265,6 +417,7 @@ namespace Querywright.Core
             var far = new HashSet<CompletionItem>(); // columns of other statements in the batch
             var groups = new Dictionary<CompletionItem, int>(); // columns list per source, in FROM order
             bool unscoped = false; // every catalog column is listed: keep the item cap for them
+            bool follow = false, defining = false, soft = false; // after a table source; a new alias after AS; the word may be an alias
             void Add(Kind kind, string name, string insert, string description) => items.Add((new CompletionItem(name, insert, description), kind));
 
             var context = Context.General;
@@ -320,18 +473,69 @@ namespace Querywright.Core
                 else if (clause != null && ColumnClauses.Contains(clause) && prev is Tok o && (ExpectsOperand(o, at > 1 ? segment[at - 2] : (Tok?)null) || AfterTop()))
                     context = Context.Column;
 
+                // After a table source the next word is an alias or a clause keyword; after AS it is a new alias.
+                // ponytail: an alias after CASE ... END AS is not recognized (the clause scan stops inside the CASE).
+                if (options.ContextKeywords && clause != null && prev is Tok pt)
+                {
+                    if (pt.Is("AS"))
+                        defining = soft = at > 1 && (segment[at - 2].IsName || segment[at - 2].Type == TSqlTokenType.RightParenthesis) &&
+                            (clause == "FROM" || clause == "JOIN" || clause == "USING" || clause == "SELECT") && !InCast();
+                    else if ((clause == "FROM" || clause == "JOIN") && (pt.IsName || pt.Type == TSqlTokenType.Variable))
+                    {
+                        int first = at - 1;
+                        while (first >= 2 && segment[first - 1].Type == TSqlTokenType.Dot && segment[first - 2].IsName) first -= 2;
+                        if (first > 0)
+                        {
+                            var b = segment[first - 1];
+                            soft = b.Is("FROM") || b.Is("JOIN") || b.Type == TSqlTokenType.Comma && clause == "FROM";
+                            follow = soft || b.Is("AS") || b.IsName || b.Type == TSqlTokenType.RightParenthesis || b.Type == TSqlTokenType.Variable;
+                        }
+                    }
+                }
+
+                // FROM | , JOIN | and FROM a, | take an alias unless one already follows the caret.
+                bool sourceSlot = prev is Tok st && (st.Is("FROM") || st.Is("JOIN") || st.Type == TSqlTokenType.Comma && clause == "FROM") &&
+                    !(at < segment.Count && (segment[at].IsName || segment[at].Is("AS")));
+                var taken = new HashSet<string>(scan.Sources.Select(s => s.Alias), names);
+                string? AliasOf(SchemaTable table) => sourceSlot && options.AliasTables ? Alias(table.Name, options, taken) : null;
+                string TableText(SchemaTable table, string? alias) =>
+                    (options.QualifyObjects || !names.Equals(table.Schema, defaultSchema) ? QuoteIfNeeded(table.Schema) + "." : "") +
+                    QuoteIfNeeded(table.Name) + (alias == null ? "" : (options.AliasWithAs ? " AS " : " ") + alias);
+
                 var variables = Variables(tokens, batchStart, caret, names);
                 foreach (var cte in scan.Ctes.Keys) Add(Kind.Alias, cte, QuoteIfNeeded(cte), "cte");
                 foreach (var v in variables.Where(v => context != Context.Table || v.Value))
                     Add(Kind.Variable, v.Key, v.Key, v.Value ? "table variable" : "variable");
                 foreach (var table in catalog)
-                    Add(Kind.Table, table.Name, QuoteIfNeeded(table.Schema) + "." + QuoteIfNeeded(table.Name), "table " + table.Schema + "." + table.Name);
+                    Add(Kind.Table, table.Name, TableText(table, AliasOf(table)), "table " + table.Schema + "." + table.Name);
+                // JOIN | leads with the tables a foreign key links to an earlier source, each with its ON condition.
+                if (options.JoinTables && sourceSlot && prev is Tok jt && jt.Is("JOIN"))
+                    foreach (var source in scan.Sources.Where(s => s.Table != null && s.Offset < jt.Offset && s.Visible(at)))
+                        foreach (var table in catalog)
+                        {
+                            var keys = table.ForeignKeys.Where(f => Refers(f, source.Table!, names)).Select(f => f.Columns.Zip(f.ReferencedColumns, (c, r) => (c, r)))
+                                .Concat(source.Table!.ForeignKeys.Where(f => Refers(f, table, names)).Select(f => f.ReferencedColumns.Zip(f.Columns, (r, c) => (r, c)))).ToList();
+                            if (keys.Count == 0) continue;
+                            string? alias = AliasOf(table);
+                            if (alias == null && taken.Contains(table.Name)) continue; // a second copy of a table needs an alias
+                            foreach (var pairs in keys)
+                            {
+                                string on = " ON " + Condition(alias ?? QuoteIfNeeded(table.Name), QuoteIfNeeded(source.Alias), pairs, options.SwapJoinOrder);
+                                items.Add((new CompletionItem(table.Name + (alias == null ? "" : " " + alias) + on, TableText(table, alias) + on,
+                                    "join " + table.Schema + "." + table.Name + " to " + source.Description, true), Kind.Join));
+                            }
+                        }
                 // FROM | also offers databases, for OtherDb.schema.table.
                 if (context == Context.Table)
                     foreach (var database in databases ?? Array.Empty<string>()) Add(Kind.Table, database, QuoteIfNeeded(database), "database");
                 if (context != Context.Table)
                 {
-                    foreach (var join in Joins(segment, at, scan, catalog, defaultSchema, names)) items.Add((join, Kind.Join));
+                    foreach (var join in Joins(segment, at, scan, catalog, defaultSchema, names, options))
+                    {
+                        // Foreign keys before name matches.
+                        groups[join] = join.Description.StartsWith("foreign key", StringComparison.Ordinal) ? 0 : 1;
+                        items.Add((join, Kind.Join));
+                    }
                     // ponytail: ORDER and GROUP are only ever followed by BY; name == insert text, as the SSMS list commits reliably then.
                     foreach (var k in Keywords) { string w = k.Equals("ORDER", StringComparison.OrdinalIgnoreCase) || k.Equals("GROUP", StringComparison.OrdinalIgnoreCase) ? k + " BY" : k; Add(Kind.Keyword, w, w, "keyword"); }
                     foreach (var f in Functions) Add(Kind.Function, f, f + "(", "function");
@@ -352,7 +556,7 @@ namespace Querywright.Core
                     else if (resolver != null && resolver.Handled && !resolver.TableMarker)
                         foreach (var i in resolver.Items)
                         {
-                            var item = resolver.Sources == 1 && !qualifySingleTable ? Bare(i) : i;
+                            var item = resolver.Sources == 1 && !options.QualifySingleTable ? Bare(i) : i;
                             groups[item] = resolver.Groups[i];
                             items.Add((item, Kind.Column));
                         }
@@ -360,7 +564,7 @@ namespace Querywright.Core
                     {
                         var seen = new HashSet<string>(names);
                         int group = 0;
-                        bool bare = near.Count(n => n.Columns.Count > 0) == 1 && !qualifySingleTable;
+                        bool bare = near.Count(n => n.Columns.Count > 0) == 1 && !options.QualifySingleTable;
                         // Innermost subquery first, then FROM order.
                         foreach (var s in near.OrderByDescending(s => s.Scope).ThenBy(s => s.Offset).Concat(visible.Except(near).OrderBy(s => s.Offset)).Where(s => s.Columns.Count > 0 && seen.Add(s.Alias)))
                         {
@@ -377,6 +581,24 @@ namespace Querywright.Core
                         }
                     }
                 }
+            }
+
+            if (follow || defining)
+            {
+                items.Clear(); far.Clear(); groups.Clear(); unscoped = false; context = Context.General;
+                if (follow) foreach (var word in FollowKeywords) Add(Kind.Keyword, word, word, "keyword");
+            }
+
+            // CAST(x AS | names a type, not an alias.
+            bool InCast()
+            {
+                for (int i = at - 1, depth = 0; i >= 0; i--)
+                {
+                    if (segment[i].Type == TSqlTokenType.RightParenthesis) depth++;
+                    else if (segment[i].Type == TSqlTokenType.LeftParenthesis && depth-- == 0)
+                        return i > 0 && (segment[i - 1].Is("CAST") || segment[i - 1].Is("TRY_CAST"));
+                }
+                return false;
             }
 
             // INSERT [INTO] t (| and MERGE ... INSERT (| list the target's columns.
@@ -461,16 +683,23 @@ namespace Querywright.Core
             int Rank(Kind kind) => kind == Kind.Join ? -1 : context == Context.Table ? 0
                 : context == Context.Column ? (kind == Kind.Column ? 0 : kind == Kind.Alias || kind == Kind.Table ? 1 : kind == Kind.Variable ? 2 : kind == Kind.Function ? 3 : 4)
                 : (kind == Kind.Keyword ? 0 : kind == Kind.Variable ? 1 : kind == Kind.Alias || kind == Kind.Function ? 2 : kind == Kind.Column ? 3 : 4);
-            var ordered = items
-                .Where(i => i.Item.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            // Exact match, promoted joins, then how the typed text matches (prefix, word starts, substring), then kind.
+            string typed = options.Filter ? prefix : "";
+            var ordered = items.Select((i, n) => (i.Item, i.Kind, Index: n, Match: Match(i.Item.Name, typed, options.CamelHumps, options.MatchAnywhere)))
+                .Where(i => i.Match != MatchKind.None)
                 .GroupBy(i => i.Item.InsertText, StringComparer.Ordinal).Select(g => g.OrderBy(i => Rank(i.Kind)).First())
-                .OrderBy(i => i.Kind == Kind.Join ? 0 : 1)
-                .ThenBy(i => prefix.Length > 0 && string.Equals(i.Item.Name, prefix, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                // A join whose text starts with the typed word stays ahead of an alias that equals it (ON o| keeps o.Id = p.Id first).
+                .OrderBy(i => i.Kind == Kind.Join && i.Match >= MatchKind.Prefix ? 0 : 1)
+                .ThenBy(i => typed.Length > 0 && i.Match == MatchKind.Exact ? 0 : 1)
+                .ThenBy(i => i.Kind == Kind.Join ? 0 : 1)
+                .ThenByDescending(i => (int)i.Match)
                 .ThenBy(i => Rank(i.Kind)).ThenBy(i => far.Contains(i.Item) ? 1 : 0)
-                .ThenBy(i => groups.TryGetValue(i.Item, out int g) ? g : 0).ThenBy(i => i.Item.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(i => groups.TryGetValue(i.Item, out int g) ? g : 0)
+                .ThenBy(i => i.Kind == Kind.Column && !options.ColumnsAlphabetical ? i.Index : 0)
+                .ThenBy(i => i.Item.Name, StringComparer.OrdinalIgnoreCase)
                 // In-scope columns are never cut: after a TOP n or a name the list leads with keywords and functions.
-                .Where((i, index) => index < MaxItems || i.Kind == Kind.Column && !unscoped).Select(i => i.Item);
-            return new CompletionResult(start, end - start, ordered);
+                .Where((i, index) => index < options.MaxItems || i.Kind == Kind.Column && !unscoped).Select(i => i.Item);
+            return new CompletionResult(start, end - start, ordered, soft: soft);
         }
 
         private static CompletionItem Bare(CompletionItem item) => new CompletionItem(item.Name, QuoteIfNeeded(item.Name), item.Description);
@@ -512,7 +741,8 @@ namespace Querywright.Core
         }
 
         // Full join conditions when the caret follows JOIN <table> [[AS] alias] ON and a foreign key links it to an earlier source.
-        private static IEnumerable<CompletionItem> Joins(List<Tok> seg, int at, Scanner scan, IReadOnlyList<SchemaTable> catalog, string defaultSchema, StringComparer names)
+        private static IEnumerable<CompletionItem> Joins(List<Tok> seg, int at, Scanner scan, IReadOnlyList<SchemaTable> catalog, string defaultSchema, StringComparer names,
+            CompletionOptions options)
         {
             int k = at - 1;
             if (k < 2 || !seg[k].Is("ON")) yield break;
@@ -532,19 +762,24 @@ namespace Querywright.Core
             var joined = catalog.FirstOrDefault(t => names.Equals(t.Name, parts[parts.Count - 1]) && names.Equals(t.Schema, parts.Count == 2 ? parts[0] : defaultSchema));
             if (joined == null) yield break;
             string left = QuoteIfNeeded(alias ?? joined.Name);
-            bool Refers(SchemaForeignKey key, SchemaTable table) => names.Equals(key.ReferencedSchema, table.Schema) && names.Equals(key.ReferencedTable, table.Name);
-            CompletionItem Item(IEnumerable<(string J, string S)> pairs, string right, SchemaTable from, SchemaTable to)
+            CompletionItem Item(IEnumerable<(string J, string S)> pairs, string right, string description)
             {
-                string text = string.Join(" AND ", pairs.Select(p => left + "." + QuoteIfNeeded(p.J) + " = " + right + "." + QuoteIfNeeded(p.S)));
-                return new CompletionItem(text, text, "foreign key " + from.Schema + "." + from.Name + " -> " + to.Schema + "." + to.Name);
+                string text = Condition(left, right, pairs, options.SwapJoinOrder);
+                return new CompletionItem(text, text, description, true);
             }
+            string Key(SchemaTable from, SchemaTable to) => "foreign key " + from.Schema + "." + from.Name + " -> " + to.Schema + "." + to.Name;
             foreach (var source in scan.Sources.Where(s => s.Offset < seg[k].Offset && s.Table != null))
             {
                 string right = QuoteIfNeeded(source.Alias);
-                foreach (var key in joined.ForeignKeys.Where(f => Refers(f, source.Table!)))
-                    yield return Item(key.Columns.Zip(key.ReferencedColumns, (c, r) => (c, r)), right, joined, source.Table!);
-                foreach (var key in source.Table!.ForeignKeys.Where(f => Refers(f, joined)))
-                    yield return Item(key.ReferencedColumns.Zip(key.Columns, (r, c) => (r, c)), right, source.Table!, joined);
+                foreach (var key in joined.ForeignKeys.Where(f => Refers(f, source.Table!, names)))
+                    yield return Item(key.Columns.Zip(key.ReferencedColumns, (c, r) => (c, r)), right, Key(joined, source.Table!));
+                foreach (var key in source.Table!.ForeignKeys.Where(f => Refers(f, joined, names)))
+                    yield return Item(key.ReferencedColumns.Zip(key.Columns, (r, c) => (r, c)), right, Key(source.Table!, joined));
+                if (!options.JoinNameMatches) continue;
+                // Same name and, where both are known, same type.
+                foreach (var column in joined.Columns.Where(c => source.Table!.Columns.Contains(c, names)))
+                    if (!(joined.TypeOf(column) is string a && source.Table!.TypeOf(column) is string b && !names.Equals(a, b)))
+                        yield return Item(new[] { (column, column) }, right, "matching column name in " + source.Description);
             }
         }
 

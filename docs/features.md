@@ -9,12 +9,12 @@ Status vocabulary: missing, core-only, integrated, verified in SSMS.
 | Host | SSMS 22.10.1 package, menus, settings, shortcuts, undo, install/uninstall | verified in SSMS (install, package load, menus, formatting undo/redo; e2e job) | Uninstall pending |
 | Completion | Objects, columns, aliases, parameters, joins, fuzzy matches, column picker, metadata refresh | integrated: as-you-type popup, live metadata (tables, views, columns, FK joins), schema cache on disk (names and types only, hashed file names, option "Cache schema on disk"), Ctrl+Shift+D refresh, column picker, procedure suggestions after EXEC, INSERT/EXEC fill (Tab after the name, or when a suggestion is committed by Tab, Enter or click), hover quick info (column type, nullability and default; tables, views and procedures link to a Script/Summary popup with CREATE TABLE DDL and columns, read on click) | e2e keyword, live column, EXEC fill and schema cache file scenarios |
 | Snippets | User templates, Tab shortcuts (ssf), context values, date/time, caret/selection, sharing | integrated: 56 seeded, all placeholders, `$name$` tab-stop fields, listed in popup, Tab with popup open | e2e ssf and typed-ssf scenarios |
-| Formatting | Selection/document, styles, shared settings, batch operation | verified in SSMS (document); casing, brackets, qualify, style editor (13 options), bulk folder formatting, optional format on save integrated | Bulk encoding/newline preservation checked in core; e2e format on save |
-| Refactoring | Local rename, qualification, wildcard expansion, brackets, semicolons, procedure extraction | integrated: variable/alias rename, qualification, wildcard (live or offline), brackets, semicolons, encapsulate as procedure (script in new window) | e2e wildcard scenario |
+| Formatting | Selection/document, styles, shared settings, batch operation | verified in SSMS (document); casing, brackets, qualify, style editor (13 options), bulk folder formatting, optional format on save integrated; `-- querywright:format off/on` regions, unformat, add commas, remove comments (core checked, menu commands not yet run in SSMS) | Bulk encoding/newline preservation checked in core; e2e format on save |
+| Refactoring | Local rename, qualification, wildcard expansion, brackets, semicolons, procedure extraction | integrated: variable/alias rename, qualification, wildcard (live or offline), brackets, semicolons, encapsulate as procedure (script in new window); sp_executesql to SQL, inline EXEC, INSERT to UPDATE (core checked, menu commands not yet run in SSMS) | e2e wildcard scenario |
 | Database rename | Dependency-aware object rename script preview | integrated: sp_rename + dependent ALTERs in a new window, unparsed/dynamic dependents flagged; never executed; find invalid objects (read-only); split table script | Identify unresolved dynamic references; never execute silently |
-| Analysis | Rule inventory, configurable severity/enablement (Tools > Querywright > Formatting style and rules... > Analysis rules), issue navigation, fixes, shared settings | integrated: 46 rules, squiggles while typing, unmatched BEGIN/END/CASE/parentheses underlined, Error List, suppression; fix at caret and fix all (7 rules) | See analysis-rules.md |
+| Analysis | Rule inventory, configurable severity/enablement (Tools > Querywright > Formatting style and rules... > Analysis rules), issue navigation, fixes, shared settings | integrated: 73 rules, squiggles while typing, unmatched BEGIN/END/CASE/parentheses underlined, Error List, suppression; fix at caret and fix all (13 rules) | See analysis-rules.md |
 | Navigation | Definitions, ALTER script generation, object explorer, script overview, unused declarations | integrated: F12 locals/aliases/CTEs; modules scripted as ALTER and tables as CREATE TABLE in a new query (also `OtherDb.dbo.Name` on the same server); summarize script, unused declarations | e2e F12 variable, procedure and table scenarios |
-| Editor | Execute statement, environment colors | integrated: Shift+F5 (explicit keypress only), prompt before executing DELETE/UPDATE without WHERE, "Production servers" patterns that always prompt for DROP, ALTER, TRUNCATE and unfiltered changes (#temp tables excepted), environment color strip, server · database label at the bottom right; Object Explorer server right-click "Querywright: server color..." adds a server rule | Statement boundaries and color rule edits checked in core; e2e opens the server menu and cancels a production DROP |
+| Editor | Execute statement, environment colors | integrated: Shift+F5 (explicit keypress only), execute current batch and execute to cursor (menu commands not yet run in SSMS), prompt before executing DELETE/UPDATE without WHERE, "Production servers" patterns that always prompt for DROP, ALTER, TRUNCATE and unfiltered changes (#temp tables excepted), environment color strip, server · database label at the bottom right; Object Explorer server right-click "Querywright: server color..." adds a server rule | Statement boundaries and color rule edits checked in core; e2e opens the server menu and cancels a production DROP |
 | History | Open/closed tabs, search, restore, rename, retention, crash recovery | integrated: local store (60 s + on close, 200 kept), search, preview, reopen, rename, delete, opt-out | Crash-safe writes, local privacy, restart recovery |
 | Results | IN-list copy, INSERT scripts, spreadsheet export | integrated via grid right-click menu: copy as IN clause, script as INSERT (DROP/CREATE #Results temp table plus VALUES, new window, not executed), open in Excel (.xlsx with the grid text kept 1:1; only numeric columns become numbers, with the grid's decimals), save as CSV; formula-injection guard | e2e grid script-as-INSERT scenario; grid read by reflection (no public API) |
 | Compare | Object compare across databases | integrated: editor right-click (and Tools) "compare object with database..." scripts the object at the caret/selection from the current and a chosen database on the same server (read-only) and reports identical or opens the diff window | Script equality checked in core; SSMS menu placement not e2e-tested |
@@ -82,3 +82,26 @@ parity claim. This initial package is not a completed SQL Prompt replacement.
 Completion after `OtherDb.` offers that database's schemas, then tables, then columns. The other database's catalog loads in the background on first use, so the list appears on a later keystroke.
 
 Column suggestions list only the tables visible at the caret: a derived table or CTE body does not leak its inner FROM into the outer query. Columns are grouped per table, nearest scope first, and are never dropped by the item cap. `"quoted"` names resolve like `[bracketed]` ones.
+
+## Suggestion matching and ranking
+
+The list is filtered and re-ranked on every keystroke (Tools > Options > Querywright > Completion, "Smart matching
+and ranking"; off returns to the editor's prefix-only list).
+
+- A typed word matches a name by prefix, by word starts (`oi` or `OI` finds `OrderId` and `order_id`) or anywhere in
+  the name. Matched characters are highlighted.
+- Order: join suggestions the word starts, exact name, other join suggestions, prefix, word starts, substring. Among
+  equals: items picked earlier in this SSMS session, then the core order (in-scope columns per table, definition order
+  unless "Order columns alphabetically" is on).
+- Selection is firm when the word starts or spells the top item. It is soft (Tab inserts, other keys do not) when
+  nothing is typed, when the only match is in the middle of a name, and while a new alias is being typed.
+- After a table or alias in FROM the list holds what can follow (WHERE, JOIN, ON, ...); after AS, and inside CAST/CONVERT
+  types, table names are not offered.
+- After JOIN, tables linked by a foreign key to a table already in the query come first and insert `Table alias ON condition`.
+  After ON, foreign key conditions come first, then conditions on equally named columns.
+- Optional: aliases for tables chosen after FROM/JOIN (initials, numbered when taken, ignored prefixes, custom
+  `Table=alias` pairs, AS, capitals), unqualified names for the default schema, earlier table first in join conditions,
+  commit keys space, `.`, `,`, parentheses and `;` (off by default; Tab and Enter always insert).
+
+Matching, ranking, aliases and join suggestions are covered by the core checks. The list manager, highlighting and
+commit keys are compiled against the SSMS editor API and have not been run in SSMS yet.

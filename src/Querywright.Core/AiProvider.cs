@@ -127,10 +127,10 @@ namespace Querywright.Core
                     throw new InvalidOperationException("Extra request JSON token limits must be positive integers.");
             if (extra.TryGetValue("temperature", out var temperature) && temperature != null && (!(temperature is double number) || number < 0 || number > 2))
                 throw new InvalidOperationException("Extra request JSON temperature must be a number from 0 to 2, or null to omit it.");
-            if (extra.TryGetValue("reasoning_effort", out var effort) && !(effort is string))
-                throw new InvalidOperationException("Extra request JSON reasoning_effort must be a string.");
-            if (extra.TryGetValue("thinking", out var thinking) && !(thinking is Dictionary<string, object?>) && !(thinking is bool))
-                throw new InvalidOperationException("Extra request JSON thinking must be an object or boolean.");
+            if (extra.TryGetValue("reasoning_effort", out var effort) && effort != null && !(effort is string))
+                throw new InvalidOperationException("Extra request JSON reasoning_effort must be a string or null to omit it.");
+            if (extra.TryGetValue("thinking", out var thinking) && thinking != null && !(thinking is Dictionary<string, object?>) && !(thinking is bool))
+                throw new InvalidOperationException("Extra request JSON thinking must be an object, boolean or null to omit it.");
             return extra;
         }
 
@@ -153,7 +153,8 @@ namespace Querywright.Core
             if (string.IsNullOrWhiteSpace(json)) return;
             var extra = Extra(json!);
             if (level == AiReasoningLevel.Off) RemoveReasoning(extra);
-            foreach (var item in extra) body[item.Key] = item.Value;
+            foreach (var item in extra)
+                if (item.Value == null && ReasoningField(item.Key)) body.Remove(item.Key); else body[item.Key] = item.Value;
             if (extra.ContainsKey("max_tokens")) body.Remove("max_completion_tokens");
             else if (extra.ContainsKey("max_completion_tokens")) body.Remove("max_tokens");
             if (body.TryGetValue("temperature", out var temperature) && temperature == null) body.Remove("temperature");

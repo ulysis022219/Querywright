@@ -42,6 +42,124 @@ namespace Querywright.Ssms
         [Description("Open the suggestion list as you type a name, '.' or space. Off shows it only on Ctrl+Space (Edit > IntelliSense > List Members).")]
         public bool SuggestWhileTyping { get; set; } = true;
 
+        [Category("Completion")]
+        [DisplayName("Smart matching and ranking")]
+        [Description("Filter the open list as you type by prefix, word starts (oi finds OrderId) and text anywhere in the name, with the best match selected and join suggestions first. Off uses the editor's default prefix list.")]
+        public bool SmartMatching { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Match word starts")]
+        [Description("Typing oi or OI matches OrderId and order_id. Needs smart matching.")]
+        public bool CamelHumps { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Rank recently used first")]
+        [Description("Among equally good matches, items you picked earlier in this SSMS session come first. Nothing is saved to disk.")]
+        public bool RankByUsage { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Assign aliases")]
+        [Description("A table or view chosen after FROM or JOIN is inserted with an alias made from the initials of its name (OrderDetails od), numbered when taken.")]
+        public bool AliasTables { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Alias with AS")]
+        [Description("Insert dbo.Orders AS o instead of dbo.Orders o.")]
+        public bool AliasWithAs { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Uppercase aliases")]
+        [Description("Generated aliases are written in capitals.")]
+        public bool UppercaseAliases { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Alias ignored prefixes")]
+        [Description("Name prefixes left out of generated aliases, separated by commas, e.g. tbl, vw.")]
+        public string AliasIgnoredPrefixes { get; set; } = "";
+
+        [Category("Completion")]
+        [DisplayName("Custom aliases")]
+        [Description("Your own aliases as Table=alias pairs separated by semicolons, e.g. Orders=ord; People=per.")]
+        public string CustomAliases { get; set; } = "";
+
+        [Category("Completion")]
+        [DisplayName("Qualify object names")]
+        [Description("Insert dbo.Orders. Off inserts Orders for the dbo schema; other schemas are always written.")]
+        public bool QualifyObjects { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Suggest join tables")]
+        [Description("After JOIN, tables linked by a foreign key to a table already in the query come first and insert their ON condition.")]
+        public bool JoinTables { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Suggest joins on matching column names")]
+        [Description("After ON, also offer conditions on columns that have the same name (and type, where known) in both tables.")]
+        public bool JoinNameMatches { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Earlier table first in join conditions")]
+        [Description("Write p.Id = o.PersonId (earlier table first) instead of o.PersonId = p.Id.")]
+        public bool SwapJoinOrder { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Order columns alphabetically")]
+        [Description("Off lists columns in table definition order.")]
+        public bool ColumnsAlphabetical { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Keywords after a table")]
+        [Description("After a table or alias in FROM, list only what can follow (WHERE, JOIN, ...); list nothing while a new alias is typed after AS.")]
+        public bool ContextKeywords { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Commit with Space")]
+        [Description("Space inserts the selected suggestion, then the space. Never applies to a soft selection (dotted outline). Tab and Enter always insert.")]
+        public bool CommitOnSpace { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Commit with .")]
+        [Description(". inserts the selected suggestion, then the dot.")]
+        public bool CommitOnDot { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Commit with ,")]
+        [Description(", inserts the selected suggestion, then the comma.")]
+        public bool CommitOnComma { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Commit with ( and )")]
+        [Description("A parenthesis inserts the selected suggestion; a function that already ends in ( gets one, not two.")]
+        public bool CommitOnParentheses { get; set; }
+
+        [Category("Completion")]
+        [DisplayName("Commit with ;")]
+        [Description("; inserts the selected suggestion, then the semicolon.")]
+        public bool CommitOnSemicolon { get; set; }
+
+        internal string CommitCharacters() =>
+            (CommitOnSpace ? " " : "") + (CommitOnDot ? "." : "") + (CommitOnComma ? "," : "") + (CommitOnParentheses ? "()" : "") + (CommitOnSemicolon ? ";" : "");
+
+        /// <summary>Core completion settings. <paramref name="filter"/> false returns every candidate for the item manager to filter as the user types.</summary>
+        internal Querywright.Core.CompletionOptions Completion(bool filter)
+        {
+            var aliases = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string pair in (CustomAliases ?? "").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                int equals = pair.IndexOf('=');
+                if (equals > 0 && pair.Substring(0, equals).Trim().Length > 0 && pair.Substring(equals + 1).Trim().Length > 0)
+                    aliases[pair.Substring(0, equals).Trim()] = pair.Substring(equals + 1).Trim();
+            }
+            return new Querywright.Core.CompletionOptions
+            {
+                QualifySingleTable = QualifySingleTable, Filter = filter, CamelHumps = CamelHumps, MaxItems = filter ? 200 : 5000,
+                AliasTables = AliasTables, AliasWithAs = AliasWithAs, UppercaseAliases = UppercaseAliases, Aliases = aliases,
+                IgnoredPrefixes = (AliasIgnoredPrefixes ?? "").Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries),
+                QualifyObjects = QualifyObjects, JoinTables = JoinTables, JoinNameMatches = JoinNameMatches, SwapJoinOrder = SwapJoinOrder,
+                ColumnsAlphabetical = ColumnsAlphabetical, ContextKeywords = ContextKeywords,
+            };
+        }
+
         [Category("Analysis")]
         [DisplayName("Show analysis squiggles")]
         [Description("Underline code-analysis findings (SW rules) as you type. Rule severities come from the shared settings file. Off hides them after the next edit; Analyze document still works.")]

@@ -223,6 +223,15 @@ namespace Querywright.Ssms
             Add(0x012A, () => TransformSelectionAsync(sql => SqlRefactoring.WrapAsDynamicSql(sql), "Wrap in dynamic SQL"));
             Add(0x012B, () => TransformSelectionAsync(SqlRefactoring.UnwrapDynamicSql, "Unwrap dynamic SQL"));
             Add(0x012D, SearchCodeAsync);
+            Add(0x012E, () => ExecuteSpanAsync(SqlNavigation.BatchAt, "in this batch"));
+            Add(0x012F, () => ExecuteSpanAsync(SqlNavigation.ToCursor, "before the caret"));
+            Add(0x0130, () => TransformSelectionAsync(SqlTextTools.Unformat, "Unformat"));
+            Add(0x0131, () => TransformSelectionAsync(text => SqlTextTools.AddCommas(text), "Add commas"));
+            Add(0x0132, () => TransformSelectionAsync(text => SqlTextTools.AddCommas(text, quote: true), "Add quotes and commas"));
+            Add(0x0133, () => TransformSelectionAsync(SqlTextTools.RemoveComments, "Remove comments"));
+            Add(0x0134, () => TransformAtCaretAsync((sql, caret, newline) => SqlTextTools.ExecuteSqlToPlain(sql, caret, newline), "sp_executesql to SQL"));
+            Add(0x0135, InlineExecAsync);
+            Add(0x0136, () => TransformAtCaretAsync((sql, caret, newline) => SqlTextTools.InsertToUpdate(sql, caret, newline), "INSERT to UPDATE"));
             Add(0x012C, () => Task.Run(() => UpdateCheck.RunAsync(this, manual: true)));
             Add(0x0121, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(WorkbenchOptions)); });
             // Warm the caches that the typing path reads without touching the disk.
@@ -581,7 +590,7 @@ namespace Querywright.Ssms
                 int position = view.Caret.Position.BufferPosition.Position;
                 string sql = snapshot.GetText();
                 var tables = await RequireTablesAsync();
-                var result = await Task.Run(() => SqlCompletion.Complete(sql, position, tables, qualifySingleTable: Options?.QualifySingleTable == true));
+                var result = await Task.Run(() => SqlCompletion.Complete(sql, position, tables, Options?.Completion(filter: true) ?? new CompletionOptions()));
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (view.IsClosed || view.TextSnapshot != snapshot) throw new InvalidOperationException("Query changed. Request suggestions again.");
                 if (result.Items.Count == 0)
@@ -1030,6 +1039,58 @@ namespace Querywright.Ssms
             var span = view.Selection.IsEmpty ? new SnapshotSpan(snapshot, 0, snapshot.Length) : new SnapshotSpan(view.Selection.Start.Position, view.Selection.End.Position);
             string result = transform(span.GetText());
             ReplaceText(view, span, result, result.Length, 0, 0, name); // caret is relative to the span start
+        });
+
+        private static string NewlineOf(string sql) => sql.Contains("\r\n") || !sql.Contains("\n") ? "\r\n" : "\n";
+
+        /// <summary>Whole-window rewrite of the statement under the caret, as one undo step.</summary>
+        private Task TransformAtCaretAsync(Func<string, int, string, string> transform, string name) => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            var snapshot = view.TextSnapshot;
+            string sql = snapshot.GetText();
+            int caret = view.Caret.Position.BufferPosition.Position;
+            string result = transform(sql, caret, NewlineOf(sql));
+            if (result != sql) ReplaceText(view, new SnapshotSpan(snapshot, 0, snapshot.Length), result, Math.Min(caret, result.Length), 0, 0, name);
+        });
+
+        /// <summary>Replaces the EXEC under the caret with the procedure's body, read from the connected database. Read-only on the server.</summary>
+        private Task InlineExecAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            var snapshot = view.TextSnapshot;
+            string sql = snapshot.GetText();
+            int caret = view.Caret.Position.BufferPosition.Position;
+            string target = SqlTextTools.ExecTarget(sql, caret);
+            // ponytail: one- and two-part names from the connected database only; a name that itself contains a dot is not handled.
+            var parts = target.Split('.');
+            if (parts.Length > 2) throw new InvalidOperationException("Inline EXEC reads the procedure from the connected database; drop the database name from " + target + ".");
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds " + target + ".");
+            string schema = parts.Length == 2 ? parts[0] : "dbo", name = parts[parts.Length - 1];
+            var details = await Task.Run(() => LiveMetadata.Details(connection, schema, name));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (details?.Definition == null)
+                throw new InvalidOperationException(target + " was not found, or its definition is encrypted or not visible with your permissions (VIEW DEFINITION).");
+            if (view.TextSnapshot != snapshot) throw new InvalidOperationException("The script changed while the procedure was read; run the command again.");
+            string result = SqlTextTools.InlineExec(sql, caret, details.Definition, NewlineOf(sql));
+            ReplaceText(view, new SnapshotSpan(snapshot, 0, snapshot.Length), result, Math.Min(caret, result.Length), 0, 0, "Inline EXEC");
+        });
+
+        /// <summary>Selects a caret-relative part of the script and runs SSMS's own Execute. Only on this explicit command.</summary>
+        private Task ExecuteSpanAsync(Func<string, int, StatementSpan> find, string where) => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            var snapshot = view.TextSnapshot;
+            var span = find(snapshot.GetText(), view.Caret.Position.BufferPosition.Position);
+            if (span == null || span.Length == 0) throw new InvalidOperationException("Nothing to execute " + where + ".");
+            var dte = await GetServiceAsync(typeof(SDTE));
+            if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
+            view.Selection.Select(new SnapshotSpan(snapshot, span.Start, span.Length), false);
+            dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { "Query.Execute", "" });
         });
 
         /// <summary>Runs the script in each ticked database and shows the first result set of each, merged, in a window.</summary>

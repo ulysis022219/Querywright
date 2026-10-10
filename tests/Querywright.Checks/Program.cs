@@ -383,8 +383,8 @@ var strict = new WorkbenchSettings { SW005 = RuleSeverity.Disabled };
 Check(SqlAnalysis.Analyze("DELETE FROM dbo.T;", settings: strict).Diagnostics.Count == 0 && strict.Severity("PARSE1") == RuleSeverity.Error, "new rules configurable");
 Console.WriteLine($"PASS: {checks} total checks including analysis batch 2. SSMS integration not tested.");
 
-Check(Rules("DECLARE c CURSOR FOR SELECT 1; OPEN c;").SequenceEqual(new[] { "SW018" }) && Rules("DECLARE @c CURSOR; SET @c = CURSOR FOR SELECT 1; OPEN @c;").SequenceEqual(new[] { "SW018" }) &&
-    Rules("DECLARE c CURSOR LOCAL FAST_FORWARD FOR SELECT 1; DECLARE g CURSOR GLOBAL FOR SELECT 1;").Length == 0, "cursor scope");
+Check(Rules("DECLARE c CURSOR FOR SELECT 1; OPEN c; DEALLOCATE c;").SequenceEqual(new[] { "SW018" }) && Rules("DECLARE @c CURSOR; SET @c = CURSOR FOR SELECT 1; OPEN @c;").SequenceEqual(new[] { "SW018" }) &&
+    Rules("DECLARE c CURSOR LOCAL FAST_FORWARD FOR SELECT 1; DECLARE g CURSOR GLOBAL FOR SELECT 1; DEALLOCATE c; DEALLOCATE g;").Length == 0, "cursor scope");
 Check(Rules("CREATE PROCEDURE dbo.p AS BEGIN SET NOCOUNT ON; IF 1 = 1 RETURN; SELECT 1; END").SequenceEqual(new[] { "SW019" }) &&
     Rules("CREATE PROCEDURE dbo.p AS BEGIN SET NOCOUNT ON; RETURN 0; END").Length == 0 && Rules("RETURN;").Length == 0, "bare RETURN in procedure");
 Check(Rules("CREATE TABLE #t (a int, b int NOT NULL);").SequenceEqual(new[] { "SW020" }) && Rules("DECLARE @t TABLE (a int); SELECT a FROM @t;").SequenceEqual(new[] { "SW020" }) &&
@@ -403,7 +403,7 @@ Check(Rules("SELECT a FROM dbo.T WITH (NOLOCK) JOIN dbo.U u WITH (READUNCOMMITTE
 Check(Rules("CREATE PROCEDURE dbo.p AS BEGIN SET NOCOUNT ON; WAITFOR DELAY '00:00:01'; RETURN 0; END").SequenceEqual(new[] { "SW025" }) &&
     Rules("WAITFOR DELAY '00:00:01';").Length == 0, "WAITFOR DELAY in procedure");
 Check(Rules("SELECT TOP (5) a FROM dbo.T;").SequenceEqual(new[] { "SW026" }) &&
-    Rules("SELECT TOP (5) a FROM dbo.T ORDER BY a; IF EXISTS (SELECT TOP 1 1 FROM dbo.T) SELECT 1;").Length == 0, "TOP without ORDER BY");
+    Rules("SELECT TOP (5) a FROM dbo.T ORDER BY a; IF EXISTS (SELECT TOP (1) 1 FROM dbo.T) SELECT 1;").Length == 0, "TOP without ORDER BY");
 Check(Rules("DECLARE @s nvarchar(100) = N'SELECT 1'; EXEC (@s);").SequenceEqual(new[] { "SW027" }) &&
     Rules("DECLARE @s nvarchar(100) = N'SELECT 1'; EXEC sys.sp_executesql @s;").Length == 0, "EXECUTE(string)");
 Console.WriteLine($"PASS: {checks} total checks including analysis batch 3. SSMS integration not tested.");
@@ -427,12 +427,12 @@ Check(Rules("CREATE TABLE #t (a int NOT NULL, CONSTRAINT PK_t PRIMARY KEY (a));"
 Check(Rules("DECLARE @f float, @r real; SELECT @f, @r;").SequenceEqual(new[] { "SW037" }) && Rules("DECLARE @m money; SELECT @m;").SequenceEqual(new[] { "SW038" }) &&
     Rules("CREATE TABLE dbo.T (v timestamp NULL);").SequenceEqual(new[] { "SW039" }) && Rules("CREATE TABLE dbo.T (v rowversion NULL);").Length == 0 &&
     Rules("DECLARE @d decimal; SELECT @d;").SequenceEqual(new[] { "SW045" }) && Rules("DECLARE @d decimal(9, 2), @n numeric(5); SELECT @d, @n;").Length == 0, "data type rules");
-Check(Rules("SELECT 'x' = 1;").SequenceEqual(new[] { "SW040" }) && Rules("SELECT 1 AS 'x';").SequenceEqual(new[] { "SW040" }) &&
-    Rules("SELECT 1 AS x, 2 AS [y], z = 3;").Length == 0, "string alias");
+Check(Rules("SELECT 'x' = 1;").SequenceEqual(new[] { "SW040", "SW049" }) && Rules("SELECT 1 AS 'x';").SequenceEqual(new[] { "SW040" }) &&
+    Rules("SELECT 1 AS x, 2 AS [y], 3 z;").Length == 0, "string alias");
 Check(Rules("CREATE PROCEDURE dbo.p;2 AS SET NOCOUNT ON;").SequenceEqual(new[] { "SW041" }) && Rules("CREATE PROCEDURE dbo.p AS SET NOCOUNT ON;").Length == 0, "numbered procedure");
 Check(Rules("SELECT a FROM dbo.T WHERE a !< 1;").SequenceEqual(new[] { "SW042" }) && Rules("SELECT a FROM dbo.T WHERE a !> 1 OR a <> 2;").SequenceEqual(new[] { "SW042" }), "!< !>");
-Check(Rules("SELECT TOP 100 PERCENT a FROM dbo.T ORDER BY a;").SequenceEqual(new[] { "SW043" }) &&
-    Rules("SELECT TOP 50 PERCENT a FROM dbo.T ORDER BY a;").Length == 0, "TOP 100 PERCENT");
+Check(Rules("SELECT TOP (100) PERCENT a FROM dbo.T ORDER BY a;").SequenceEqual(new[] { "SW043" }) &&
+    Rules("SELECT TOP (50) PERCENT a FROM dbo.T ORDER BY a;").Length == 0, "TOP 100 PERCENT");
 Check(Rules("DECLARE @t sysname = N'x'; EXEC('SELECT 1 FROM ' + @t);").Contains("SW047") && !Rules("EXEC('SELECT 1');").Contains("SW047"), "concatenated EXEC");
 Check(SqlRefactoring.UnwrapDynamicSql(SqlRefactoring.WrapAsDynamicSql("SELECT 'a';")).Trim() == "SELECT 'a';" && SqlRefactoring.WrapAsDynamicSql("SELECT 'a';").Contains("N'SELECT ''a'';'"), "wrap and unwrap dynamic SQL");
 Check(new[] { "N'abc", "'", "EXEC('x" }.All(s => { try { SqlRefactoring.UnwrapDynamicSql(s); return false; } catch (InvalidOperationException) { return true; } }), "unwrap unterminated literal warns");
@@ -1234,4 +1234,175 @@ Check(typeof(WorkbenchSettings).GetProperties().Where(p => p.PropertyType == typ
     Check(SchemaDiskCache.Read(new System.IO.StringReader("junk")) == null && SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 2\nC")) == null
         && SchemaDiskCache.Read(new System.IO.StringReader("querywright-schema 2\nX\ty")) == null && SchemaDiskCache.Read(new System.IO.StringReader("")) == null, "unreadable schema cache yields null");
 }
-Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes, object refactors, stress, fuzz and the schema cache. SSMS integration not tested.");
+void Same(string actual, string expected, string name)
+{
+    if (actual != expected) Console.WriteLine("  got: " + actual.Replace("\r", "\\r").Replace("\n", "\\n"));
+    Check(actual == expected, name);
+}
+bool Raises<T>(Action action) where T : Exception
+{
+    try { action(); }
+    catch (T) { return true; }
+    return false;
+}
+{
+    Same(SqlTextTools.AddCommas("a\r\nb\r\n\r\nc\r\n"), "a,\r\nb,\r\n\r\nc\r\n", "add commas");
+    Same(SqlTextTools.AddCommas("  x,\n  o'k\n  'q'\n  N'r'", quote: true), "  'x',\n  'o''k',\n  'q',\n  N'r'", "add quotes and commas");
+    Check(Raises<InvalidOperationException>(() => SqlTextTools.AddCommas(" \r\n ")), "add commas needs lines");
+    Same(SqlTextTools.Comment("  a\n    b\n\n  c"), "  --a\n  --  b\n\n  --c", "comment lines");
+    Same(SqlTextTools.Uncomment("  --a\n  --  b\n\n  --c"), "  a\n    b\n\n  c", "uncomment lines");
+    Same(SqlTextTools.Uncomment("/* x */"), " x ", "uncomment block");
+    Check(Raises<InvalidOperationException>(() => SqlTextTools.Uncomment("SELECT 1;")) && Raises<InvalidOperationException>(() => SqlTextTools.Comment("\n")), "comment commands need lines");
+    Same(SqlTextTools.RemoveComments("SELECT 1 -- one\r\n-- whole\r\nFROM t /* b */ WHERE a = 1;"), "SELECT 1\r\nFROM t WHERE a = 1;", "remove comments");
+    Same(SqlTextTools.RemoveComments("SELECT '--x'/* c */FROM t;"), "SELECT '--x' FROM t;", "remove comment between tokens");
+    Check(Raises<InvalidOperationException>(() => SqlTextTools.RemoveComments("SELECT '/* x */';")), "remove comments ignores strings");
+    Same(SqlTextTools.Unformat("SELECT a,\r\n       b -- note\r\nFROM t\r\nGO\r\nSELECT 2;"), "SELECT a, b -- note\r\nFROM t\r\nGO\r\nSELECT 2;", "unformat");
+    Same(SqlTextTools.Unformat("SELECT 'a  b',\n\t[c  d]\nFROM   t;"), "SELECT 'a  b', [c  d] FROM t;", "unformat keeps literals");
+
+    string dynamic = "EXEC sp_executesql N'SELECT * FROM dbo.T WHERE id = @id AND n = @n', N'@id int, @n nvarchar(10)', @id = 5, @n = N'x';";
+    Same(SqlTextTools.ExecuteSqlToPlain(dynamic, 3), "DECLARE @id int = 5;\r\nDECLARE @n nvarchar(10) = N'x';\r\nSELECT * FROM dbo.T WHERE id = @id AND n = @n;", "sp_executesql to SQL");
+    Same(SqlTextTools.ExecuteSqlToPlain("SELECT 0;\nEXEC sys.sp_executesql @stmt = N'SELECT ''a'';';\nSELECT 9;", 12), "SELECT 0;\nSELECT 'a';\nSELECT 9;", "sp_executesql without parameters");
+    Check(Raises<InvalidOperationException>(() => SqlTextTools.ExecuteSqlToPlain("EXEC sp_executesql @sql;", 0)) &&
+        Raises<InvalidOperationException>(() => SqlTextTools.ExecuteSqlToPlain("EXEC dbo.P;", 0)) &&
+        Raises<FormatException>(() => SqlTextTools.ExecuteSqlToPlain("EXEC sp_executesql N'x' N'y';", 0)), "sp_executesql conversion rejects what it cannot read");
+
+    string proc = "CREATE PROCEDURE dbo.P @a int, @b int = 2, @c int = 3 AS BEGIN SELECT @a + @b + @c; END";
+    Same(SqlTextTools.InlineExec("EXEC dbo.P @a = 1, @b = @x;", 2, proc), "DECLARE @a int = 1;\r\nDECLARE @b int = @x;\r\nDECLARE @c int = 3;\r\nSELECT @a + @b + @c;", "inline EXEC");
+    Same(SqlTextTools.InlineExec("EXEC dbo.P 7, @b;", 2, proc, "\n"), "DECLARE @a int = 7;\nDECLARE @c int = 3;\nSELECT @a + @b + @c;", "inline EXEC reuses a same-named variable");
+    Check(SqlTextTools.ExecTarget("SELECT 1; EXEC [dbo].[P] 1;", 12) == "dbo.P", "EXEC target");
+    Check(Raises<InvalidOperationException>(() => SqlTextTools.InlineExec("EXEC dbo.P 1;", 0, "CREATE PROCEDURE dbo.P @a int AS IF @a = 1 RETURN; SELECT 1;")) &&
+        Raises<InvalidOperationException>(() => SqlTextTools.InlineExec("EXEC @r = dbo.P 1;", 0, proc)) &&
+        Raises<InvalidOperationException>(() => SqlTextTools.InlineExec("EXEC dbo.P 1, 2, 3, 4;", 0, proc)) &&
+        Raises<InvalidOperationException>(() => SqlTextTools.InlineExec("EXEC dbo.P @z = 1;", 0, proc)) &&
+        Raises<InvalidOperationException>(() => SqlTextTools.InlineExec("EXEC dbo.P 1;", 0, "SELECT 1;")), "inline EXEC rejects unsafe cases");
+
+    Same(SqlTextTools.InsertToUpdate("INSERT INTO dbo.T (a, [b c]) VALUES (1, 'x');", 0, "\n"),
+        "UPDATE dbo.T\nSET a = 1,\n    [b c] = 'x'\nWHERE 1 = 0 /* replace with the key predicate */;", "INSERT to UPDATE");
+    Check(Raises<InvalidOperationException>(() => SqlTextTools.InsertToUpdate("INSERT INTO dbo.T VALUES (1);", 0)) &&
+        Raises<InvalidOperationException>(() => SqlTextTools.InsertToUpdate("INSERT INTO dbo.T (a) VALUES (1), (2);", 0)) &&
+        Raises<InvalidOperationException>(() => SqlTextTools.InsertToUpdate("INSERT INTO dbo.T (a) SELECT 1;", 0)) &&
+        Raises<InvalidOperationException>(() => SqlTextTools.InsertToUpdate("SELECT 1;", 0)), "INSERT to UPDATE rejects other shapes");
+
+    string batches = "SELECT 1;\r\nGO\r\nSELECT 2;\r\nSELECT 3;\r\nGO\r\nSELECT 'GO';\r\n";
+    string Text(StatementSpan? s) => s == null ? "<null>" : batches.Substring(s.Start, s.Length);
+    Same(Text(SqlNavigation.BatchAt(batches, batches.IndexOf("SELECT 3"))), "SELECT 2;\r\nSELECT 3;", "current batch");
+    Same(Text(SqlNavigation.BatchAt(batches, 0)), "SELECT 1;", "first batch");
+    Same(Text(SqlNavigation.BatchAt(batches, batches.Length)), "SELECT 'GO';", "last batch");
+    Same(Text(SqlNavigation.ToCursor(batches, batches.IndexOf("SELECT 2") + 3)), "SELECT 1;\r\nGO\r\nSELECT 2;", "script to cursor");
+    Check(SqlNavigation.BatchAt("GO\r\n\r\nGO", 3) == null, "empty batch");
+
+    Check(Rules("SELECT a FROM dbo.T WHERE a != 1;").SequenceEqual(new[] { "SW048" }) && Rules("SELECT a FROM dbo.T WHERE a <> 1;").Length == 0, "!= operator");
+    Same(FixOne("SELECT a FROM dbo.T WHERE a ! = 1 AND b != 2;", "SW048"), "SELECT a FROM dbo.T WHERE a <> 1 AND b != 2;", "fix !=");
+    Check(Rules("SELECT x = a FROM dbo.T;").SequenceEqual(new[] { "SW049" }) && Rules("SELECT @x = a FROM dbo.T;").All(r => r != "SW049"), "alias = expression");
+    Same(FixOne("SELECT x = a + 1, b FROM dbo.T;", "SW049"), "SELECT a + 1 AS x, b FROM dbo.T;", "fix alias = expression");
+    Check(Rules("SELECT TOP 5 a FROM dbo.T ORDER BY a;").SequenceEqual(new[] { "SW050" }), "TOP without parentheses");
+    Same(FixOne("SELECT TOP 5 PERCENT a FROM dbo.T ORDER BY a;", "SW050"), "SELECT TOP (5) PERCENT a FROM dbo.T ORDER BY a;", "fix TOP");
+    Check(Rules("SELECT a FROM dbo.T (NOLOCK);").SequenceEqual(new[] { "SW024", "SW051" }) && Rules("SELECT a FROM dbo.T WITH (NOLOCK);").SequenceEqual(new[] { "SW024" }), "table hint without WITH");
+    Same(FixOne("SELECT a FROM dbo.T AS t (NOLOCK);", "SW051"), "SELECT a FROM dbo.T AS t WITH (NOLOCK);", "fix table hint");
+    Same(FixOne("SELECT CASE WHEN a = 1 THEN 2 END FROM dbo.T;", "SW004"), "SELECT CASE WHEN a = 1 THEN 2 ELSE NULL END FROM dbo.T;", "fix CASE without ELSE");
+    Same(FixOne("SELECT 1 AS 'x y', 'it''s' = 2;", "SW040"), "SELECT 1 AS [x y], 'it''s' = 2;", "fix string alias");
+    Check(Rules("SELECT a, COUNT(*) FROM dbo.T WHERE a > 1 GROUP BY ALL a;").SequenceEqual(new[] { "SW052" }), "GROUP BY ALL");
+    Check(Rules("SETUSER 'x';").SequenceEqual(new[] { "SW053" }), "SETUSER");
+    Check(Rules("DBCC DBREINDEX ('dbo.T');").SequenceEqual(new[] { "SW054" }) && Rules("DBCC CHECKDB;").Length == 0, "deprecated DBCC");
+    Check(Rules("DECLARE @v sql_variant; SET @v = 1;").SequenceEqual(new[] { "SW055" }), "SQL_VARIANT");
+    Check(Rules("SELECT a INTO #t FROM dbo.T;").SequenceEqual(new[] { "SW056" }), "SELECT INTO");
+    Check(Rules("SELECT a FROM dbo.T OPTION (MAXDOP 1);").SequenceEqual(new[] { "SW057" }) && Rules("SELECT a FROM dbo.T OPTION (RECOMPILE);").Length == 0, "query hint");
+    Check(Rules("SELECT t.a FROM dbo.T AS t INNER HASH JOIN dbo.U AS u ON u.a = t.a;").SequenceEqual(new[] { "SW058" }), "join hint");
+    Check(Rules("SET NOCOUNT OFF;").SequenceEqual(new[] { "SW059" }) && Rules("SET NOCOUNT ON;").Length == 0, "SET NOCOUNT OFF");
+    Check(Rules("SET FORCEPLAN ON;").SequenceEqual(new[] { "SW060" }) && Rules("SET FORCEPLAN OFF;").Length == 0, "SET FORCEPLAN");
+    Check(Rules("CREATE PROCEDURE dbo.P WITH RECOMPILE AS BEGIN SET NOCOUNT ON; SELECT 1; END").SequenceEqual(new[] { "SW061" }), "WITH RECOMPILE");
+    Check(Rules("INSERT INTO dbo.T (a) SELECT a FROM dbo.U ORDER BY a;").SequenceEqual(new[] { "SW062" }) &&
+        Rules("INSERT INTO dbo.T (a) SELECT TOP (5) a FROM dbo.U ORDER BY a;").Length == 0, "ORDER BY in INSERT SELECT");
+    Check(Rules("CREATE TRIGGER dbo.Tr ON dbo.T AFTER INSERT AS BEGIN PRINT 'x'; SELECT a FROM inserted; DECLARE @n int; SELECT @n = COUNT(*) FROM inserted; INSERT INTO dbo.L (n) SELECT @n; END")
+        .SequenceEqual(new[] { "SW063", "SW064" }), "trigger output");
+    Check(Rules("SELECT 1; -- TODO: later").SequenceEqual(new[] { "SW065" }) && Rules("SELECT 1; /* FIXME */").SequenceEqual(new[] { "SW065" }) &&
+        Rules("SELECT 'TODO'; -- debugger notes").Length == 0, "unfinished-work comment");
+    Check(Rules("DECLARE c CURSOR LOCAL FOR SELECT 1; OPEN c; CLOSE c;").SequenceEqual(new[] { "SW066" }) &&
+        Rules("DECLARE c CURSOR LOCAL FOR SELECT 1; OPEN c; CLOSE c; DEALLOCATE C;").Length == 0, "cursor never deallocated");
+    Check(Rules("SELECT dbo.T.a FROM dbo.T;").SequenceEqual(new[] { "SW067" }) && Rules("SELECT T.a FROM dbo.T;").Length == 0, "schema-qualified column");
+    Check(Rules("DROP INDEX T.IX_a;").SequenceEqual(new[] { "SW068" }) && Rules("DROP INDEX IX_a ON dbo.T;").Length == 0, "old DROP INDEX");
+    Check(Rules("GRANT ALL ON dbo.T TO r;").SequenceEqual(new[] { "SW069" }) && Rules("GRANT SELECT ON dbo.T TO r;").Length == 0, "GRANT ALL");
+    Check(Rules("SELECT a FROM dbo.T WHERE a IN (SELECT a FROM dbo.U);").SequenceEqual(new[] { "SW070" }) && Rules("SELECT a FROM dbo.T WHERE a IN (1, 2);").Length == 0, "IN subquery");
+    Check(Rules("DECLARE @s varchar(2) = 'x'; SELECT @s;").SequenceEqual(new[] { "SW071" }) && Rules("DECLARE @s varchar(3) = 'x', @c char(1) = 'y'; SELECT @s, @c;").Length == 0, "short variable-length type");
+    Check(Rules("CREATE INDEX IX_a ON dbo.T (a);").SequenceEqual(new[] { "SW072" }) && Rules("CREATE NONCLUSTERED INDEX IX_a ON dbo.T (a);").Length == 0, "index type");
+    Check(Rules("SELECT name FROM sysobjects;").SequenceEqual(new[] { "SW073" }) && Rules("SELECT name FROM dbo.sysobjects AS o;").SequenceEqual(new[] { "SW073" }) &&
+        Rules("SELECT name FROM sys.objects;").Length == 0 && Rules("SELECT name FROM app.sysobjects;").Length == 0, "SQL Server 2000 system table");
+    Check(new WorkbenchSettings().Severity("SW048") == RuleSeverity.Info && new WorkbenchSettings().Severity("SW073") == RuleSeverity.Warning, "new rule severities");
+    Check(Enumerable.Range(1, 73).All(i => typeof(WorkbenchSettings).GetProperty("SW" + i.ToString("000")) != null), "every rule has a setting");
+    Check(Rules("-- querywright-disable SW065\r\nSELECT 1; -- TODO").Length == 0, "TODO rule can be suppressed");
+
+    string region = "select 1\r\n-- querywright:format off\r\nselect   2 ,  3\r\n-- querywright:format on\r\nselect 4";
+    string regionFormatted = SqlFormatting.Format(region);
+    Check(regionFormatted.StartsWith("SELECT 1") && regionFormatted.Contains("-- querywright:format off\r\nselect   2 ,  3\r\n-- querywright:format on\r\n") && regionFormatted.TrimEnd().EndsWith("SELECT 4;"), "format off region kept verbatim");
+    Check(SqlFormatting.Format("select 1\r\n-- querywright:format off\r\nselect   2 ,  3").EndsWith("-- querywright:format off\r\nselect   2 ,  3"), "format off without on runs to the end");
+    Check(SqlFormatting.Format(regionFormatted) == regionFormatted, "format region is stable");
+    Check(!SqlFormatting.Format("select 1\r\n-- querywright:format on\r\nselect   2 ,  3").Contains("select   2"), "format on alone changes nothing");
+}
+CompletionResult Sug(string text, CompletionOptions? o = null)
+{
+    int at = text.IndexOf('|');
+    return SqlCompletion.Complete(text.Remove(at, 1), at, fkCatalog, o ?? new CompletionOptions());
+}
+Check(SqlCompletion.Match("OrderId", "oi") == MatchKind.Camel && SqlCompletion.Match("order_id", "OI") == MatchKind.Camel &&
+    SqlCompletion.Match("OrderId", "ordi") == MatchKind.Camel && SqlCompletion.Match("HTTPServer", "hs") == MatchKind.Camel, "word-start match");
+Check(SqlCompletion.Match("OrderId", "ord") == MatchKind.Prefix && SqlCompletion.Match("OrderId", "orderid") == MatchKind.Exact &&
+    SqlCompletion.Match("OrderId", "") == MatchKind.Prefix, "prefix and exact match");
+Check(SqlCompletion.Match("SalesOrder", "ord") == MatchKind.Substring && SqlCompletion.Match("OrderId", "xz") == MatchKind.None, "substring match and no match");
+Check(SqlCompletion.Match("OrderId", "oi", camelHumps: false) == MatchKind.None && SqlCompletion.Match("SalesOrder", "ord", anywhere: false) == MatchKind.None, "match kinds can be turned off");
+Check(MatchKind.Exact > MatchKind.Prefix && MatchKind.Prefix > MatchKind.Camel && MatchKind.Camel > MatchKind.Substring, "match kinds rank");
+Check(SqlCompletion.Highlights("OrderId", "oi").SequenceEqual(new[] { 0, 5 }) && SqlCompletion.Highlights("SalesOrder", "ord").SequenceEqual(new[] { 5, 6, 7 }) &&
+    SqlCompletion.Highlights("OrderId", "or").SequenceEqual(new[] { 0, 1 }) && SqlCompletion.Highlights("OrderId", "xz").Count == 0, "match highlights");
+Check(SqlCompletion.Alias("OrderDetails") == "od" && SqlCompletion.Alias("People") == "p" && SqlCompletion.Alias("order_details") == "od", "alias from word initials");
+Check(SqlCompletion.Alias("tblOrderDetails", new CompletionOptions { IgnoredPrefixes = new[] { "tbl" } }) == "od" &&
+    SqlCompletion.Alias("tbl", new CompletionOptions { IgnoredPrefixes = new[] { "tbl" } }) == "t", "alias ignores a prefix but not the whole name");
+Check(SqlCompletion.Alias("Orders", null, new[] { "o" }) == "o2" && SqlCompletion.Alias("Orders", null, new[] { "o", "o2" }) == "o3", "alias avoids taken names");
+Check(SqlCompletion.Alias("InventoryStock") == "is2" && SqlCompletion.Alias("123") == "t", "alias avoids reserved words; fallback");
+Check(SqlCompletion.Alias("Order_Details", new CompletionOptions { UppercaseAliases = true }) == "OD", "uppercase alias");
+Check(SqlCompletion.Alias("People", new CompletionOptions { Aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["people"] = "per" } }) == "per", "user-defined alias");
+var aliasing = new CompletionOptions { AliasTables = true };
+Check(Sug("SELECT * FROM Peo|", aliasing).Items.Single(i => i.Name == "People").InsertText == "dbo.People p", "table inserted with alias");
+Check(Sug("SELECT * FROM Peo|").Items.Single(i => i.Name == "People").InsertText == "dbo.People", "no alias by default");
+Check(Sug("SELECT * FROM Peo|", new CompletionOptions { AliasTables = true, AliasWithAs = true }).Items.Single(i => i.Name == "People").InsertText == "dbo.People AS p", "alias with AS");
+Check(Sug("SELECT * FROM Peo| x", aliasing).Items.Single(i => i.Name == "People").InsertText == "dbo.People", "existing alias kept");
+Check(Sug("SELECT * FROM dbo.People p JOIN Peo|", aliasing).Items.Single(i => i.Name == "People").InsertText == "dbo.People p2", "second copy gets a new alias");
+Check(Sug("SELECT * FROM dbo.People p WHERE EXISTS (SELECT 1 FROM Lin|", aliasing).Items.Single(i => i.Name == "Lines").InsertText == "sales.Lines l", "alias in subquery");
+var unqualified = new CompletionOptions { QualifyObjects = false };
+Check(Sug("SELECT * FROM Peo|", unqualified).Items.Single(i => i.Name == "People").InsertText == "People" &&
+    Sug("SELECT * FROM Lin|", unqualified).Items.Single(i => i.Name == "Lines").InsertText == "sales.Lines", "default schema dropped, other schemas kept");
+var joinTable = Sug("SELECT * FROM dbo.People p JOIN |", aliasing).Items[0];
+Check(joinTable.Name == "Orders o ON o.PersonId = p.Id" && joinTable.InsertText == "dbo.Orders o ON o.PersonId = p.Id" && joinTable.Promoted, "JOIN leads with FK table and condition");
+Check(Sug("SELECT * FROM dbo.People p JOIN |").Items[0].InsertText == "dbo.Orders ON Orders.PersonId = p.Id", "FK join table without alias");
+Check(Sug("SELECT * FROM dbo.Orders o JOIN |", aliasing).Items.Select(i => i.InsertText).Take(2).OrderBy(n => n)
+    .SequenceEqual(new[] { "dbo.People p ON p.Id = o.PersonId", "sales.Lines l ON l.OrderId = o.OrderId" }), "FK join tables in both directions");
+Check(Sug("SELECT * FROM dbo.People p JOIN |", new CompletionOptions { AliasTables = true, SwapJoinOrder = true }).Items[0].InsertText == "dbo.Orders o ON p.Id = o.PersonId", "swapped join order");
+Check(Sug("SELECT * FROM dbo.People p JOIN Ord|", aliasing).Items[0].Promoted && Sug("SELECT * FROM dbo.People p JOIN Ord|", aliasing).Items[1].InsertText == "dbo.Orders o", "typed join table keeps the FK item first");
+Check(Sug("SELECT * FROM dbo.People p JOIN |", new CompletionOptions { JoinTables = false }).Items.All(i => !i.Promoted), "join tables can be turned off");
+Check(Sug("SELECT * FROM dbo.People JOIN |").Items.All(i => !i.InsertText.StartsWith("dbo.People ON")), "self join needs an alias");
+var onItems = Sug("SELECT * FROM sales.Lines l JOIN sales.Notes n ON |");
+Check(onItems.Items[0].Name == "n.OrderId = l.OrderId AND n.LineNumber = l.LineNumber" && onItems.Items[0].Description.StartsWith("foreign key") &&
+    onItems.Items.Single(i => i.Name == "n.OrderId = l.OrderId").Description.StartsWith("matching column name") &&
+    onItems.Items.Any(i => i.Name == "n.LineNumber = l.LineNumber"), "ON offers FK then matching names");
+Check(Sug("SELECT * FROM sales.Lines l JOIN sales.Notes n ON |", new CompletionOptions { JoinNameMatches = false }).Items.Count(i => i.Promoted) == 1, "name matches can be turned off");
+Check(Sug("SELECT * FROM sales.Lines l JOIN sales.Notes n ON |", new CompletionOptions { SwapJoinOrder = true }).Items[0].Name == "l.OrderId = n.OrderId AND l.LineNumber = n.LineNumber", "swapped ON condition");
+var afterTable = Sug("SELECT * FROM dbo.People |");
+Check(afterTable.Soft && afterTable.Items.All(i => i.Description == "keyword") && Names(afterTable).Contains("WHERE") && Names(afterTable).Contains("INNER JOIN"), "after a table: keywords, alias may be typed");
+var afterAlias = Sug("SELECT * FROM dbo.People p |");
+Check(!afterAlias.Soft && Names(afterAlias).Contains("LEFT JOIN") && !Names(afterAlias).Contains("People"), "after an alias: keywords only");
+var typedKeyword = Sug("SELECT * FROM dbo.People p WH|");
+Check(typedKeyword.Items[0].Name == "WHERE" && typedKeyword.Start == 27 && typedKeyword.Length == 2, "typed follow keyword");
+Check(Names(Sug("SELECT * FROM dbo.People p JOIN dbo.Orders o |")).Contains("ON") && Sug("SELECT * FROM dbo.People p JOIN dbo.Orders |").Soft, "after a joined table");
+var newAlias = Sug("SELECT * FROM dbo.People AS |");
+Check(newAlias.Items.Count == 0 && newAlias.Soft && Sug("SELECT Id AS | FROM dbo.People").Items.Count == 0, "nothing listed where an alias is defined");
+Check(!Sug("SELECT CAST(Id AS | FROM dbo.People").Soft, "CAST AS is not an alias");
+Check(Names(Sug("SELECT * FROM dbo.People p WHERE |")).Contains("Name") && !Sug("SELECT * FROM dbo.People p WHERE |").Soft, "WHERE still lists columns");
+Check(Names(Sug("SELECT * FROM dbo.People p JOIN dbo.Orders o ON o.PersonId |")).Contains("AND") , "after a column in ON: general list");
+var plainList = Sug("SELECT * FROM dbo.People |", new CompletionOptions { ContextKeywords = false });
+Check(!plainList.Soft && plainList.Items.Any(i => i.Description != "keyword"), "context keywords can be turned off");
+var unfiltered = Sug("SELECT * FROM Peo|", new CompletionOptions { Filter = false });
+Check(Names(unfiltered).Contains("Orders") && unfiltered.Start == 14 && unfiltered.Length == 3, "unfiltered list for a filtering host");
+Check(Names(Sug("SELECT p.| FROM dbo.People p")).Where(n => n != "*").SequenceEqual(new[] { "Id", "Name", "Born" }), "columns in definition order");
+Check(Names(Sug("SELECT p.| FROM dbo.People p", new CompletionOptions { ColumnsAlphabetical = true })).Where(n => n != "*").SequenceEqual(new[] { "Born", "Id", "Name" }), "columns alphabetical");
+Check(Names(Sug("SELECT o.pi| FROM dbo.Orders o")).Contains("PersonId") && Names(Sug("SELECT o.otal| FROM dbo.Orders o")).Contains("Total"), "word-start and substring matches listed");
+var ranked = Names(Sug("SELECT o.t| FROM dbo.Orders o"));
+Check(ranked[0].StartsWith("Total") && Array.IndexOf(ranked, "Total") < Array.IndexOf(ranked, "PersonId") || !ranked.Contains("PersonId"), "prefix matches before others");
+Console.WriteLine($"PASS: {checks} total checks including fill, quick info, object scripts, fixes, object refactors, stress, fuzz, the schema cache, text tools, rules SW048-SW073 and suggestions. SSMS integration not tested.");

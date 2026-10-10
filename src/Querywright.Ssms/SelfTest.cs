@@ -68,6 +68,23 @@ namespace Querywright.Ssms
                                 using (var file = File.Create(Path.Combine(Path.GetDirectoryName(result)!, "themed-dialog.png"))) encoder.Save(file);
                             }
                             finally { dialog.Close(); }
+                            var aiPanel = new AiPanel();
+                            var aiBackground = aiPanel.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey);
+                            if (aiBackground == null || !Equals(aiPanel.Background, aiBackground))
+                                throw new InvalidOperationException("AI panel background does not match SSMS theme");
+                            var aiMessage = typeof(AiPanel).GetMethod("Message", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+                            aiMessage.Invoke(aiPanel, new object[] { "You", "Explain this query." });
+                            var aiBody = aiMessage.Invoke(aiPanel, new object[] { "Assistant", "## Review the query\n\nThis reads **one row**.\n\n```sql\nSELECT N'example' AS Label; -- read only\n```" });
+                            typeof(AiPanel).GetMethod("AddReasoning", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(aiPanel, new object[] { aiBody, "Check that the statement only reads data.", 1.5 });
+                            var aiSize = new System.Windows.Size(440, 720);
+                            aiPanel.Measure(aiSize); aiPanel.Arrange(new System.Windows.Rect(aiSize)); aiPanel.UpdateLayout();
+                            foreach (string picker in new[] { "model", "reasoning" })
+                                typeof(AiPanel).GetMethod("ThemePicker", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.Invoke(null, new[] { typeof(AiPanel).GetField(picker, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(aiPanel) });
+                            var aiBitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(440, 720, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                            aiBitmap.Render(aiPanel);
+                            var aiEncoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                            aiEncoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(aiBitmap));
+                            using (var file = File.Create(Path.Combine(Path.GetDirectoryName(result)!, "ai-panel-host.png"))) aiEncoder.Save(file);
                             break;
                         case "home": Move(view, 0); break;
                         case "end": Move(view, view.TextSnapshot.Length); break;

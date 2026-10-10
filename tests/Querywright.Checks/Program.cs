@@ -1590,3 +1590,13 @@ Check(!AiStream.Rejected(400, "{\"error\":{\"message\":\"stream not supported; c
 Check(!AiStream.Rejected(400, "{\"error\":{\"message\":\"stream not supported; invalid api_key\"}}"), "stream fallback must not retry credential failures");
 Check(!AiAssist.RequestBody("fixture-model", aiMessages, false, baseUrl: "https://api.openai.com/v1").Contains("\"temperature\""), "official OpenAI omits temperature even when effort is omitted");
 Console.WriteLine($"PASS: {checks} total checks including provider fallback and default reasoning compatibility. SSMS integration not tested.");
+
+var customThinking = MiniJson.Parse(AiAssist.RequestBody("fixture-model", aiMessages, false, reasoning: AiReasoningLevel.High,
+    extraRequestJson: "{\"reasoning_effort\":null,\"thinking\":true}"));
+Check(MiniJson.Get(customThinking, "thinking") is true && MiniJson.Get(customThinking, "reasoning_effort") == null,
+    "custom thinking flag can omit default effort field");
+var customReasoning = MiniJson.Parse(AiAssist.RequestBody("fixture-model", aiMessages, false, reasoning: AiReasoningLevel.High,
+    extraRequestJson: "{\"reasoning_effort\":null,\"reasoning\":{\"effort\":\"high\"}}"));
+Check(MiniJson.Text(MiniJson.Get(customReasoning, "reasoning"), "effort") == "high" && MiniJson.Get(customReasoning, "reasoning_effort") == null,
+    "custom nested effort can replace generic effort field");
+Console.WriteLine($"PASS: {checks} total checks including custom reasoning overrides. SSMS integration not tested.");

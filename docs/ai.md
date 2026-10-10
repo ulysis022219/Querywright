@@ -94,6 +94,10 @@ manual budgets 1024/4096/8192 and raises `max_tokens` above the budget. Selected
 The official Anthropic and OpenAI hosts always omit it, because default reasoning can reject sampling settings;
 the official OpenAI host uses `max_completion_tokens`.
 
+Set a reasoning field to null in Extra request JSON to omit its mapped default. For example,
+`{"reasoning_effort":null,"thinking":true}` sends only a custom thinking flag while reasoning is selected;
+`{"reasoning_effort":null,"reasoning":{"effort":"high"}}` uses a nested effort field.
+
 For models that require adaptive thinking, choose reasoning and set Extra request JSON such as
 `{"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}`. This is a provider-specific override,
 not a capability claim about every model. Validate your endpoint's documentation. An explicit HTTP 400 naming a

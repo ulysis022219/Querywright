@@ -440,7 +440,7 @@ namespace Querywright.Ssms
             var live = new Paragraph { Margin = new Thickness(0) };
             var liveBox = Readable(new FlowDocument(live));
             var thoughtParagraph = new Paragraph { Margin = new Thickness(0) };
-            var thoughtBox = Readable(new FlowDocument(thoughtParagraph)); thoughtBox.MaxHeight = 300;
+            var thoughtBox = Readable(new FlowDocument(thoughtParagraph)); thoughtBox.MaxHeight = 300; thoughtBox.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             var thoughtHeader = new TextBlock { Text = "Reasoning" }; thoughtHeader.SetResourceReference(TextBlock.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
             var thoughtView = new Expander { Header = thoughtHeader, Content = thoughtBox, IsExpanded = false, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 0, 8) };
             thoughtView.SetResourceReference(Control.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
@@ -533,7 +533,7 @@ namespace Querywright.Ssms
         {
             if (string.IsNullOrWhiteSpace(text)) return;
             var document = new FlowDocument(new Paragraph(new Run(text)) { Margin = new Thickness(0) });
-            var content = Readable(document); content.MaxHeight = 300;
+            var content = Readable(document); content.MaxHeight = 300; content.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             var header = new TextBlock { Text = "Reasoning · " + seconds.ToString("0.0") + "s" }; header.SetResourceReference(TextBlock.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);
             var expander = new Expander { Header = header, Content = content, IsExpanded = false, Margin = new Thickness(0, 0, 0, 8) };
             expander.SetResourceReference(Control.ForegroundProperty, EnvironmentColors.ToolWindowTextBrushKey);

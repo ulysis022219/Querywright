@@ -75,6 +75,7 @@ This block is explanatory text, not executable SQL.
     $thought = $body.Children[0]
     Check ($thought -is [Windows.Controls.Expander] -and !$thought.IsExpanded) 'Reasoning must appear above answer and start collapsed'
     Check ($thought.Content -is [Windows.Controls.RichTextBox] -and $thought.Content.IsReadOnly) 'Reasoning must be plain, selectable and read-only'
+    Check ($thought.Content.VerticalScrollBarVisibility -eq [Windows.Controls.ScrollBarVisibility]::Auto) 'Long reasoning must remain scrollable within its height limit'
     Check (@(Nodes $thought | Where-Object { $_ -is [Windows.Controls.Button] }).Count -eq 0) 'Reasoning must never expose insert/replace/run/copy-answer actions'
     # Model persistence runs against a temporary file, never user settings.
     $models = $assembly.GetType('Querywright.Ssms.AiModels', $true)

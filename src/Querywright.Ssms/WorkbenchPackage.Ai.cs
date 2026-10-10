@@ -1,0 +1,237 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.VisualStudio;
+using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell.Interop;
+using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Editor;
+using Querywright.Core;
+
+namespace Querywright.Ssms
+{
+    // AI assistant and MCP server. The provider is the user's choice (Tools > Options > Querywright > AI); nothing is sent
+    // until an AI command is used, and then the script text, the prompt and matching table definitions go to that provider.
+    [ProvideOptionPage(typeof(AiOptions), "Querywright", "AI", 0, 0, true)]
+    [ProvideToolWindow(typeof(AiToolWindow), Style = VsDockStyle.Tabbed, Orientation = ToolWindowOrientation.Right, Window = "{EEFA5220-E298-11D0-8F78-00A0C9110057}")] // docks with Properties
+    public sealed partial class WorkbenchPackage
+    {
+        private AiOptions aiOptions;
+        private McpHost mcp;
+
+        internal AiOptions Ai => aiOptions;
+
+        private void InitializeAi(Action<int, Func<Task>> add)
+        {
+            aiOptions = (AiOptions)GetDialogPage(typeof(AiOptions));
+            add(0x0180, () => ShowAiAsync(null));
+            add(0x0181, () => ShowAiAsync(AiTask.Explain));
+            add(0x0182, () => ShowAiAsync(AiTask.Fix));
+            add(0x0183, () => ShowAiAsync(AiTask.Optimize));
+            add(0x0184, AiCompleteAsync);
+            add(0x0185, CopyMcpConfigurationAsync);
+            add(0x0186, async () => { await JoinableTaskFactory.SwitchToMainThreadAsync(); ShowOptionPage(typeof(AiOptions)); });
+            RestartMcp();
+        }
+
+        /// <summary>Starts, stops or moves the MCP server to match the options. A port in use is reported, not fatal.</summary>
+        internal void RestartMcp()
+        {
+            mcp?.Dispose();
+            mcp = null;
+            if (aiOptions?.McpServer != true) return;
+            try { mcp = new McpHost(this, aiOptions.McpPort); }
+            catch (Exception error) when (error is System.Net.HttpListenerException || error is ArgumentException || error is InvalidOperationException)
+            {
+                ActivityLog.TryLogWarning("Querywright", "MCP server not started: " + error.GetType().Name);
+                _ = JoinableTaskFactory.RunAsync(async () =>
+                {
+                    await JoinableTaskFactory.SwitchToMainThreadAsync();
+                    ShowWarning("The Querywright MCP server could not listen on port " + aiOptions.McpPort + " (" + error.Message.Trim() + "). Pick another port under Tools > Options > Querywright > AI.");
+                });
+            }
+        }
+
+        private void StopAi() { mcp?.Dispose(); mcp = null; }
+
+        private Task ShowAiAsync(AiTask? start) => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var window = FindToolWindow(typeof(AiToolWindow), 0, true) as AiToolWindow;
+            if (!(window?.Frame is IVsWindowFrame frame)) throw new InvalidOperationException("Could not create the Querywright AI window.");
+            ErrorHandler.ThrowOnFailure(frame.Show());
+            if (start != null) window.Panel.Start(start.Value);
+            else window.Panel.FocusPrompt();
+        });
+
+        /// <summary>Selected text of the last active query window, else its whole text; empty when no query window is open.</summary>
+        internal string AiEditorText(bool selectionOnly = false)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            IWpfTextView view;
+            try { view = GetSqlView(mustHaveFocus: false); }
+            catch (Exception error) when (error is InvalidOperationException || error is System.Runtime.InteropServices.COMException) { return ""; }
+            if (!view.Selection.IsEmpty) return string.Concat(view.Selection.SelectedSpans.Select(s => s.GetText()));
+            return selectionOnly ? "" : view.TextSnapshot.GetText();
+        }
+
+        internal ActiveConnection AiConnection(bool required)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var connection = LiveMetadata.Capture();
+            if (connection == null && required) throw new InvalidOperationException("Connect the query window to a database first.");
+            return connection;
+        }
+
+        /// <summary>Catalog of the connected database (waits briefly for a first load) merged over the offline schema; null when neither exists.</summary>
+        internal async Task<IReadOnlyList<SchemaTable>> AiTablesAsync(ActiveConnection connection, int seconds = 10)
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            IReadOnlyList<SchemaTable> live = null;
+            // A catalog that cannot be read (permissions, dropped connection) only costs the schema context.
+            try { live = LiveMetadataEnabled ? await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(seconds)) : null; }
+            catch (Exception error) when (error is System.Data.SqlClient.SqlException || error is InvalidOperationException) { }
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            return Merge(live, OfflineSchemaNow());
+        }
+
+        internal WorkbenchSettings AiSettings()
+        {
+            string path = options?.SettingsFile;
+            try { return string.IsNullOrWhiteSpace(path) ? new WorkbenchSettings() : WorkbenchSettings.Load(path); }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { return new WorkbenchSettings(); }
+        }
+
+        internal static string AiScript(LiveMetadata.ObjectDetails details, string schema, string name) => ScriptOf(details, details.Schema ?? schema, name);
+
+        /// <summary>One AI request for the panel. A Chat task continues <paramref name="conversation"/> when it has one; any other
+        /// task starts over from the query window. The reply is appended to the conversation and returned.</summary>
+        internal async Task<string> AiAskAsync(AiTask task, string instruction, List<AiMessage> conversation, Action<string> progress, CancellationToken cancellation)
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync(cancellation);
+            var ai = aiOptions;
+            bool followUp = task == AiTask.Chat && conversation.Count > 0;
+            if (followUp)
+            {
+                if (string.IsNullOrWhiteSpace(instruction)) throw new InvalidOperationException("Type a question.");
+                conversation.Add(new AiMessage("user", instruction.Trim()));
+            }
+            else
+            {
+                string sql = AiEditorText();
+                AiAssist.Messages(task, instruction, sql, null); // its "select some SQL" / "describe the query" checks, before any server work
+                var connection = LiveMetadataEnabled ? AiConnection(required: false) : null;
+                string extra = null;
+                if (task == AiTask.Fix && connection != null)
+                {
+                    progress("Asking SQL Server for compile errors...");
+                    var errors = await Task.Run(() => AiSql.Errors(connection, sql), cancellation);
+                    if (errors.Count == 0 && string.IsNullOrWhiteSpace(instruction))
+                        throw new InvalidOperationException("SQL Server reports no compile errors for this script. For an error that only shows when it runs, paste the message into the prompt box and use Fix again.");
+                    extra = string.Join("\n", errors);
+                }
+                else if (task == AiTask.Optimize && connection != null)
+                {
+                    progress("Reading the estimated execution plan...");
+                    // No plan (a script that does not compile, no SHOWPLAN permission) still leaves the text to work from.
+                    try { extra = await Task.Run(() => AiSql.Plan(connection, sql), cancellation); }
+                    catch (System.Data.SqlClient.SqlException) { extra = null; }
+                }
+                string schema = null;
+                if (ai.MaxSchemaTables > 0)
+                {
+                    progress("Reading the database schema...");
+                    schema = AiAssist.SchemaContext(await AiTablesAsync(connection), instruction + "\n" + sql, ai.MaxSchemaTables);
+                }
+                conversation.Clear();
+                conversation.AddRange(AiAssist.Messages(task, instruction, sql, schema, extra));
+            }
+            progress("Waiting for " + ai.Model + "...");
+            try
+            {
+                string reply = await AiClient.AskAsync(ai.ApiFormat, ai.BaseUrl, ai.Model, conversation.ToList(), cancellation);
+                conversation.Add(new AiMessage("assistant", reply));
+                return reply;
+            }
+            catch when (followUp) { conversation.RemoveAt(conversation.Count - 1); throw; }
+        }
+
+        /// <summary>Puts AI SQL into the last active query window: over the selection (the whole script when nothing is selected), or at the caret.</summary>
+        internal void AiInsert(string sql, bool replace)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var view = GetSqlView(mustHaveFocus: false);
+            var snapshot = view.TextSnapshot;
+            SnapshotSpan span;
+            if (!replace) span = new SnapshotSpan(view.Caret.Position.BufferPosition, 0);
+            else if (view.Selection.IsEmpty) span = new SnapshotSpan(snapshot, 0, snapshot.Length);
+            else span = new SnapshotSpan(view.Selection.Start.Position, view.Selection.End.Position);
+            sql = sql.Replace("\r\n", "\n").Replace("\n", NewlineOf(snapshot.GetText()));
+            ReplaceText(view, span, sql, sql.Length, 0, 0, replace ? "AI replace" : "AI insert");
+        }
+
+        /// <summary>Opens AI SQL in a new query window on the same connection and, when asked, executes it there.</summary>
+        internal async Task AiOpenAsync(string sql, bool run)
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (run && aiOptions.ConfirmExecution && !ConfirmRun(sql, "Run this AI-written SQL in a new query window?")) return;
+            await OpenInNewQueryAsync(sql, "AI query");
+            if (!run) return;
+            var dte = await GetServiceAsync(typeof(SDTE));
+            if (dte == null) throw new InvalidOperationException("SSMS automation service unavailable.");
+            dte.GetType().InvokeMember("ExecuteCommand", System.Reflection.BindingFlags.InvokeMethod, null, dte, new object[] { "Query.Execute", "" });
+        }
+
+        /// <summary>Yes/No box showing the SQL and where it would run; No is the default.</summary>
+        internal bool ConfirmRun(string sql, string question)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var names = LiveMetadata.CaptureNames();
+            string where = names == null ? "" : "\r\n\r\nServer: " + names.Value.Server + "\r\nDatabase: " + names.Value.Database;
+            string shown = sql.Length > 1500 ? sql.Substring(0, 1500) + "\r\n... (" + (sql.Length - 1500) + " more characters)" : sql;
+            return VsShellUtilities.ShowMessageBox(this, question + where + "\r\n\r\n" + shown, "Querywright AI",
+                OLEMSGICON.OLEMSGICON_QUERY, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) == (int)VSConstants.MessageBoxResult.IDYES;
+        }
+
+        // ponytail: an explicit command, not grey ghost text while typing; the text arrives in one piece and Ctrl+Z removes it.
+        private Task AiCompleteAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            var view = GetSqlView();
+            var snapshot = view.TextSnapshot;
+            int caret = view.Caret.Position.BufferPosition.Position;
+            string sql = snapshot.GetText();
+            var ai = aiOptions;
+            var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
+            status?.SetText("Querywright: asking " + ai.Model + " to complete...");
+            string schema = ai.MaxSchemaTables > 0 ? AiAssist.SchemaContext(CurrentTables(), sql, ai.MaxSchemaTables) : null;
+            var messages = AiAssist.Messages(AiTask.Complete, null, AiAssist.CompletionWindow(sql, caret), schema);
+            string text = AiAssist.CompletionText(await AiClient.AskAsync(ai.ApiFormat, ai.BaseUrl, ai.Model, messages, DisposalToken, 700));
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (text.Trim().Length == 0) { status?.SetText("Querywright: the AI had nothing to add here."); return; }
+            text = text.Replace("\r\n", "\n").Replace("\n", NewlineOf(sql));
+            // ReplaceText refuses when the script changed while the provider was answering.
+            ReplaceText(view, new SnapshotSpan(snapshot, caret, 0), text, text.Length, 0, 0, "AI complete");
+            status?.SetText("Querywright: AI completion inserted. Ctrl+Z removes it.");
+        });
+
+        private Task CopyMcpConfigurationAsync() => RunCommandAsync(async () =>
+        {
+            await JoinableTaskFactory.SwitchToMainThreadAsync();
+            string url = "http://localhost:" + aiOptions.McpPort + "/mcp";
+            var server = new Dictionary<string, object>
+            {
+                ["type"] = "http", ["url"] = url,
+                ["headers"] = new Dictionary<string, object> { ["Authorization"] = "Bearer " + McpHost.Token() }
+            };
+            System.Windows.Clipboard.SetText(MiniJson.Write(new Dictionary<string, object> { ["mcpServers"] = new Dictionary<string, object> { ["querywright"] = server } }));
+            VsShellUtilities.ShowMessageBox(this,
+                "Copied the MCP client configuration (server URL " + url + " and its access token) to the clipboard. Paste it into your MCP client's configuration file."
+                + (mcp == null ? "\r\n\r\nThe server is not running: turn on \"Run MCP server\" under Tools > Options > Querywright > AI." : "")
+                + "\r\n\r\nAnyone holding the token can read and run SQL through your open query window while SSMS runs, so keep it out of shared files.",
+                "Querywright MCP", OLEMSGICON.OLEMSGICON_INFO, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+        });
+    }
+}

@@ -2,7 +2,7 @@
 
 Researched September 28, 2026 from public sources (Redgate's own docs site was not reachable from
 the build environment; entries marked *unconfirmed* need checking against a live SQL Prompt).
-AI features are out of scope. Status: done (core checked), host (wired, unverified in SSMS), missing.
+AI features (assistant panel, fix, optimize, completion, MCP server) use a provider of your choice and are described in [ai.md](ai.md); host-wired, unverified in SSMS. Status: done (core checked), host (wired, unverified in SSMS), missing.
 
 ## 1. Editor behavior (what makes it feel like SQL Prompt)
 
@@ -122,7 +122,7 @@ Not implemented:
   Select in Object Explorer, close unmodified tabs, duplicate tab, password breach check.
 - Suggestions: bracketed-name option, join conditions matched by data type alone or on part of a composite key,
   item icons and filter tabs, usage ranking kept between SSMS sessions, turning off Tab or Enter as commit keys.
-- AI features (out of scope).
+- AI features: see [ai.md](ai.md). Not matched: grey inline completion while typing, streamed answers.
 
 ## Remaining
 

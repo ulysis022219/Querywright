@@ -109,6 +109,10 @@ namespace Querywright.Core
                     e.Message, e.Offset, e.Offset < sql.Length ? 1 : 0, e.Line, e.Column)));
             var visitor = new Rules(cancellationToken);
             fragment.Accept(visitor);
+            visitor.Finish();
+            foreach (var token in fragment.ScriptTokenStream ?? Array.Empty<TSqlParserToken>())
+                if ((token.TokenType == TSqlTokenType.SingleLineComment || token.TokenType == TSqlTokenType.MultilineComment) && Marker.IsMatch(token.Text))
+                    visitor.Diagnostics.Add(new SqlDiagnostic("SW065", "Comment marks unfinished work (TODO, FIXME, BUG or HACK).", token.Offset, token.Text.Length, token.Line, token.Column));
             var suppression = new Suppression(fragment.ScriptTokenStream);
             return new AnalysisResult(true, visitor.Diagnostics.Where(d =>
                 (settings == null || settings.Severity(d.Rule) != RuleSeverity.Disabled) && !suppression.Suppressed(d)));
@@ -176,8 +180,11 @@ namespace Querywright.Core
             }
         }
 
+        private static readonly Regex Marker = new Regex(@"\b(?:TODO|FIXME|BUG|HACK)\b", RegexOptions.CultureInvariant);
+
         /// <summary>Rules with a mechanical fix.</summary>
-        public static readonly IReadOnlyCollection<string> FixableRules = new[] { "SW001", "SW003", "SW009", "SW010", "SW015", "SW016", "SW017" };
+        public static readonly IReadOnlyCollection<string> FixableRules = new[] { "SW001", "SW003", "SW004", "SW009", "SW010", "SW015", "SW016", "SW017", "SW040",
+            "SW048", "SW049", "SW050", "SW051" };
 
         /// <summary>The edit that resolves one diagnostic, or null when the rule has no safe fix here. The result must still parse.</summary>
         public static TextEdit? Fix(string sql, SqlDiagnostic diagnostic, IReadOnlyList<SchemaTable>? tables = null, string defaultSchema = "dbo")
@@ -207,8 +214,46 @@ namespace Querywright.Core
                     if (test == null || Unwrap(operand) is NullLiteral) return null;
                     edit = new TextEdit(diagnostic.Offset, diagnostic.Length, sql.Substring(operand.StartOffset, operand.FragmentLength) + test);
                     break;
+                case "SW004":
+                    if (nodes.Case == null) return null;
+                    var endToken = script.ScriptTokenStream[nodes.Case.LastTokenIndex];
+                    if (endToken.TokenType != TSqlTokenType.End) return null;
+                    edit = new TextEdit(endToken.Offset, 0, "ELSE NULL ");
+                    break;
                 case "SW009":
                     edit = new TextEdit(diagnostic.Offset, diagnostic.Length, "SCOPE_IDENTITY()");
+                    break;
+                case "SW040":
+                    int quote = span.IndexOf('\'');
+                    if (quote < 0 || quote > 1 || span.Length < quote + 2 || span[span.Length - 1] != '\'') return null;
+                    string alias = span.Substring(quote + 1, span.Length - quote - 2).Replace("''", "'");
+                    if (alias.Length == 0 || alias.Length > 128) return null;
+                    edit = new TextEdit(diagnostic.Offset, diagnostic.Length, "[" + alias.Replace("]", "]]") + "]");
+                    break;
+                case "SW048":
+                    if (nodes.Comparison == null) return null;
+                    var unequal = nodes.Comparison;
+                    var between = Enumerable.Range(unequal.FirstExpression.LastTokenIndex + 1, Math.Max(0, unequal.SecondExpression.FirstTokenIndex - unequal.FirstExpression.LastTokenIndex - 1))
+                        .Select(i => script.ScriptTokenStream[i]).ToArray();
+                    var bang = between.FirstOrDefault(t => t.TokenType == TSqlTokenType.Bang);
+                    var equals = between.FirstOrDefault(t => t.TokenType == TSqlTokenType.EqualsSign);
+                    if (bang == null || equals == null || equals.Offset < bang.Offset) return null;
+                    edit = new TextEdit(bang.Offset, equals.Offset + 1 - bang.Offset, "<>");
+                    break;
+                case "SW049":
+                    if (nodes.Select?.ColumnName == null) return null;
+                    edit = new TextEdit(diagnostic.Offset, diagnostic.Length, sql.Substring(nodes.Select.Expression.StartOffset, nodes.Select.Expression.FragmentLength) +
+                        " AS " + sql.Substring(nodes.Select.ColumnName.StartOffset, nodes.Select.ColumnName.FragmentLength));
+                    break;
+                case "SW050":
+                    if (nodes.Top?.Expression == null) return null;
+                    var count = nodes.Top.Expression;
+                    edit = new TextEdit(count.StartOffset, count.FragmentLength, "(" + sql.Substring(count.StartOffset, count.FragmentLength) + ")");
+                    break;
+                case "SW051":
+                    var open = nodes.Hint == null ? null : HintParenthesis(nodes.Hint);
+                    if (open == null) return null;
+                    edit = new TextEdit(open.Offset, 0, "WITH ");
                     break;
                 case "SW010":
                     string bare = span.Trim('[', ']', '"').ToLowerInvariant();
@@ -267,6 +312,19 @@ namespace Querywright.Core
             return (sql, count);
         }
 
+        // The ( that opens a table hint list, when no WITH precedes it; null when WITH is there or the hint is not parenthesized.
+        private static TSqlParserToken? HintParenthesis(TableHint hint)
+        {
+            var tokens = hint.ScriptTokenStream;
+            bool Trivia(int i) => tokens[i].TokenType == TSqlTokenType.WhiteSpace || tokens[i].TokenType == TSqlTokenType.SingleLineComment || tokens[i].TokenType == TSqlTokenType.MultilineComment;
+            int index = hint.FirstTokenIndex - 1;
+            while (index >= 0 && Trivia(index)) index--;
+            if (index < 0 || tokens[index].TokenType != TSqlTokenType.LeftParenthesis) return null;
+            int before = index - 1;
+            while (before >= 0 && Trivia(before)) before--;
+            return before >= 0 && tokens[before].TokenType == TSqlTokenType.With ? null : tokens[index];
+        }
+
         private static string Apply(string sql, TextEdit edit) => sql.Substring(0, edit.Start) + edit.Text + sql.Substring(edit.Start + edit.Length);
 
         private static ScalarExpression Unwrap(ScalarExpression expression)
@@ -301,6 +359,10 @@ namespace Querywright.Core
         {
             private readonly int offset, length;
             internal BooleanComparisonExpression? Comparison;
+            internal CaseExpression? Case;
+            internal SelectScalarExpression? Select;
+            internal TopRowFilter? Top;
+            internal TableHint? Hint;
             internal ProcedureStatementBody? Procedure;
             internal TSqlStatement? Declaration;
             internal TSqlFragment? Element;
@@ -308,6 +370,10 @@ namespace Querywright.Core
             internal Spans(int offset, int length) { this.offset = offset; this.length = length; }
             private bool At(TSqlFragment node) => node.StartOffset == offset && node.FragmentLength == length;
             public override void Visit(BooleanComparisonExpression node) { if (At(node)) Comparison = node; }
+            public override void Visit(CaseExpression node) { if (At(node)) Case = node; }
+            public override void Visit(SelectScalarExpression node) { if (At(node)) Select = node; }
+            public override void Visit(TopRowFilter node) { if (At(node)) Top = node; }
+            public override void Visit(TableHint node) { if (At(node)) Hint = node; }
             public override void Visit(ProcedureStatementBody node)
             {
                 if (node.ProcedureReference != null && At(node.ProcedureReference) || At(node)) Procedure = node;
@@ -379,6 +445,8 @@ namespace Querywright.Core
             {
                 if (node.Columns.Count == 0 && !(node.InsertSource is ValuesInsertSource values && values.IsDefaultValues))
                     Add("SW002", "Specify target columns so insertion does not depend on table column order.", node);
+                if (node.InsertSource is SelectInsertSource source && source.Select is QuerySpecification query && query.OrderByClause != null && query.TopRowFilter == null && query.OffsetClause == null)
+                    Add("SW062", "ORDER BY on INSERT ... SELECT does not order the stored rows; it only costs a sort.", query.OrderByClause);
             }
             public override void Visit(BooleanComparisonExpression node)
             {
@@ -388,6 +456,8 @@ namespace Querywright.Core
                     Add("SW028", "Comparing a COUNT subquery with 0 counts every row; use EXISTS or NOT EXISTS.", node);
                 if (node.ComparisonType == BooleanComparisonType.NotLessThan || node.ComparisonType == BooleanComparisonType.NotGreaterThan)
                     Add("SW042", "!< and !> are nonstandard; use >= or <=.", node);
+                if (node.ComparisonType == BooleanComparisonType.NotEqualToExclamation)
+                    Add("SW048", "!= is not ISO SQL; use <>.", node);
             }
             private static bool IsZero(ScalarExpression expression) => Unwrap(expression) is IntegerLiteral literal && literal.Value == "0";
             private static bool IsAggregate(QueryExpression? query, params string[] names) =>
@@ -426,6 +496,12 @@ namespace Querywright.Core
                     case SqlDataTypeOption.Char: case SqlDataTypeOption.VarChar: case SqlDataTypeOption.NChar:
                     case SqlDataTypeOption.NVarChar: case SqlDataTypeOption.Binary: case SqlDataTypeOption.VarBinary:
                         if (node.Parameters.Count == 0) Add("SW008", "Specify a length; the default (1 or 30) silently truncates.", node);
+                        else if ((node.SqlDataTypeOption == SqlDataTypeOption.VarChar || node.SqlDataTypeOption == SqlDataTypeOption.NVarChar || node.SqlDataTypeOption == SqlDataTypeOption.VarBinary) &&
+                            node.Parameters[0] is IntegerLiteral size && (size.Value == "1" || size.Value == "2"))
+                            Add("SW071", "A variable-length type of 1 or 2 costs more than the fixed-length type; use CHAR, NCHAR or BINARY.", node);
+                        break;
+                    case SqlDataTypeOption.Sql_Variant:
+                        Add("SW055", "SQL_VARIANT hides the real type, blocks many index and client features, and compares by type family.", node);
                         break;
                     case SqlDataTypeOption.Text: case SqlDataTypeOption.NText: case SqlDataTypeOption.Image:
                         Add("SW010", "TEXT, NTEXT and IMAGE are deprecated; use VARCHAR(MAX), NVARCHAR(MAX) or VARBINARY(MAX).", node);
@@ -468,6 +544,8 @@ namespace Querywright.Core
                 if (!body.NoCount) Add("SW015", "Procedure lacks SET NOCOUNT ON; row-count messages add network chatter.", node.ProcedureReference ?? (TSqlFragment)node);
                 foreach (var bare in body.BareReturns) Add("SW019", "RETURN without a value; return an explicit status code from procedures.", bare);
                 foreach (var delay in body.Delays) Add("SW025", "WAITFOR DELAY in a procedure holds its connection and locks while waiting.", delay);
+                foreach (var option in node.Options.Where(o => o.OptionKind == ProcedureOptionKind.Recompile))
+                    Add("SW061", "WITH RECOMPILE compiles the whole procedure on every call; use OPTION (RECOMPILE) on the statement that needs it.", option);
             }
             public override void Visit(CursorDefinition node)
             {
@@ -527,6 +605,8 @@ namespace Querywright.Core
                     Add("SW026", "TOP without ORDER BY returns an arbitrary set of rows.", node.TopRowFilter);
                 if (node.TopRowFilter != null && node.TopRowFilter.Percent && Unwrap(node.TopRowFilter.Expression) is IntegerLiteral hundred && hundred.Value == "100")
                     Add("SW043", "TOP 100 PERCENT does nothing; the optimizer ignores ORDER BY it was meant to keep.", node.TopRowFilter);
+                if (node.TopRowFilter != null && !(node.TopRowFilter.Expression is ParenthesisExpression))
+                    Add("SW050", "TOP without parentheses is the old syntax and only takes a constant; write TOP (n).", node.TopRowFilter);
             }
             public override void Visit(ExecuteSpecification node)
             {
@@ -541,11 +621,19 @@ namespace Querywright.Core
                     Add("SW030", "ANSI_NULLS, ANSI_PADDING and CONCAT_NULL_YIELDS_NULL OFF are deprecated and will always be ON.", node);
                 if (node.IsOn && (node.Options & SetOptions.FmtOnly) != 0)
                     Add("SW035", "SET FMTONLY is deprecated; use sp_describe_first_result_set.", node);
+                if (!node.IsOn && (node.Options & SetOptions.NoCount) != 0)
+                    Add("SW059", "SET NOCOUNT OFF sends a row-count message after every statement.", node);
+                if (node.IsOn && (node.Options & SetOptions.ForcePlan) != 0)
+                    Add("SW060", "SET FORCEPLAN fixes join order and type for the session, whatever the data looks like.", node);
             }
             public override void Visit(SelectScalarExpression node)
             {
                 if (node.ColumnName?.ValueExpression is StringLiteral)
                     Add("SW040", "String literals as column aliases are deprecated; use AS [alias].", node.ColumnName);
+                if (node.ColumnName != null && node.ColumnName.StartOffset < node.Expression.StartOffset)
+                    Add("SW049", "alias = expression reads like an assignment; write expression AS alias.", node);
+                if (Unwrap(node.Expression) is ColumnReferenceExpression column && column.MultiPartIdentifier?.Identifiers.Count > 2)
+                    Add("SW067", "Column references qualified with a schema or database are deprecated; alias the table and use alias.column.", column);
             }
             public override void Visit(LikePredicate node)
             {
@@ -554,7 +642,11 @@ namespace Querywright.Core
             }
             private readonly HashSet<BooleanComparisonExpression> sargChecked = new HashSet<BooleanComparisonExpression>();
             public override void Visit(WhereClause node) => CheckSargable(node.SearchCondition);
-            public override void Visit(QualifiedJoin node) => CheckSargable(node.SearchCondition);
+            public override void Visit(QualifiedJoin node)
+            {
+                CheckSargable(node.SearchCondition);
+                if (node.JoinHint != JoinHint.None) Add("SW058", "Join hints force the physical join and the join order of the whole query.", node);
+            }
             private void CheckSargable(BooleanExpression? condition)
             {
                 if (condition == null) return;
@@ -596,6 +688,8 @@ namespace Querywright.Core
             {
                 if (node.NotDefined && node.Subquery != null)
                     Add("SW014", "NOT IN with a subquery returns no rows if the subquery yields NULL; use NOT EXISTS.", node);
+                else if (node.Subquery != null)
+                    Add("SW070", "IN with a subquery; EXISTS states the intent and stops at the first match.", node);
             }
             public override void Visit(ExecutableProcedureReference node)
             {
@@ -612,6 +706,84 @@ namespace Querywright.Core
                 node.Accept(usage);
                 foreach (var declared in usage.Declared.Where(d => !usage.Used.Contains(d.Value)))
                     Add("SW016", "Variable " + declared.Value + " is declared but never used.", declared);
+            }
+            public override void Visit(TriggerStatementBody node)
+            {
+                if (node.StatementList == null) return; // CLR trigger.
+                var body = new TriggerBody();
+                node.StatementList.Accept(body);
+                foreach (var print in body.Prints) Add("SW063", "PRINT in a trigger sends a message on every firing; remove it once debugging is done.", print);
+                foreach (var select in body.Selects) Add("SW064", "A trigger that returns a result set breaks callers that expect none.", select);
+            }
+            public override void Visit(GroupByClause node)
+            {
+                if (node.All) Add("SW052", "GROUP BY ALL is deprecated and returns groups the WHERE clause filtered out.", node);
+            }
+            public override void Visit(SetUserStatement node) => Add("SW053", "SETUSER is deprecated; use EXECUTE AS.", node);
+            public override void Visit(DbccStatement node)
+            {
+                if (node.Command == DbccCommand.DBReindex || node.Command == DbccCommand.IndexDefrag || node.Command == DbccCommand.ShowContig)
+                    Add("SW054", "DBCC DBREINDEX, INDEXDEFRAG and SHOWCONTIG are deprecated; use ALTER INDEX and sys.dm_db_index_physical_stats.", node);
+            }
+            public override void Visit(SelectStatement node)
+            {
+                if (node.Into != null) Add("SW056", "SELECT INTO copies no keys, indexes or constraints and guesses nullability; create the table explicitly.", node.Into);
+            }
+            public override void Visit(StatementWithCtesAndXmlNamespaces node)
+            {
+                // RECOMPILE and MAXRECURSION change how the statement runs, not which plan the optimizer may pick.
+                var hint = node.OptimizerHints.FirstOrDefault(h => h.HintKind != OptimizerHintKind.Recompile && h.HintKind != OptimizerHintKind.MaxRecursion);
+                if (hint != null) Add("SW057", "Query hints override the optimizer and outlive the data that justified them.", hint);
+            }
+            public override void Visit(DropIndexStatement node)
+            {
+                foreach (var clause in node.DropIndexClauses.OfType<BackwardsCompatibleDropIndexClause>())
+                    Add("SW068", "DROP INDEX table.index is deprecated; use DROP INDEX index ON table.", clause);
+            }
+            public override void Visit(Permission node)
+            {
+                if (node.Identifiers.Count > 0 && string.Equals(node.Identifiers[0].Value, "ALL", StringComparison.OrdinalIgnoreCase))
+                    Add("SW069", "ALL in GRANT, DENY and REVOKE is deprecated and does not cover every permission; list them.", node);
+            }
+            public override void Visit(CreateIndexStatement node)
+            {
+                if (node.Clustered == null) Add("SW072", "State CLUSTERED or NONCLUSTERED so the index type does not rest on the default.", node.Name ?? (TSqlFragment)node);
+            }
+            private static readonly HashSet<string> CompatibilityViews = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "sysobjects", "syscolumns", "sysindexes", "sysindexkeys", "sysusers", "sysdatabases", "syscomments", "sysprocesses", "sysfiles", "sysfilegroups",
+                "systypes", "sysconstraints", "sysdepends", "sysforeignkeys", "sysreferences", "syslogins", "sysmembers", "syspermissions", "sysprotects",
+                "sysservers", "sysaltfiles", "syslockinfo", "sysmessages", "sysperfinfo", "sysremotelogins", "sysoledbusers", "syscacheobjects", "sysdevices"
+            };
+            private readonly Dictionary<string, Identifier> cursors = new Dictionary<string, Identifier>(StringComparer.OrdinalIgnoreCase);
+            private readonly HashSet<string> deallocated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public override void Visit(DeclareCursorStatement node) { if (node.Name != null) cursors[node.Name.Value] = node.Name; }
+            public override void Visit(DeallocateCursorStatement node) { if (node.Cursor?.Name?.Identifier != null) deallocated.Add(node.Cursor.Name.Identifier.Value); }
+            public override void Visit(NamedTableReference node)
+            {
+                var name = node.SchemaObject;
+                string? schema = name.SchemaIdentifier?.Value;
+                if (CompatibilityViews.Contains(name.BaseIdentifier.Value) && (schema == null || schema.Equals("dbo", StringComparison.OrdinalIgnoreCase) || schema.Equals("sys", StringComparison.OrdinalIgnoreCase)))
+                    Add("SW073", "This SQL Server 2000 system table is a deprecated compatibility view; use the sys catalog views.", name);
+                if (node.TableHints.Count > 0 && HintParenthesis(node.TableHints[0]) != null)
+                    Add("SW051", "Table hints without WITH are deprecated; write WITH (hint).", node.TableHints[0]);
+            }
+            // Cursors are collected while the script is walked; the caller asks once the walk is over.
+            internal void Finish()
+            {
+                foreach (var cursor in cursors.Where(c => !deallocated.Contains(c.Key)))
+                    Add("SW066", "Cursor " + cursor.Key + " is never deallocated; it holds its resources until the connection closes.", cursor.Value);
+            }
+
+            private sealed class TriggerBody : TSqlFragmentVisitor
+            {
+                internal readonly List<PrintStatement> Prints = new List<PrintStatement>();
+                internal readonly List<SelectStatement> Selects = new List<SelectStatement>();
+                public override void Visit(PrintStatement node) => Prints.Add(node);
+                public override void Visit(SelectStatement node)
+                {
+                    if (node.Into == null && !(node.QueryExpression is QuerySpecification query && query.SelectElements.Any(e => e is SelectSetVariable))) Selects.Add(node);
+                }
             }
 
             private sealed class ProcedureBody : TSqlFragmentVisitor

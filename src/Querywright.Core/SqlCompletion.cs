@@ -75,7 +75,9 @@ namespace Querywright.Core
         public string Description { get; }
         /// <summary>Listed ahead of everything but an exact match (join suggestions).</summary>
         public bool Promoted { get; }
-        internal CompletionItem(string name, string insert, string description, bool promoted = false)
+        // Separate overload, not an optional parameter: scripts/Test-Dialogs.ps1 builds items by reflection.
+        internal CompletionItem(string name, string insert, string description) : this(name, insert, description, false) { }
+        internal CompletionItem(string name, string insert, string description, bool promoted)
         { Name = name; InsertText = insert; Description = description; Promoted = promoted; }
     }
 

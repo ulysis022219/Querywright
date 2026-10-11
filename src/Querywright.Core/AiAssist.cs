@@ -109,11 +109,12 @@ namespace Querywright.Core
             return url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase) ? url : url + "/chat/completions";
         }
 
-        public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int maxTokens = 4096, double? temperature = 0.1, bool stream = false,
+        public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int? maxTokens = null, double? temperature = 0.1, bool stream = false,
             AiReasoningLevel reasoning = AiReasoningLevel.Off, string? extraRequestJson = null, string? baseUrl = null)
         {
             if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Set the AI model name under Tools > Options > Querywright > AI.");
-            if (maxTokens <= 0) throw new ArgumentOutOfRangeException(nameof(maxTokens));
+            int tokenLimit = maxTokens ?? 4096;
+            if (tokenLimit <= 0) throw new ArgumentOutOfRangeException(nameof(maxTokens));
             if (temperature.HasValue && (double.IsNaN(temperature.Value) || double.IsInfinity(temperature.Value) || temperature.Value < 0 || temperature.Value > 2))
                 throw new ArgumentOutOfRangeException(nameof(temperature));
             var body = new Dictionary<string, object?> { ["model"] = model.Trim() };
@@ -122,13 +123,13 @@ namespace Querywright.Core
                 // The messages endpoint takes the system text as its own field and requires max_tokens.
                 string system = string.Join("\n\n", messages.Where(m => m.Role == "system").Select(m => m.Content));
                 if (system.Length > 0) body["system"] = system;
-                body["max_tokens"] = maxTokens;
+                body["max_tokens"] = tokenLimit;
                 body["messages"] = messages.Where(m => m.Role != "system").Select(Pair).ToList();
             }
             else
             {
                 body["messages"] = messages.Select(Pair).ToList();
-                body["max_tokens"] = maxTokens;
+                body["max_tokens"] = tokenLimit;
             }
             body["stream"] = stream;
             if (temperature.HasValue) body["temperature"] = temperature.Value;
@@ -144,8 +145,8 @@ namespace Querywright.Core
             {
                 int? budget = AiProvider.TokenCount(MiniJson.Get(body, "thinking"), "budget_tokens");
                 if (!budget.HasValue || budget.Value < 1024) throw new InvalidOperationException("Anthropic thinking budget_tokens must be an integer of at least 1024.");
-                int cap = AiProvider.TokenCount(body, "max_tokens") ?? maxTokens;
-                if (cap <= budget.Value) body["max_tokens"] = checked(budget.Value + maxTokens);
+                int cap = AiProvider.TokenCount(body, "max_tokens") ?? tokenLimit;
+                if (cap <= budget.Value) body["max_tokens"] = checked(budget.Value + tokenLimit);
             }
             return MiniJson.Write(body);
         }
@@ -153,7 +154,9 @@ namespace Querywright.Core
         private static object Pair(AiMessage message) => new Dictionary<string, object?> { ["role"] = message.Role, ["content"] = message.Content };
 
         /// <summary>The assistant's text from a provider response; throws with the provider's own message when it reports an error.</summary>
-        public static string ReplyText(string json, bool anthropic)
+        public static string ReplyText(string json, bool anthropic) => ReplyText(json, anthropic, false);
+
+        internal static string ReplyText(string json, bool anthropic, bool allowEmpty)
         {
             object? root;
             try { root = MiniJson.Parse(json); }
@@ -171,8 +174,8 @@ namespace Querywright.Core
                 // Some gateways return content as a list of parts.
                 text = content as string ?? (content is List<object?> list ? string.Concat(list.Where(p => MiniJson.Text(p, "type") == null || MiniJson.Text(p, "type") == "text").Select(p => MiniJson.Text(p, "text"))) : null);
             }
-            if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("The AI provider returned an empty answer.");
-            return text!.Trim();
+            if (!allowEmpty && string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("The AI provider returned an empty answer.");
+            return (text ?? "").Trim();
         }
 
         private static readonly Regex Fence = new Regex(@"```[ \t]*([A-Za-z0-9_+-]*)[ \t]*\r?\n(.*?)\r?\n?[ \t]*```", RegexOptions.Singleline | RegexOptions.Compiled);

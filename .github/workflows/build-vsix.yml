@@ -81,6 +81,9 @@ jobs:
       - name: AI HTTP fixture checks
         shell: powershell
         run: scripts/Test-AiClient.ps1
+      - name: Diagnostic capture and import checks
+        shell: powershell
+        run: scripts/Test-Diagnostics.ps1
       - name: Dialog layout and interaction checks
         shell: powershell
         run: |

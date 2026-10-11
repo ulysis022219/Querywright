@@ -291,7 +291,7 @@ namespace Querywright.Ssms
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException)
             {
                 // History is best effort; never interrupt editing. Log the failure kind only, never the query text.
-                Microsoft.VisualStudio.Shell.ActivityLog.TryLogWarning("Querywright", "Tab history save failed: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("Querywright", "Tab history save failed: " + error.GetType().Name);
             }
         }
 

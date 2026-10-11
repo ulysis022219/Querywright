@@ -52,7 +52,7 @@ namespace Querywright.Ssms
             var view = Adapters.GetWpfTextView(adapter);
             if (view == null) return;
             var type = view.TextBuffer.ContentType;
-            Microsoft.VisualStudio.Shell.ActivityLog.TryLogInformation("Querywright",
+            Diagnostics.TryLogInformation("Querywright",
                 "Editor opened: content type " + type.TypeName + " (" + string.Join(",", type.BaseTypes.Select(b => b.TypeName)) + ")");
             if (!IsSql(type)) return;
             WorkbenchPackage.EnsureLoaded();
@@ -259,7 +259,7 @@ namespace Querywright.Ssms
         }
 
         internal static void Swallowed(Exception error) =>
-            Microsoft.VisualStudio.Shell.ActivityLog.TryLogWarning("Querywright", "Editor command failed: " + error.GetType().Name + " at " + error.TargetSite?.DeclaringType?.FullName + "." + error.TargetSite?.Name);
+            Diagnostics.TryLogWarning("Querywright", "Editor command failed: " + error.GetType().Name + " at " + error.TargetSite?.DeclaringType?.FullName + "." + error.TargetSite?.Name);
 
         public int QueryStatus(ref Guid group, uint count, OLECMD[] commands, IntPtr text)
         {

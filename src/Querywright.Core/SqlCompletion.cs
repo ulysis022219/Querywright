@@ -405,6 +405,12 @@ namespace Querywright.Core
             if (sql.Length > 1_000_000) throw new ArgumentException("Completion input exceeds 1,000,000 characters.");
             var catalog = tables ?? Array.Empty<SchemaTable>();
             var names = caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+            // Table-valued functions are in the catalog for their columns; as a source they are a function call, not a table.
+            var functions = new HashSet<string>((procedures ?? Array.Empty<SchemaProcedure>()).Where(p => p.IsFunction).Select(p => p.Schema + "\n" + p.Name), names);
+            bool IsFunction(SchemaTable table) => functions.Contains(table.Schema + "\n" + table.Name);
+            var calls = new HashSet<string>(catalog.Where(IsFunction).Select(t => "table " + t.Schema + "." + t.Name), StringComparer.Ordinal);
+            CompletionItem Call(CompletionItem item) => calls.Contains(item.Description)
+                ? new CompletionItem(item.Name, item.InsertText + "(", "function" + item.Description.Substring(5)) : item;
             int start = position, end = position;
             while (start > 0 && IsWordChar(sql[start - 1])) start--;
             while (end < sql.Length && IsWordChar(sql[end])) end++;
@@ -468,7 +474,7 @@ namespace Querywright.Core
             {
                 bool alias = qualifier.Count == 1 && scan.Sources.Any(s => s.Visible(at) && names.Equals(s.Alias, qualifier[0]));
                 if (resolver != null && resolver.Handled && (alias || resolver.TableMarker || resolver.Items.Count > 0))
-                    items.AddRange(resolver.Items.Select(i => (i, Kind.Column)));
+                    items.AddRange(resolver.Items.Select(i => (resolver.TableMarker ? Call(i) : i, Kind.Column)));
                 else if (qualifier.Count > 0) Qualified(qualifier);
             }
             else if (at > 0 && segment[at - 1].Is("USE"))
@@ -532,7 +538,8 @@ namespace Querywright.Core
                 foreach (var v in variables.Where(v => context != Context.Table || v.Value))
                     Add(Kind.Variable, v.Key, v.Key, v.Value ? "table variable" : "variable");
                 foreach (var table in catalog)
-                    Add(Kind.Table, table.Name, TableText(table, AliasOf(table)), "table " + table.Schema + "." + table.Name);
+                    if (IsFunction(table)) Add(Kind.Table, table.Name, TableText(table, null) + "(", "function " + table.Schema + "." + table.Name);
+                    else Add(Kind.Table, table.Name, TableText(table, AliasOf(table)), "table " + table.Schema + "." + table.Name);
                 // JOIN | leads with the tables a foreign key links to an earlier source, each with its ON condition.
                 if (options.JoinTables && sourceSlot && prev is Tok jt && jt.Is("JOIN"))
                     foreach (var source in scan.Sources.Where(s => s.Table != null && s.Offset < jt.Offset && s.Visible(at)))
@@ -702,7 +709,7 @@ namespace Querywright.Core
                     foreach (var column in cteColumns) Add(Kind.Column, column, QuoteIfNeeded(column), ColumnDescription(null, column, parts[0] + "." + column));
                 else if (parts.Count == 1)
                     foreach (var t in catalog.Where(t => names.Equals(t.Schema, parts[0])))
-                        Add(Kind.Table, t.Name, QuoteIfNeeded(t.Name), "table " + t.Schema + "." + t.Name);
+                        Add(Kind.Table, t.Name, QuoteIfNeeded(t.Name) + (IsFunction(t) ? "(" : ""), (IsFunction(t) ? "function " : "table ") + t.Schema + "." + t.Name);
             }
 
             int Rank(Kind kind) => kind == Kind.Join ? -1 : context == Context.Table ? 0
@@ -1012,7 +1019,7 @@ namespace Querywright.Core
                 bool qualify = ids != null || references.Length > 1;
                 foreach (var reference in references)
                 {
-                    string? alias = reference?.Alias?.Value ?? (reference as NamedTableReference)?.SchemaObject.BaseIdentifier.Value;
+                    string? alias = reference?.Alias?.Value ?? (reference as NamedTableReference)?.SchemaObject.BaseIdentifier.Value ?? Function(reference)?.BaseIdentifier.Value;
                     if (ids != null && (alias == null || !names.Equals(alias, ids[0].Value))) continue;
                     var columns = reference == null ? Array.Empty<string>() : Columns(reference).ToArray();
                     if (alias == null || columns.Length == 0)
@@ -1072,10 +1079,10 @@ namespace Querywright.Core
                     if (scopes[i].FromClause == null) continue;
                     foreach (var reference in scopes[i].FromClause.TableReferences.SelectMany(Tables))
                     {
-                        string? alias = reference?.Alias?.Value ?? (reference as NamedTableReference)?.SchemaObject.BaseIdentifier.Value;
+                        string? alias = reference?.Alias?.Value ?? (reference as NamedTableReference)?.SchemaObject.BaseIdentifier.Value ?? Function(reference)?.BaseIdentifier.Value;
                         if (alias == null) continue;
                         if (!seen.Add(alias) || (qualifier != null && !names.Equals(alias, qualifier))) continue;
-                        var table = reference is NamedTableReference named && !IsCte(named) ? Find(named) : null;
+                        var table = reference is NamedTableReference named && !IsCte(named) ? Find(named.SchemaObject) : Function(reference) is SchemaObjectName call ? Find(call) : null;
                         Sources++;
                         foreach (string column in Columns(reference!))
                         {
@@ -1093,20 +1100,23 @@ namespace Querywright.Core
             {
                 if (reference is QueryDerivedTable derived)
                     return derived.Columns.Count > 0 ? derived.Columns.Select(c => c.Value) : Projection(derived.QueryExpression);
+                // A table-valued function call: its columns come from the catalog like a table's.
+                if (Function(reference) is SchemaObjectName call) return Find(call)?.Columns ?? Array.Empty<string>();
                 if (!(reference is NamedTableReference named)) return Array.Empty<string>();
                 if (named.SchemaObject.SchemaIdentifier == null)
                     foreach (var scope in cteScopes)
                         if (scope.TryGetValue(named.SchemaObject.BaseIdentifier.Value, out var cte))
                             return cte.Columns.Count > 0 ? cte.Columns.Select(c => c.Value) : Projection(cte.QueryExpression);
-                return Find(named)?.Columns ?? Array.Empty<string>();
+                return Find(named.SchemaObject)?.Columns ?? Array.Empty<string>();
             }
+
+            private static SchemaObjectName? Function(TableReference? reference) => (reference as SchemaObjectFunctionTableReference)?.SchemaObject;
 
             private bool IsCte(NamedTableReference named) =>
                 named.SchemaObject.SchemaIdentifier == null && cteScopes.Any(scope => scope.ContainsKey(named.SchemaObject.BaseIdentifier.Value));
 
-            private SchemaTable? Find(NamedTableReference reference)
+            private SchemaTable? Find(SchemaObjectName name)
             {
-                var name = reference.SchemaObject;
                 if (name.DatabaseIdentifier != null || name.ServerIdentifier != null) return null;
                 string schema = name.SchemaIdentifier?.Value ?? defaultSchema;
                 return tables.FirstOrDefault(t => names.Equals(t.Schema, schema) && names.Equals(t.Name, name.BaseIdentifier.Value));

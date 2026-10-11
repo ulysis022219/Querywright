@@ -1681,4 +1681,11 @@ Check(CompletionRules.Group(MatchKind.Exact, false, true, true) == 0 && Completi
 Check(CompletionRules.KeepsTyping("my table", "my", ' ') && !CompletionRules.KeepsTyping("mytable", "my", ' '), "commit key that continues the name is typed");
 Check(CompletionRules.SwallowsKey("COUNT(", '(') && CompletionRules.SwallowsKey("[My Table]", ']') && CompletionRules.SwallowsKey("FROM ", ' ') &&
     !CompletionRules.SwallowsKey("Orders", '(') && !CompletionRules.SwallowsKey("GO", ' ') && !CompletionRules.SwallowsKey("a.", '.'), "doubled commit key is swallowed");
+var tvf_tables = new[] { new SchemaTable("GL", "fn_GLCo", "Code", "Description"), new SchemaTable("GL", "GLCo", "Code") };
+var tvf_procs = new[] { new SchemaProcedure("GL", "fn_GLCo", new[] { new SchemaParameter("@YEAR", "int", false, true), new SchemaParameter("@MONTH", "int", false, true) }, isFunction: true) };
+CompletionItem Tvf(string text, string name) { int at = text.IndexOf('|'); return SqlCompletion.Complete(text.Remove(at, 1), at, tvf_tables, procedures: tvf_procs).Items.First(i => i.Name == name); }
+Check(Tvf("SELECT * FROM gl.fn_GLCo|", "fn_GLCo") is { InsertText: "fn_GLCo(", Description: "function GL.fn_GLCo" }, "table-valued function after schema is a function call");
+Check(Tvf("SELECT * FROM fn_|", "fn_GLCo") is { InsertText: "GL.fn_GLCo(", Description: "function GL.fn_GLCo" }, "table-valued function in FROM gets no alias before its arguments");
+Check(Tvf("SELECT * FROM gl.GLC|", "GLCo") is { InsertText: "GLCo", Description: "table GL.GLCo" }, "tables next to functions stay tables");
+Check(SqlCompletion.Complete("SELECT f. FROM GL.fn_GLCo(2025, 6) AS f", 9, tvf_tables, procedures: tvf_procs).Items.Any(i => i.Name == "Description"), "table-valued function columns still listed");
 Console.WriteLine($"PASS: {checks} total checks including reasoning output caps and safe stop diagnostics. SSMS integration not tested.");

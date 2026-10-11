@@ -82,7 +82,7 @@ namespace Querywright.Core
     }
 
     /// <summary>How well typed text matches a candidate name; a higher value lists first.</summary>
-    public enum MatchKind { None, Substring, Camel, Prefix, Exact }
+    public enum MatchKind { None, Substring, Camel, CamelSubstring, Prefix, Exact }
 
     /// <summary>How completion lists, orders and inserts candidates.</summary>
     public sealed class CompletionOptions
@@ -150,43 +150,61 @@ namespace Querywright.Core
             "RETURN", "RIGHT JOIN", "SELECT", "SET", "UNION", "UNION ALL", "UNPIVOT", "UPDATE", "WHERE", "WITH"
         };
 
-        // Word starts: after a non-alphanumeric, at a letter/digit switch, at an upper after a lower, and at the last upper of an acronym.
-        private static List<int> Humps(string name)
+        // Next index at which a word starting with want begins: the same character after anything but an upper-case
+        // letter, or either case of it after a non-letter. A run of upper-case letters therefore counts as one word.
+        private static int WordStart(string name, char want, int from)
         {
-            var result = new List<int>();
-            for (int i = 0; i < name.Length; i++)
+            for (int i = Math.Max(from, 1); i < name.Length; i++)
             {
-                char c = name[i], p = i > 0 ? name[i - 1] : '\0';
-                if (!char.IsLetterOrDigit(c)) continue;
-                if (!char.IsLetterOrDigit(p) || char.IsDigit(c) != char.IsDigit(p) ||
-                    char.IsUpper(c) && (char.IsLower(p) || i + 1 < name.Length && char.IsLower(name[i + 1]))) result.Add(i);
+                char before = name[i - 1];
+                if (!char.IsUpper(before) && name[i] == want || !char.IsLetter(before) && char.ToUpperInvariant(name[i]) == want) return i;
             }
-            return result;
+            return -1;
         }
 
-        // Typed text read as the starts of consecutive words, the first word included: "oi" and "ordi" match OrderId.
-        private static bool Camel(string name, string typed, List<int>? hits)
+        // Typed text read as the starts of words in order: "oi" and "ordi" match OrderId, "CusOrd" matches CustomerOrders.
+        // The match may begin at a later word, and a word that runs out restarts at the next word beginning the same way.
+        private static bool WordMatch(string name, string typed, List<int>? hits)
         {
-            if (typed.Length < 2 || typed.Length > 32 || name.Length > 128) return false;
-            var humps = Humps(name);
-            if (humps.Count < 2 || humps[0] != 0) return false;
-            var dead = new HashSet<int>();
-            bool Walk(int t, int h)
+            if (typed.Length == 0) return true;
+            if (name.Length == 0) return false;
+            char first = char.ToUpperInvariant(typed[0]);
+            int at = char.ToUpperInvariant(name[0]) == first ? 0 : WordStart(name, first, 0);
+            if (at < 0) return false;
+            hits?.Add(at);
+            for (int t = 1; t < typed.Length; t++)
             {
-                if (dead.Contains(t * 256 + h)) return false;
-                int limit = h + 1 < humps.Count ? humps[h + 1] : name.Length;
-                for (int k = 0; t + k < typed.Length && humps[h] + k < limit && char.ToUpperInvariant(typed[t + k]) == char.ToUpperInvariant(name[humps[h] + k]); k++)
+                char anchor = name[at], want = char.ToUpperInvariant(typed[t]);
+                if (++at >= name.Length) return false;
+                while (char.ToUpperInvariant(name[at]) != want)
                 {
-                    bool done = t + k + 1 == typed.Length;
-                    for (int next = h + 1; !done && next < humps.Count; next++) done = Walk(t + k + 1, next);
-                    if (!done) continue;
-                    for (int n = 0; n <= k; n++) hits?.Add(humps[h] + n);
-                    return true;
+                    int next = WordStart(name, want, at);
+                    if (next >= 0) { at = next; break; }
+                    next = WordStart(name, anchor, at);
+                    if (next < 0) return false;
+                    if (hits != null) hits[hits.Count - 1] = next;
+                    if ((at = next + 1) >= name.Length) return false;
                 }
-                dead.Add(t * 256 + h);
-                return false;
+                hits?.Add(at);
             }
-            return Walk(0, 0);
+            return true;
+        }
+
+        // Lower-cased first letters of a name's words: OrderDetails and order_details give "od", HTTPServer gives "hs".
+        private static string Abbreviation(string name, List<int>? starts = null)
+        {
+            var result = new System.Text.StringBuilder();
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i], before = i > 0 ? name[i - 1] : 'a';
+                if (!char.IsLetter(c)) continue;
+                bool start = result.Length == 0 || !char.IsLetter(before) && !char.IsNumber(before) ||
+                    char.IsUpper(c) && (char.IsLower(before) || char.IsNumber(before) || char.IsUpper(before) && i + 1 < name.Length && char.IsLower(name[i + 1]));
+                if (!start) continue;
+                result.Append(char.ToLowerInvariant(c));
+                starts?.Add(i);
+            }
+            return result.ToString();
         }
 
         /// <summary>Classifies how <paramref name="typed"/> matches a candidate name; empty text matches everything as a prefix.</summary>
@@ -195,8 +213,9 @@ namespace Querywright.Core
             if (name == null) throw new ArgumentNullException(nameof(name));
             if (string.IsNullOrEmpty(typed)) return MatchKind.Prefix;
             if (name.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) return name.Length == typed.Length ? MatchKind.Exact : MatchKind.Prefix;
-            if (camelHumps && Camel(name, typed, null)) return MatchKind.Camel;
-            return anywhere && name.IndexOf(typed, StringComparison.OrdinalIgnoreCase) >= 0 ? MatchKind.Substring : MatchKind.None;
+            bool inside = name.IndexOf(typed, StringComparison.OrdinalIgnoreCase) >= 0;
+            if (camelHumps && WordMatch(name, typed, null)) return inside ? MatchKind.CamelSubstring : MatchKind.Camel;
+            return anywhere && inside ? MatchKind.Substring : MatchKind.None;
         }
 
         /// <summary>Character positions of <paramref name="name"/> that the typed text matched, ascending, for highlighting.</summary>
@@ -205,34 +224,37 @@ namespace Querywright.Core
             var hits = new List<int>();
             var kind = Match(name, typed, camelHumps);
             if (string.IsNullOrEmpty(typed) || kind == MatchKind.None) return hits;
-            if (kind == MatchKind.Camel) { Camel(name, typed, hits); hits.Sort(); return hits; }
+            if (kind == MatchKind.Camel || kind == MatchKind.CamelSubstring) { WordMatch(name, typed, hits); return hits; }
             int at = kind == MatchKind.Substring ? name.IndexOf(typed, StringComparison.OrdinalIgnoreCase) : 0;
             for (int i = 0; i < typed.Length; i++) hits.Add(at + i);
             return hits;
         }
 
-        private static bool Plain(string name) => name.Length > 0 && QuoteIfNeeded(name) == name;
+        private static bool Plain(string name) => name.Length > 0 && QuoteIfNeeded(name) == name && !name.Equals("GO", StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>Alias for a table: a user-defined one, else the initials of the name's words (OrderDetails gives od),
-        /// with a number appended while it is reserved or already in <paramref name="taken"/>.</summary>
+        /// <summary>Alias for a table: a user-defined one, else the initials of the name's words (OrderDetails gives od; a reserved
+        /// result takes one more letter, so InventoryStock gives ist), numbered from 2 while it is in <paramref name="taken"/>
+        /// and bracketed when it still needs brackets.</summary>
         public static string Alias(string name, CompletionOptions? options = null, ICollection<string>? taken = null)
         {
             if (string.IsNullOrEmpty(name)) throw new ArgumentException("Name must be nonempty.", nameof(name));
             options ??= new CompletionOptions();
-            string? alias = options.Aliases != null && options.Aliases.TryGetValue(name, out var chosen) && chosen != null && Plain(chosen) ? chosen : null;
+            string? alias = options.Aliases != null && options.Aliases.TryGetValue(name, out var chosen) && !string.IsNullOrWhiteSpace(chosen) ? chosen : null;
             if (alias == null)
             {
                 string stem = name;
-                foreach (var ignored in options.IgnoredPrefixes)
-                    if (!string.IsNullOrEmpty(ignored) && stem.Length > ignored.Length && stem.StartsWith(ignored, StringComparison.OrdinalIgnoreCase))
+                foreach (var ignored in options.IgnoredPrefixes.Where(p => !string.IsNullOrEmpty(p)).OrderByDescending(p => p.Length))
+                    if (stem.Length > ignored.Length && stem.StartsWith(ignored, StringComparison.OrdinalIgnoreCase))
                     { stem = stem.Substring(ignored.Length); break; }
-                alias = new string(Humps(stem).Select(i => stem[i]).Where(char.IsLetter).ToArray());
-                alias = options.UppercaseAliases ? alias.ToUpperInvariant() : alias.ToLowerInvariant();
-                if (alias.Length == 0 || !Plain(alias) && !Plain(alias + "2")) alias = options.UppercaseAliases ? "T" : "t";
+                var starts = new List<int>();
+                alias = Abbreviation(stem, starts);
+                if (alias.Length > 0 && !Plain(alias) && starts[starts.Count - 1] + 1 < stem.Length) alias += char.ToLowerInvariant(stem[starts[starts.Count - 1] + 1]);
+                if (alias.Length == 0) alias = "a";
+                if (options.UppercaseAliases) alias = alias.ToUpperInvariant();
             }
             string result = alias;
-            for (int n = 2; !Plain(result) || taken != null && taken.Contains(result); n++) result = alias + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return result;
+            for (int n = 2; taken != null && taken.Contains(result); n++) result = alias + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return QuoteIfNeeded(result);
         }
 
         private static bool Refers(SchemaForeignKey key, SchemaTable table, StringComparer names) =>
@@ -497,7 +519,10 @@ namespace Querywright.Core
                 bool sourceSlot = prev is Tok st && (st.Is("FROM") || st.Is("JOIN") || st.Type == TSqlTokenType.Comma && clause == "FROM") &&
                     !(at < segment.Count && (segment[at].IsName || segment[at].Is("AS")));
                 var taken = new HashSet<string>(scan.Sources.Select(s => s.Alias), names);
-                string? AliasOf(SchemaTable table) => sourceSlot && options.AliasTables ? Alias(table.Name, options, taken) : null;
+                // A generated alias also stays clear of schema names and of dbo objects, which it would hide.
+                var reserved = new HashSet<string>(taken, names);
+                foreach (var table in catalog) { reserved.Add(table.Schema); if (names.Equals(table.Schema, "dbo")) reserved.Add(table.Name); }
+                string? AliasOf(SchemaTable table) => sourceSlot && options.AliasTables ? Alias(table.Name, options, reserved) : null;
                 string TableText(SchemaTable table, string? alias) =>
                     (options.QualifyObjects || !names.Equals(table.Schema, defaultSchema) ? QuoteIfNeeded(table.Schema) + "." : "") +
                     QuoteIfNeeded(table.Name) + (alias == null ? "" : (options.AliasWithAs ? " AS " : " ") + alias);
@@ -681,17 +706,15 @@ namespace Querywright.Core
             }
 
             int Rank(Kind kind) => kind == Kind.Join ? -1 : context == Context.Table ? 0
-                : context == Context.Column ? (kind == Kind.Column ? 0 : kind == Kind.Alias || kind == Kind.Table ? 1 : kind == Kind.Variable ? 2 : kind == Kind.Function ? 3 : 4)
+                : context == Context.Column ? (kind == Kind.Alias ? 0 : kind == Kind.Column ? 1 : kind == Kind.Keyword ? 2 : kind == Kind.Table ? 3 : kind == Kind.Variable ? 4 : 5)
                 : (kind == Kind.Keyword ? 0 : kind == Kind.Variable ? 1 : kind == Kind.Alias || kind == Kind.Function ? 2 : kind == Kind.Column ? 3 : 4);
-            // Exact match, promoted joins, then how the typed text matches (prefix, word starts, substring), then kind.
+            // An exact name, then join suggestions, then the rest; inside each group how the typed text matches
+            // (prefix, word starts inside a substring hit, word starts, substring), then kind.
             string typed = options.Filter ? prefix : "";
             var ordered = items.Select((i, n) => (i.Item, i.Kind, Index: n, Match: Match(i.Item.Name, typed, options.CamelHumps, options.MatchAnywhere)))
                 .Where(i => i.Match != MatchKind.None)
                 .GroupBy(i => i.Item.InsertText, StringComparer.Ordinal).Select(g => g.OrderBy(i => Rank(i.Kind)).First())
-                // A join whose text starts with the typed word stays ahead of an alias that equals it (ON o| keeps o.Id = p.Id first).
-                .OrderBy(i => i.Kind == Kind.Join && i.Match >= MatchKind.Prefix ? 0 : 1)
-                .ThenBy(i => typed.Length > 0 && i.Match == MatchKind.Exact ? 0 : 1)
-                .ThenBy(i => i.Kind == Kind.Join ? 0 : 1)
+                .OrderBy(i => typed.Length > 0 && i.Match == MatchKind.Exact ? 0 : i.Kind == Kind.Join ? 1 : 2)
                 .ThenByDescending(i => (int)i.Match)
                 .ThenBy(i => Rank(i.Kind)).ThenBy(i => far.Contains(i.Item) ? 1 : 0)
                 .ThenBy(i => groups.TryGetValue(i.Item, out int g) ? g : 0)

@@ -702,8 +702,8 @@ Check(Names(CompleteAt("WITH recent (Oid) AS (SELECT OrderId FROM dbo.Orders), b
 var cte = CompleteAt("WITH recent AS (SELECT OrderId FROM dbo.Orders) SELECT * FROM re|", fkCatalog).Items.Single();
 Check(cte.Name == "recent" && cte.Description == "cte", "CTE names in scope");
 var where = CompleteAt("SELECT * FROM dbo.People p WHERE |", fkCatalog);
-Check(where.Items[0].Description.StartsWith("column") && where.Items.Any(i => i.Name == "p" && i.Description == "alias dbo.People") &&
-    where.Items.TakeWhile(i => i.Description.StartsWith("column")).Count() == 3, "columns first after WHERE");
+Check(where.Items[0].Name == "p" && where.Items[0].Description == "alias dbo.People" &&
+    where.Items.Skip(1).TakeWhile(i => i.Description.StartsWith("column")).Count() == 3, "alias then columns after WHERE");
 Check(CompleteAt("SELECT * FROM dbo.People p |", fkCatalog).Items[0].Description == "keyword" && Names(CompleteAt("SELECT * FROM dbo.People p WH|", fkCatalog)).SequenceEqual(new[] { "WHEN", "WHERE", "WHILE" }), "keywords first after a source");
 var fromItems = CompleteAt("SELECT * FROM |", fkCatalog).Items;
 Check(fromItems.Count == 4 && fromItems.All(i => i.Description.StartsWith("table")), "only tables after FROM");
@@ -720,9 +720,10 @@ Check(CompleteAt("SELECT * FROM People p LEFT JOIN Orders ON |", fkCatalog).Item
 Check(CompleteAt("SELECT * FROM sales.Lines l JOIN sales.Notes n ON |", fkCatalog).Items[0].Name == "n.OrderId = l.OrderId AND n.LineNumber = l.LineNumber", "composite FK join");
 Check(CompleteAt("SELECT * FROM sales.Notes n JOIN sales.Lines l ON |", fkCatalog).Items[0].Name == "l.OrderId = n.OrderId AND l.LineNumber = n.LineNumber", "composite FK join reverse");
 var chain = CompleteAt("SELECT * FROM dbo.People p JOIN dbo.Orders o ON o.PersonId = p.Id\nJOIN sales.Lines l ON |\nWHERE p.Id = 1;", fkCatalog);
-Check(chain.Items[0].Name == "l.OrderId = o.OrderId" && chain.Items[1].Description.StartsWith("column"), "FK join to earlier source, then columns");
+Check(chain.Items[0].Name == "l.OrderId = o.OrderId" && chain.Items.Skip(1).Take(3).All(i => i.Description.StartsWith("alias")) &&
+    chain.Items[4].Description.StartsWith("column"), "FK join to earlier source, then aliases, then columns");
 var typed = CompleteAt("SELECT * FROM dbo.People p JOIN dbo.Orders o ON o|", fkCatalog);
-Check(typed.Items[0].Name == "o.PersonId = p.Id" && typed.Start == 48 && typed.Length == 1, "FK join with typed prefix");
+Check(typed.Items[0].Name == "o" && typed.Items[1].Name == "o.PersonId = p.Id" && typed.Start == 48 && typed.Length == 1, "exact alias leads the FK join with typed prefix");
 Check(CompleteAt("SELECT * FROM dbo.People p JOIN sales.Notes n ON |", fkCatalog).Items.All(i => !i.Name.Contains(" = ")), "no FK, no join condition");
 Check(CompleteAt("SELECT * FROM dbo.People p WHERE |", fkCatalog).Items.All(i => !i.Name.Contains(" = ")), "join conditions only after ON");
 Console.WriteLine($"PASS: {checks} total checks including FK join completion. SSMS integration not tested.");
@@ -1344,19 +1345,27 @@ CompletionResult Sug(string text, CompletionOptions? o = null)
     return SqlCompletion.Complete(text.Remove(at, 1), at, fkCatalog, o ?? new CompletionOptions());
 }
 Check(SqlCompletion.Match("OrderId", "oi") == MatchKind.Camel && SqlCompletion.Match("order_id", "OI") == MatchKind.Camel &&
-    SqlCompletion.Match("OrderId", "ordi") == MatchKind.Camel && SqlCompletion.Match("HTTPServer", "hs") == MatchKind.Camel, "word-start match");
+    SqlCompletion.Match("OrderId", "ordi") == MatchKind.Camel && SqlCompletion.Match("CustomerOrders", "CusOrd") == MatchKind.Camel, "word-start match");
+Check(SqlCompletion.Match("HTTPServer", "hs") == MatchKind.None && SqlCompletion.Match("HTTPServer", "hts") == MatchKind.None &&
+    SqlCompletion.Match("SalesOrderId", "oi") == MatchKind.Camel && SqlCompletion.Match("OrderOrigin", "oo") == MatchKind.Camel, "upper-case run is one word; match may start at a later word");
 Check(SqlCompletion.Match("OrderId", "ord") == MatchKind.Prefix && SqlCompletion.Match("OrderId", "orderid") == MatchKind.Exact &&
     SqlCompletion.Match("OrderId", "") == MatchKind.Prefix, "prefix and exact match");
-Check(SqlCompletion.Match("SalesOrder", "ord") == MatchKind.Substring && SqlCompletion.Match("OrderId", "xz") == MatchKind.None, "substring match and no match");
-Check(SqlCompletion.Match("OrderId", "oi", camelHumps: false) == MatchKind.None && SqlCompletion.Match("SalesOrder", "ord", anywhere: false) == MatchKind.None, "match kinds can be turned off");
-Check(MatchKind.Exact > MatchKind.Prefix && MatchKind.Prefix > MatchKind.Camel && MatchKind.Camel > MatchKind.Substring, "match kinds rank");
+Check(SqlCompletion.Match("SalesOrder", "ord") == MatchKind.CamelSubstring && SqlCompletion.Match("Border", "ord") == MatchKind.Substring &&
+    SqlCompletion.Match("OrderId", "xz") == MatchKind.None, "word-start substring, substring and no match");
+Check(SqlCompletion.Match("OrderId", "oi", camelHumps: false) == MatchKind.None && SqlCompletion.Match("Border", "ord", anywhere: false) == MatchKind.None, "match kinds can be turned off");
+Check(MatchKind.Exact > MatchKind.Prefix && MatchKind.Prefix > MatchKind.CamelSubstring &&
+    MatchKind.CamelSubstring > MatchKind.Camel && MatchKind.Camel > MatchKind.Substring, "match kinds rank");
 Check(SqlCompletion.Highlights("OrderId", "oi").SequenceEqual(new[] { 0, 5 }) && SqlCompletion.Highlights("SalesOrder", "ord").SequenceEqual(new[] { 5, 6, 7 }) &&
-    SqlCompletion.Highlights("OrderId", "or").SequenceEqual(new[] { 0, 1 }) && SqlCompletion.Highlights("OrderId", "xz").Count == 0, "match highlights");
+    SqlCompletion.Highlights("OrderId", "or").SequenceEqual(new[] { 0, 1 }) && SqlCompletion.Highlights("OrderId", "xz").Count == 0 &&
+    SqlCompletion.Highlights("OrderOrigin", "ori").SequenceEqual(new[] { 5, 6, 7 }) && SqlCompletion.Highlights("Border", "ord").SequenceEqual(new[] { 1, 2, 3 }), "match highlights");
 Check(SqlCompletion.Alias("OrderDetails") == "od" && SqlCompletion.Alias("People") == "p" && SqlCompletion.Alias("order_details") == "od", "alias from word initials");
 Check(SqlCompletion.Alias("tblOrderDetails", new CompletionOptions { IgnoredPrefixes = new[] { "tbl" } }) == "od" &&
     SqlCompletion.Alias("tbl", new CompletionOptions { IgnoredPrefixes = new[] { "tbl" } }) == "t", "alias ignores a prefix but not the whole name");
 Check(SqlCompletion.Alias("Orders", null, new[] { "o" }) == "o2" && SqlCompletion.Alias("Orders", null, new[] { "o", "o2" }) == "o3", "alias avoids taken names");
-Check(SqlCompletion.Alias("InventoryStock") == "is2" && SqlCompletion.Alias("123") == "t", "alias avoids reserved words; fallback");
+Check(SqlCompletion.Alias("InventoryStock") == "ist" && SqlCompletion.Alias("GlobalOrders") == "gor" && SqlCompletion.Alias("123") == "a", "reserved alias takes one more letter; fallback");
+Check(SqlCompletion.Alias("HTTPServer") == "hs" && SqlCompletion.Alias("Order2Line") == "ol" && SqlCompletion.Alias("order2line") == "o", "alias word starts");
+Check(SqlCompletion.Alias("tblOrderLines", new CompletionOptions { IgnoredPrefixes = new[] { "t", "tbl" } }) == "ol", "longest ignored prefix wins");
+Check(SqlCompletion.Alias("I_S") == "[is]" && SqlCompletion.Alias("People", new CompletionOptions { Aliases = new Dictionary<string, string> { ["People"] = "my people" } }) == "[my people]", "alias bracketed when needed");
 Check(SqlCompletion.Alias("Order_Details", new CompletionOptions { UppercaseAliases = true }) == "OD", "uppercase alias");
 Check(SqlCompletion.Alias("People", new CompletionOptions { Aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["people"] = "per" } }) == "per", "user-defined alias");
 var aliasing = new CompletionOptions { AliasTables = true };
@@ -1664,4 +1673,12 @@ Check(unknownFinishStream.FinishReason == null && !unknownFinishStream.TokenLimi
 StreamEvent(unknownFinishStream, """data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""");
 StreamEvent(unknownFinishStream, """data: {"choices":[{"index":0,"delta":{},"finish_reason":"fixture-secret"}]}""");
 Check(unknownFinishStream.FinishReason == "stop", "unknown stream stop value cannot replace known metadata");
+Check(CompletionRules.OpensList('=', "WHERE a =", "") && CompletionRules.OpensList('(', "COUNT(", "") && CompletionRules.OpensList('o', "FROM o", "o"), "list opens on letters and operators");
+Check(!CompletionRules.OpensList(' ', "   ", "") && !CompletionRules.OpensList('5', "TOP 5", "5") && !CompletionRules.OpensList('a', "TOP 1a", "1a") && !CompletionRules.OpensList(';', "x;", ""), "no list on blank line, number or semicolon");
+Check(CompletionRules.Group(MatchKind.Exact, false, true, true) == 0 && CompletionRules.Group(MatchKind.Prefix, true, false, true) == 1 &&
+    CompletionRules.Group(MatchKind.Prefix, false, false, true) == 2 && CompletionRules.Group(MatchKind.Prefix, true, true, true) == 3 &&
+    CompletionRules.Group(MatchKind.Exact, false, false, false) == 2, "groups: exact, promoted, other, snippet");
+Check(CompletionRules.KeepsTyping("my table", "my", ' ') && !CompletionRules.KeepsTyping("mytable", "my", ' '), "commit key that continues the name is typed");
+Check(CompletionRules.SwallowsKey("COUNT(", '(') && CompletionRules.SwallowsKey("[My Table]", ']') && CompletionRules.SwallowsKey("FROM ", ' ') &&
+    !CompletionRules.SwallowsKey("Orders", '(') && !CompletionRules.SwallowsKey("GO", ' ') && !CompletionRules.SwallowsKey("a.", '.'), "doubled commit key is swallowed");
 Console.WriteLine($"PASS: {checks} total checks including reasoning output caps and safe stop diagnostics. SSMS integration not tested.");

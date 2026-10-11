@@ -259,7 +259,7 @@ namespace Querywright.Ssms
     [Export(typeof(EditorFormatDefinition)), ClassificationType(ClassificationTypeNames = "Querywright Block 4"), Name("Querywright Block 4"), UserVisible(true), Order(After = Priority.High)]
     internal sealed class BlockFormat4 : BlockFormat { public BlockFormat4() : base(4, 0x2E, 0x9E, 0x5B) { } }
     [Export(typeof(EditorFormatDefinition)), ClassificationType(ClassificationTypeNames = "Querywright Block 5"), Name("Querywright Block 5"), UserVisible(true), Order(After = Priority.High)]
-    internal sealed class BlockFormat5 : BlockFormat { public BlockFormat5() : base(5, 0xD4, 0x55, 0x3B) { } }
+    internal sealed class BlockFormat5 : BlockFormat { public BlockFormat5() : base(5, 0x3B, 0x6F, 0xD4) { } }
     [Export(typeof(EditorFormatDefinition)), ClassificationType(ClassificationTypeNames = "Querywright Block 6"), Name("Querywright Block 6"), UserVisible(true), Order(After = Priority.High)]
     internal sealed class BlockFormat6 : BlockFormat { public BlockFormat6() : base(6, 0x0F, 0xA3, 0xA3) { } }
 }

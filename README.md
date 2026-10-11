@@ -29,6 +29,9 @@ The updater installs it automatically; reopen SSMS when it reports success. Your
 Older versions that only show **Download** need one manual update to get this feature.
 To uninstall, close SSMS and double-click `Uninstall.cmd`.
 
+SSMS 18, 19 and 20 (experimental, built from source, not yet tested in SSMS): build `src/Querywright.Ssms.Legacy`,
+then run `scripts/Install-Legacy.ps1` from an elevated PowerShell with SSMS closed (`-Uninstall` removes it).
+
 ## What it does
 
 **Writing SQL**

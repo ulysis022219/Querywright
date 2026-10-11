@@ -171,6 +171,42 @@ namespace Querywright.Ssms
             return true;
         }
 
+        /// <summary>Closing ) or ]: the opener types the pair with the caret between; typing the closer steps over it; Backspace in an empty pair removes both.</summary>
+        private bool TryPair(Guid group, uint id, IntPtr input, WorkbenchOptions options)
+        {
+            if (group != VSConstants.VSStd2K || !view.Selection.IsEmpty || !options.CloseParentheses && !options.CloseBrackets) return false;
+            var caret = view.Caret.Position.BufferPosition;
+            var snapshot = caret.Snapshot;
+            int at = caret.Position;
+            char ahead = at < snapshot.Length ? snapshot[at] : '\0';
+            bool atCloser = closer != null && closer.GetPosition(snapshot) == at && (ahead == ')' || ahead == ']');
+            if (id == (uint)VSConstants.VSStd2KCmdID.BACKSPACE)
+            {
+                if (!atCloser || at == 0 || snapshot[at - 1] != (ahead == ')' ? '(' : '[')) return false;
+                view.TextBuffer.Delete(new Span(at - 1, 2));
+                closer = null;
+                return true;
+            }
+            if (id != (uint)VSConstants.VSStd2KCmdID.TYPECHAR || input == IntPtr.Zero) return false;
+            char typed = (char)(ushort)System.Runtime.InteropServices.Marshal.GetObjectForNativeVariant(input);
+            if (atCloser && typed == ahead)
+            {
+                view.Caret.MoveTo(new SnapshotPoint(snapshot, at + 1));
+                closer = null;
+                return true;
+            }
+            char close = typed == '(' && options.CloseParentheses ? ')' : typed == '[' && options.CloseBrackets ? ']' : '\0';
+            if (close == '\0' || !(at == snapshot.Length || char.IsWhiteSpace(ahead) || ahead == ')' || ahead == ',' || ahead == ';')) return false;
+            var line = caret.GetContainingLine();
+            string before = snapshot.GetText(line.Start, at - line.Start);
+            // ponytail: single-line check, same limit as TryQuote.
+            if (before.Count(c => c == '\'') % 2 == 1 || before.Contains("--")) return false;
+            var after = view.TextBuffer.Insert(at, typed.ToString() + close);
+            view.Caret.MoveTo(new SnapshotPoint(after, at + 1));
+            closer = after.CreateTrackingPoint(at + 1, PointTrackingMode.Positive);
+            return true;
+        }
+
         private static bool IsTab(Guid group, uint id) => group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.TAB;
         private static bool IsReturn(Guid group, uint id) => group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.RETURN;
         private static bool IsGoToDefinition(Guid group, uint id) =>
@@ -197,7 +233,9 @@ namespace Querywright.Ssms
             var session = completion.GetSession(view);
             if (session == null || session.IsDismissed) return false;
             var computed = session.GetComputedItems(CancellationToken.None);
-            return computed.SelectedItem != null && !computed.UsesSoftSelection && session.ApplicableToSpan.GetText(view.TextBuffer.CurrentSnapshot).Length > 0 && SelectionMatches();
+            string word = session.ApplicableToSpan.GetText(view.TextBuffer.CurrentSnapshot);
+            return computed.SelectedItem != null && !computed.UsesSoftSelection && word.Length > 0 && SelectionMatches() &&
+                !CompletionRules.KeepsTyping(computed.SelectedItem.FilterText, word, typed);
         }
 
         public int Exec(ref Guid group, uint id, uint options, IntPtr input, IntPtr output)
@@ -209,15 +247,26 @@ namespace Querywright.Ssms
             {
             // The session would otherwise span spaces and dots and Tab would replace the whole run. Punctuation closes the
             // list without inserting unless it is a configured commit key (see CompletionCommitManager); Tab/Enter still commit.
+            bool commitKey = false;
             if (group == VSConstants.VSStd2K && id == (uint)VSConstants.VSStd2KCmdID.TYPECHAR && input != IntPtr.Zero &&
                 completion.IsCompletionActive(view))
             {
                 char typed = (char)(ushort)System.Runtime.InteropServices.Marshal.GetObjectForNativeVariant(input);
-                if (!char.IsLetterOrDigit(typed) && typed != '_' && typed != '@' && typed != '#' && !Commits(typed)) completion.GetSession(view)?.Dismiss();
+                commitKey = Commits(typed);
+                if (!char.IsLetterOrDigit(typed) && typed != '_' && typed != '@' && typed != '#' && !commitKey) completion.GetSession(view)?.Dismiss();
             }
+            // Tab or Enter switched off as a commit key: close the list and let the key type.
+            if (package?.Options != null && completion.IsCompletionActive(view) &&
+                (IsTab(group, id) && !package.Options.CommitOnTab || IsReturn(group, id) && !package.Options.CommitOnEnter))
+                completion.GetSession(view)?.Dismiss();
             if (package != null)
             {
                 if (package.Options?.CloseQuotes != false && TryQuote(group, id, input)) return VSConstants.S_OK;
+                if (!commitKey && package.Options != null && TryPair(group, id, input, package.Options))
+                {
+                    TryParameterHint(group, id, input);
+                    return VSConstants.S_OK;
+                }
                 // SQL Prompt: Tab on a typed snippet shortcut expands it even while the suggestion list is open.
                 if (IsTab(group, id) && completion.IsCompletionActive(view) && (package.HasSnippetShortcut(view) || !SelectionMatches()))
                     completion.GetSession(view)?.Dismiss();
@@ -282,7 +331,7 @@ namespace Querywright.Ssms
     internal sealed class CompletionSourceProvider : IAsyncCompletionSourceProvider
     {
         public IAsyncCompletionSource GetOrCreate(ITextView textView) =>
-            textView.Properties.GetOrCreateSingletonProperty(() => new CompletionSource());
+            textView.Properties.GetOrCreateSingletonProperty(() => new CompletionSource(textView));
     }
 
     /// <summary>Popup suggestions while typing: keywords, variables and aliases always; objects from live or offline metadata.</summary>
@@ -293,11 +342,40 @@ namespace Querywright.Ssms
         private volatile IReadOnlyList<string>? databases;
         private volatile IReadOnlyList<SchemaProcedure>? procedures;
         private volatile Func<string, IReadOnlyList<SchemaTable>>? otherDatabase;
+        private readonly ITextView view;
+        internal CompletionSource(ITextView view) { this.view = view; }
 
-        public CompletionStartData InitializeCompletion(CompletionTrigger trigger, SnapshotPoint location, CancellationToken token)
+        // The 15.x shell (SSMS 18 to 20) has an earlier shape of the same completion interfaces; both call the shared methods below.
+#if LEGACY_SHELL
+        public bool TryGetApplicableToSpan(char typedChar, SnapshotPoint triggerLocation, out SnapshotSpan applicableToSpan, CancellationToken token) =>
+            Starts(typedChar != '\0', typedChar, triggerLocation, out applicableToSpan);
+
+        public Task<CompletionContext> GetCompletionContextAsync(InitialTrigger trigger, SnapshotPoint triggerLocation, SnapshotSpan applicableToSpan, CancellationToken token) =>
+            ContextAsync(triggerLocation, applicableToSpan, token);
+
+        public Task<object> GetDescriptionAsync(VsCompletionItem item, CancellationToken token) => Task.FromResult<object>(item.Suffix);
+#else
+        public CompletionStartData InitializeCompletion(CompletionTrigger trigger, SnapshotPoint location, CancellationToken token) =>
+            Starts(trigger.Reason == CompletionTriggerReason.Insertion, trigger.Character, location, out var span)
+                ? new CompletionStartData(CompletionParticipation.ProvidesItems, span) : CompletionStartData.DoesNotParticipateInCompletion;
+
+        public Task<CompletionContext> GetCompletionContextAsync(IAsyncCompletionSession session, CompletionTrigger trigger,
+            SnapshotPoint location, SnapshotSpan applicableTo, CancellationToken token)
         {
+            CompletionItemManager.Watch(session);
+            return ContextAsync(location, applicableTo, token);
+        }
+
+        public Task<object> GetDescriptionAsync(IAsyncCompletionSession session, VsCompletionItem item, CancellationToken token) =>
+            Task.FromResult<object>(item.Suffix);
+#endif
+
+        /// <summary>True when the list should open at <paramref name="location"/>; <paramref name="span"/> is the word it replaces.</summary>
+        private bool Starts(bool insertion, char typed, SnapshotPoint location, out SnapshotSpan span)
+        {
+            span = default;
             if (!EditorListener.IsSql(location.Snapshot.ContentType) || WorkbenchPackage.Instance == null)
-                return CompletionStartData.DoesNotParticipateInCompletion;
+                return false;
             // Connection lookup needs the UI thread, where the broker normally calls this.
             if (Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess())
             {
@@ -306,20 +384,21 @@ namespace Querywright.Ssms
                 otherDatabase = WorkbenchPackage.Instance.CurrentOtherDatabase();
                 procedures = WorkbenchPackage.Instance.CurrentProcedures(""); // live only; the script is parsed off the UI thread
             }
-            if (trigger.Reason == CompletionTriggerReason.Insertion && WorkbenchPackage.Instance.Options?.SuggestWhileTyping == false)
-                return CompletionStartData.DoesNotParticipateInCompletion;
-            if (trigger.Reason == CompletionTriggerReason.Insertion &&
-                !(char.IsLetter(trigger.Character) || trigger.Character == '_' || trigger.Character == '.' || trigger.Character == ' '))
-                return CompletionStartData.DoesNotParticipateInCompletion;
+            if (insertion && WorkbenchPackage.Instance.Options?.SuggestWhileTyping == false)
+                return false;
             var snapshot = location.Snapshot;
             int start = location.Position, end = location.Position;
             while (start > 0 && IsWord(snapshot[start - 1])) start--;
             while (end < snapshot.Length && IsWord(snapshot[end])) end++;
-            return new CompletionStartData(CompletionParticipation.ProvidesItems, new SnapshotSpan(snapshot, start, end - start));
+            int lineStart = location.GetContainingLine().Start.Position;
+            if (insertion &&
+                !CompletionRules.OpensList(typed, snapshot.GetText(lineStart, location.Position - lineStart), snapshot.GetText(start, end - start)))
+                return false;
+            span = new SnapshotSpan(snapshot, start, end - start);
+            return true;
         }
 
-        public async Task<CompletionContext> GetCompletionContextAsync(IAsyncCompletionSession session, CompletionTrigger trigger,
-            SnapshotPoint location, SnapshotSpan applicableTo, CancellationToken token)
+        private async Task<CompletionContext> ContextAsync(SnapshotPoint location, SnapshotSpan applicableTo, CancellationToken token)
         {
             var package = WorkbenchPackage.Instance;
             if (package == null) return CompletionContext.Empty;
@@ -329,17 +408,6 @@ namespace Querywright.Ssms
             var databases = this.databases;
             var live = this.procedures;
             var other = this.otherDatabase;
-            // Mouse clicks commit too; any committed procedure gets its parameters.
-            if (!session.Properties.ContainsProperty(typeof(CompletionSource)))
-            {
-                session.Properties.AddProperty(typeof(CompletionSource), true);
-                session.ItemCommitted += (s, e) => { CompletionItemManager.Used(e.Item.InsertText); _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-                {
-                    await Task.Yield(); // after the commit edit and the key that caused it
-                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    if (session.TextView is IWpfTextView view) WorkbenchPackage.Instance?.TryFillAfterCommit(view);
-                }); };
-            }
             var result = await Task.Run(() =>
             {
                 try
@@ -368,6 +436,8 @@ namespace Querywright.Ssms
             bool expectsTable = back < applicableTo.Start.Position && System.Array.IndexOf(new[] { "FROM", "JOIN", "INTO", "UPDATE", "TABLE" },
                 location.Snapshot.GetText(wordStart, back - wordStart).ToUpperInvariant()) >= 0;
             var snippets = applicableTo.IsEmpty || member || expectsTable ? Array.Empty<KeyValuePair<string, string>>() : package.SnippetList();
+            // The word may be a new alias: nothing is firmly selected, so only Tab inserts. Kept on the view; one list is open at a time.
+            view.Properties[CompletionItemManager.SoftKey] = result?.Soft == true;
             if ((result == null || result.Items.Count == 0) && snippets.Count == 0) return CompletionContext.Empty;
             // Snippets insert their shortcut; Tab then expands it (see EditorCommandFilter).
             var items = snippets.Select(s => new VsCompletionItem(s.Key, this, null!, ImmutableArray<CompletionFilter>.Empty,
@@ -380,14 +450,13 @@ namespace Querywright.Ssms
                     if (i.Promoted) item.Properties[CompletionItemManager.PromotedKey] = true;
                     return item;
                 })).ToImmutableArray();
-            // The word may be a new alias: nothing is firmly selected, so only Tab inserts.
-            if (result?.Soft == true) session.Properties[CompletionItemManager.SoftKey] = true;
+#if LEGACY_SHELL
+            return new CompletionContext(items);
+#else
             // Soft selection after a space so Enter still inserts a new line.
             return new CompletionContext(items, null, applicableTo.IsEmpty || result?.Soft == true ? InitialSelectionHint.SoftSelection : InitialSelectionHint.RegularSelection);
+#endif
         }
-
-        public Task<object> GetDescriptionAsync(IAsyncCompletionSession session, VsCompletionItem item, CancellationToken token) =>
-            Task.FromResult<object>(item.Suffix);
     }
 
     /// <summary>Replaces the editor's prefix-only list filter in SQL views; every other view keeps the default manager.</summary>
@@ -408,7 +477,8 @@ namespace Querywright.Ssms
         }
     }
 
-    /// <summary>Filters and ranks the open list on every keystroke: exact, joins, prefix, word starts, substring; recently used first among equals.</summary>
+    /// <summary>Filters and ranks the open list on every keystroke: a fully typed name, then joins, then the rest, then snippets;
+    /// within each by match quality (prefix, word starts, substring), recently used first among equals.</summary>
     internal sealed class CompletionItemManager : IAsyncCompletionItemManager
     {
         internal const string PromotedKey = "QuerywrightPromoted", SoftKey = "QuerywrightSoft";
@@ -418,20 +488,44 @@ namespace Querywright.Ssms
         private static int clock;
         internal static void Used(string insertText) { if (!string.IsNullOrEmpty(insertText)) LastUsed[insertText] = Interlocked.Increment(ref clock); }
 
-        public Task<ImmutableArray<VsCompletionItem>> SortCompletionListAsync(IAsyncCompletionSession session, AsyncCompletionSessionInitialDataSnapshot data, CancellationToken token) =>
-            Task.FromResult(data.InitialItemList.OrderBy(i => i.SortText, StringComparer.Ordinal).ToImmutableArray());
+        /// <summary>Once per list: record the committed item for usage ranking and fill procedure parameters. Mouse clicks commit too.</summary>
+        internal static void Watch(IAsyncCompletionSession session)
+        {
+            if (session.Properties.ContainsProperty(typeof(CompletionSource))) return;
+            session.Properties.AddProperty(typeof(CompletionSource), true);
+            session.ItemCommitted += (s, e) => { Used(e.Item.InsertText); _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await Task.Yield(); // after the commit edit and the key that caused it
+                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (session.TextView is IWpfTextView view) WorkbenchPackage.Instance?.TryFillAfterCommit(view);
+            }); };
+        }
+
+        public Task<ImmutableArray<VsCompletionItem>> SortCompletionListAsync(IAsyncCompletionSession session, AsyncCompletionSessionInitialDataSnapshot data, CancellationToken token)
+        {
+            Watch(session); // the 15.x source never sees the session
+#if LEGACY_SHELL
+            var initial = data.InitialList;
+#else
+            var initial = data.InitialItemList;
+#endif
+            return Task.FromResult(initial.OrderBy(i => i.SortText, StringComparer.Ordinal).ToImmutableArray());
+        }
 
         public Task<FilteredCompletionModel> UpdateCompletionListAsync(IAsyncCompletionSession session, AsyncCompletionSessionDataSnapshot data, CancellationToken token)
         {
             var options = WorkbenchPackage.Instance?.Options;
             bool camel = options?.CamelHumps != false, usage = options?.RankByUsage != false;
             string typed = session.ApplicableToSpan.GetText(data.Snapshot);
-            var matches = data.InitialSortedItemList.Select((item, index) => (Item: item, Index: index, Kind: SqlCompletion.Match(item.FilterText, typed, camel)))
+#if LEGACY_SHELL
+            var sorted = data.InitialSortedList;
+#else
+            var sorted = data.InitialSortedItemList;
+#endif
+            var matches = sorted.Select((item, index) => (Item: item, Index: index, Kind: SqlCompletion.Match(item.FilterText, typed, camel)))
                 .Where(m => m.Kind != MatchKind.None)
                 .Select(m => (m.Item, m.Index, m.Kind, Promoted: m.Item.Properties.ContainsProperty(PromotedKey)))
-                .OrderBy(m => m.Promoted && m.Kind >= MatchKind.Prefix ? 0 : 1)
-                .ThenBy(m => typed.Length > 0 && m.Kind == MatchKind.Exact ? 0 : 1)
-                .ThenBy(m => m.Promoted ? 0 : 1)
+                .OrderBy(m => CompletionRules.Group(m.Kind, m.Promoted, m.Item.SortText.StartsWith("￿", StringComparison.Ordinal), typed.Length > 0))
                 .ThenByDescending(m => (int)m.Kind)
                 .ThenByDescending(m => usage && typed.Length > 0 && LastUsed.TryGetValue(m.Item.InsertText, out int used) ? used : 0)
                 .ThenBy(m => m.Index).ToList();
@@ -443,8 +537,8 @@ namespace Querywright.Ssms
             }
             var shown = matches.Select(m => new CompletionItemWithHighlight(m.Item,
                 SqlCompletion.Highlights(m.Item.DisplayText, typed, camel).Select(i => new Span(i, 1)).ToImmutableArray())).ToImmutableArray();
-            // Firm selection only for a typed word that starts or spells out the item; a new alias or a match in the middle stays soft.
-            bool soft = typed.Length == 0 || matches[0].Kind == MatchKind.Substring || session.Properties.ContainsProperty(SoftKey) && matches[0].Kind != MatchKind.Exact;
+            // Any typed word firmly selects the best match; nothing typed, or a word that may be a new alias, stays soft.
+            bool soft = typed.Length == 0 || session.TextView.Properties.TryGetProperty(SoftKey, out bool alias) && alias && matches[0].Kind != MatchKind.Exact;
             return Task.FromResult(new FilteredCompletionModel(shown, 0, data.SelectedFilters, soft ? UpdateSelectionHint.SoftSelected : UpdateSelectionHint.Selected,
                 centerSelection: false, uniqueItem: matches.Count == 1 ? matches[0].Item : null));
         }
@@ -459,7 +553,7 @@ namespace Querywright.Ssms
             textView.Properties.GetOrCreateSingletonProperty(() => new CompletionCommitManager(EditorListener.IsSql(textView.TextBuffer.ContentType)));
     }
 
-    /// <summary>Optional commit keys (space, dot, comma, parentheses, semicolon) for Querywright's own items. Tab and Enter are the editor's.</summary>
+    /// <summary>Optional commit keys (space, dot, comma, parentheses, ], semicolon) for Querywright's own items. Tab and Enter are the editor's.</summary>
     internal sealed class CompletionCommitManager : IAsyncCompletionCommitManager
     {
         private readonly bool sql;
@@ -467,14 +561,25 @@ namespace Querywright.Ssms
 
         public IEnumerable<char> PotentialCommitCharacters => sql ? WorkbenchPackage.Instance?.Options?.CommitCharacters() ?? "" : "";
 
-        public bool ShouldCommitCompletion(IAsyncCompletionSession session, SnapshotPoint location, char typedChar, CancellationToken token) =>
-            sql && WorkbenchPackage.Instance?.Options?.CommitCharacters().IndexOf(typedChar) >= 0;
+#if LEGACY_SHELL
+        public bool ShouldCommitCompletion(char typedChar, SnapshotPoint location, CancellationToken token) => IsCommitKey(typedChar);
 
-        public CommitResult TryCommit(IAsyncCompletionSession session, ITextBuffer buffer, VsCompletionItem item, char typedChar, CancellationToken token)
+        public CommitResult TryCommit(ITextView view, ITextBuffer buffer, VsCompletionItem item, ITrackingSpan applicableToSpan, char typedChar, CancellationToken token) =>
+            Commit(buffer, item, applicableToSpan, typedChar);
+#else
+        public bool ShouldCommitCompletion(IAsyncCompletionSession session, SnapshotPoint location, char typedChar, CancellationToken token) => IsCommitKey(typedChar);
+
+        public CommitResult TryCommit(IAsyncCompletionSession session, ITextBuffer buffer, VsCompletionItem item, char typedChar, CancellationToken token) =>
+            Commit(buffer, item, session.ApplicableToSpan, typedChar);
+#endif
+
+        private bool IsCommitKey(char typedChar) => sql && WorkbenchPackage.Instance?.Options?.CommitCharacters().IndexOf(typedChar) >= 0;
+
+        private CommitResult Commit(ITextBuffer buffer, VsCompletionItem item, ITrackingSpan applicableTo, char typedChar)
         {
-            // COUNT( committed with ( must not become COUNT((.
-            if (!sql || typedChar != '(' || !(item.Source is CompletionSource) || !item.InsertText.EndsWith("(", StringComparison.Ordinal)) return CommitResult.Unhandled;
-            buffer.Replace(session.ApplicableToSpan.GetSpan(buffer.CurrentSnapshot), item.InsertText);
+            // COUNT( committed with ( must not become COUNT((; the same for ] after [My Table] and a space after trailing white space.
+            if (!sql || !(item.Source is CompletionSource) || !CompletionRules.SwallowsKey(item.InsertText, typedChar)) return CommitResult.Unhandled;
+            buffer.Replace(applicableTo.GetSpan(buffer.CurrentSnapshot), item.InsertText);
             return new CommitResult(true, CommitBehavior.SuppressFurtherTypeCharCommandHandlers);
         }
     }
@@ -581,7 +686,12 @@ namespace Querywright.Ssms
             for (int i = 0; i < hint.Parameters.Count; i++)
             {
                 if (i > 0) runs.Add(new ClassifiedTextRun("text", ", "));
+#if LEGACY_SHELL
+                // No bold runs in the 15.x shell: the current parameter takes the keyword colour instead.
+                runs.Add(new ClassifiedTextRun(i == hint.Current ? "keyword" : "text", hint.Parameters[i]));
+#else
                 runs.Add(new ClassifiedTextRun("text", hint.Parameters[i], i == hint.Current ? ClassifiedTextRunStyle.Bold : ClassifiedTextRunStyle.Plain));
+#endif
             }
             return new QuickInfoItem(snapshot.CreateTrackingSpan(position, 0, SpanTrackingMode.EdgeInclusive), new ClassifiedTextElement(runs));
         }

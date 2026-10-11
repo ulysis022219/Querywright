@@ -774,10 +774,14 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         {
             if (type == null) return null;
             const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.FlattenHierarchy;
-            var property = type.GetProperty(name, flags)
-                ?? type.GetInterfaces().Select(i => i.GetProperty(name)).FirstOrDefault(p => p != null)
-                ?? type.GetProperties(flags).FirstOrDefault(p => p.Name.EndsWith("." + name, StringComparison.Ordinal));
+            // The connection is read on the typing path: look each property up once per type, not on every keystroke.
+            var property = properties.GetOrAdd((type, name), key => key.Item1.GetProperty(key.Item2, flags)
+                ?? key.Item1.GetInterfaces().Select(i => i.GetProperty(key.Item2)).FirstOrDefault(p => p != null)
+                ?? key.Item1.GetProperties(flags).FirstOrDefault(p => p.Name.EndsWith("." + key.Item2, StringComparison.Ordinal)));
             return property?.GetValue(property.GetGetMethod(true)?.IsStatic == true ? null : target);
         }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), PropertyInfo> properties =
+            new System.Collections.Concurrent.ConcurrentDictionary<(Type, string), PropertyInfo>();
     }
 }

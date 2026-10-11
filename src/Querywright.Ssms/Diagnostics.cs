@@ -141,13 +141,25 @@ namespace Querywright.Ssms
                     ["session"] = new Dictionary<string, object>
                     {
                         ["startedUtc"] = startedUtc.ToString("O", CultureInfo.InvariantCulture), ["enabled"] = enabled,
-                        ["appVersion"] = SafeVersion(UpdateCheck.InstalledVersion() ?? typeof(WorkbenchPackage).Assembly.GetName().Version?.ToString()),
+                        ["appVersion"] = SafeVersion(InstalledVersion() ?? typeof(Diagnostics).Assembly.GetName().Version?.ToString()),
                         ["hostVersion"] = hostVersion, ["runtimeVersion"] = Environment.Version.ToString(),
                         ["osVersion"] = Environment.OSVersion.Version.ToString(), ["processArchitecture"] = IntPtr.Size == 8 ? "x64" : "x86"
                     },
                     ["events"] = events.ToArray(), ["ai"] = MiniJson.Parse(AiClient.DiagnosticLog.Export())
                 });
             }
+        }
+
+        // Version lookup also runs in fixtures and release builds without the SSMS SDK.
+        internal static string InstalledVersion()
+        {
+            try
+            {
+                string manifest = Path.Combine(Path.GetDirectoryName(typeof(Diagnostics).Assembly.Location), "extension.vsixmanifest");
+                return Regex.Match(File.ReadAllText(manifest), "<Identity [^>]*Version=\"([^\"]+)\"").Groups[1].Value;
+            }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
         }
 
         internal static string ValidateImport(string json)

@@ -1,12 +1,12 @@
 # Loopback HTTP fixtures only. No provider requests, SQL, stored key reads or user file writes.
+param([string]$HostIde = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 $resolver = [ResolveEventHandler] {
     param($sender, $eventArgs)
-    $ide = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE'
     $name = [Reflection.AssemblyName]::new($eventArgs.Name).Name + '.dll'
     foreach ($folder in 'PublicAssemblies', 'PrivateAssemblies', '') {
-        $path = Join-Path (Join-Path $ide $folder) $name
+        $path = Join-Path (Join-Path $HostIde $folder) $name
         if (Test-Path -LiteralPath $path) { return [Reflection.Assembly]::LoadFrom($path) }
     }
     return $null

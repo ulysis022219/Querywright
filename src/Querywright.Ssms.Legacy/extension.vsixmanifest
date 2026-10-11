@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SSMS 18, 19 and 20 load extensions from a folder under Common7\IDE\Extensions; scripts/Install-Legacy.ps1 copies this build there. -->
+<Vsix Version="1.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2010">
+  <Identifier Id="SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450">
+    <Name>Querywright (development prototype)</Name>
+    <Author>Querywright contributors</Author>
+    <Version>1.0.0</Version>
+    <Description xml:space="preserve">Independent SQL productivity prototype for SSMS 18 to 20.</Description>
+    <Locale>1033</Locale>
+    <InstalledByMsi>true</InstalledByMsi>
+    <SupportedProducts>
+      <IsolatedShell Version="1.0">ssms</IsolatedShell>
+    </SupportedProducts>
+    <SupportedFrameworkRuntimeEdition MinVersion="4.0" MaxVersion="4.0" />
+  </Identifier>
+  <References />
+  <Content>
+    <VsPackage>Querywright.Ssms.pkgdef</VsPackage>
+    <MefComponent>Querywright.Ssms.dll</MefComponent>
+  </Content>
+</Vsix>

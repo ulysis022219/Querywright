@@ -90,9 +90,10 @@ and ranking"; off returns to the editor's prefix-only list).
 
 - A typed word matches a name by prefix, by word starts (`oi` or `OI` finds `OrderId` and `order_id`) or anywhere in
   the name. Matched characters are highlighted.
-- Order: join suggestions the word starts, exact name, other join suggestions, prefix, word starts, substring. Among
-  equals: items picked earlier in this SSMS session, then the core order (in-scope columns per table, definition order
-  unless "Order columns alphabetically" is on).
+- Order: exact name, then promoted items (join suggestions), then everything else, then snippets. Inside a group:
+  prefix, word starts, substring; among equals, items picked earlier in this SSMS session, then the core order
+  (in-scope columns per table, alphabetical unless "Order columns alphabetically" is off).
+- The list opens on a name, a space or an operator such as `. ( , = + -`; never on a blank line or while a number is typed.
 - Selection is firm when the word starts or spells the top item. It is soft (Tab inserts, other keys do not) when
   nothing is typed, when the only match is in the middle of a name, and while a new alias is being typed.
 - After a table or alias in FROM the list holds what can follow (WHERE, JOIN, ON, ...); after AS, and inside CAST/CONVERT
@@ -100,8 +101,13 @@ and ranking"; off returns to the editor's prefix-only list).
 - After JOIN, tables linked by a foreign key to a table already in the query come first and insert `Table alias ON condition`.
   After ON, foreign key conditions come first, then conditions on equally named columns.
 - Optional: aliases for tables chosen after FROM/JOIN (initials, numbered when taken, ignored prefixes, custom
-  `Table=alias` pairs, AS, capitals), unqualified names for the default schema, earlier table first in join conditions,
-  commit keys space, `.`, `,`, parentheses and `;` (off by default; Tab and Enter always insert).
+  `Table=alias` pairs, AS (on by default), capitals), unqualified names for the default schema, earlier table first in
+  join conditions, commit keys space, `.`, `,`, parentheses, `;` and `]` (off by default), Tab and Enter (on by default).
+  A commit key that the inserted text already ends with is not typed twice (`COUNT(`, `[My Table]`).
+- "Close square brackets" (on) and "Close parentheses" (off) type the closing character and step over it.
+
+SSMS 18 to 20 use the build in `src/Querywright.Ssms.Legacy` (same sources, Visual Studio 2017 shell). There the
+initial selection cannot be made soft by the source, and the current parameter in a hint is coloured instead of bold.
 
 Matching, ranking, aliases and join suggestions are covered by the core checks. The list manager, highlighting and
 commit keys are compiled against the SSMS editor API and have not been run in SSMS yet.

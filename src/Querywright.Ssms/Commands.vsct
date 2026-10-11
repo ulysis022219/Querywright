@@ -12,20 +12,20 @@
       </Menu>
       <Menu guid="CommandsGuid" id="ResultsMenu" priority="0x0100" type="Menu">
         <Parent guid="CommandsGuid" id="ResultsParentGroup" />
-        <Strings><ButtonText>Results grid</ButtonText></Strings>
+        <Strings><ButtonText>Results Grid</ButtonText></Strings>
       </Menu>
     </Menus>
     <Groups>
       <Group guid="CommandsGuid" id="SuggestGroup" priority="0x0100">
         <Parent guid="CommandsGuid" id="QuerywrightMenu" />
       </Group>
-      <Group guid="CommandsGuid" id="AnalyzeGroup" priority="0x0200">
+      <Group guid="CommandsGuid" id="AnalyzeGroup" priority="0x0400">
         <Parent guid="CommandsGuid" id="QuerywrightMenu" />
       </Group>
-      <Group guid="CommandsGuid" id="FormatGroup" priority="0x0300">
+      <Group guid="CommandsGuid" id="FormatGroup" priority="0x0200">
         <Parent guid="CommandsGuid" id="QuerywrightMenu" />
       </Group>
-      <Group guid="CommandsGuid" id="RefactorGroup" priority="0x0400">
+      <Group guid="CommandsGuid" id="RefactorGroup" priority="0x0300">
         <Parent guid="CommandsGuid" id="QuerywrightMenu" />
       </Group>
       <Group guid="CommandsGuid" id="ResultsParentGroup" priority="0x0500">
@@ -56,186 +56,186 @@
     <Buttons>
       <Button guid="CommandsGuid" id="AddSemicolons" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Insert semicolons</ButtonText></Strings>
+        <Strings><ButtonText>Insert Semicolons</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ExpandWildcard" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Expand wildcard</ButtonText></Strings>
+        <Strings><ButtonText>Expand Wildcards</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameVariable" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Rename local variable...</ButtonText></Strings>
+        <Strings><ButtonText>Rename Variable...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CompleteSql" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="SuggestGroup" />
-        <Strings><ButtonText>Suggest from offline schema...</ButtonText></Strings>
+        <Strings><ButtonText>Suggest From Offline Schema...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FormatSql" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Format SQL selection/document</ButtonText></Strings>
+        <Strings><ButtonText>Format SQL</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AnalyzeDocument" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="AnalyzeGroup" />
-        <Strings><ButtonText>Analyze SQL document</ButtonText></Strings>
+        <Strings><ButtonText>Analyze Code</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="InsertSnippet" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="SuggestGroup" />
-        <Strings><ButtonText>Insert snippet...</ButtonText></Strings>
+        <Strings><ButtonText>Insert Snippet...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ApplyCasing" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Apply keyword casing</ButtonText></Strings>
+        <Strings><ButtonText>Apply Casing</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AddBrackets" priority="0x0080" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Add square brackets</ButtonText></Strings>
+        <Strings><ButtonText>Add Square Brackets</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RemoveBrackets" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Remove square brackets</ButtonText></Strings>
+        <Strings><ButtonText>Remove Square Brackets</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="QualifyNames" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Qualify object names</ButtonText></Strings>
+        <Strings><ButtonText>Qualify Object Names</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameAlias" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Rename table alias...</ButtonText></Strings>
+        <Strings><ButtonText>Rename Alias...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SummarizeScript" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="AnalyzeGroup" />
-        <Strings><ButtonText>Summarize script</ButtonText></Strings>
+        <Strings><ButtonText>Summarize Script</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="UnusedDeclarations" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="AnalyzeGroup" />
-        <Strings><ButtonText>Find unused variables and parameters</ButtonText></Strings>
+        <Strings><ButtonText>Find Unused Variables And Parameters</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RefreshMetadata" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="SuggestGroup" />
-        <Strings><ButtonText>Refresh suggestions</ButtonText></Strings>
+        <Strings><ButtonText>Refresh Suggestions</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ExecuteStatement" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="SuggestGroup" />
-        <Strings><ButtonText>Execute current statement</ButtonText></Strings>
+        <Strings><ButtonText>Execute Current Statement</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="PickColumns" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Pick columns for *...</ButtonText></Strings>
+        <Strings><ButtonText>Pick Columns For *...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="TabHistory" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="SuggestGroup" />
         <Icon guid="ImageCatalogGuid" id="History" />
         <CommandFlag>IconIsMoniker</CommandFlag>
-        <Strings><ButtonText>Tab history...</ButtonText><ToolTipText>Querywright: tab history (reopen closed queries)</ToolTipText></Strings>
+        <Strings><ButtonText>Tab History...</ButtonText><ToolTipText>Querywright: tab history (reopen closed queries)</ToolTipText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameObject" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Smart rename object (script)...</ButtonText></Strings>
+        <Strings><ButtonText>Smart Rename...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="Encapsulate" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Encapsulate as stored procedure...</ButtonText></Strings>
+        <Strings><ButtonText>Encapsulate As New Stored Procedure...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptForDatabases" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Script for multiple databases...</ButtonText></Strings>
+        <Strings><ButtonText>Script For Multiple Databases...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RunInDatabases" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Run in multiple databases (merged results)...</ButtonText></Strings>
+        <Strings><ButtonText>Run In Multiple Databases...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SearchDatabases" priority="0x0080" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Find object or column in all databases...</ButtonText></Strings>
+        <Strings><ButtonText>Find Object Or Column In All Databases...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SearchCode" priority="0x0088" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Find in database code / usages...</ButtonText></Strings>
+        <Strings><ButtonText>Find In Database Code...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="WrapDynamicSql" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Wrap in dynamic SQL</ButtonText></Strings>
+        <Strings><ButtonText>Wrap In Dynamic SQL</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="UnwrapDynamicSql" priority="0x00A0" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Unwrap dynamic SQL</ButtonText></Strings>
+        <Strings><ButtonText>Unwrap Dynamic SQL</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FixAtCaret" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="AnalyzeGroup" />
-        <Strings><ButtonText>Fix issue at caret</ButtonText></Strings>
+        <Strings><ButtonText>Fix Issue At Caret</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FixAll" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="AnalyzeGroup" />
-        <Strings><ButtonText>Fix all issues</ButtonText></Strings>
+        <Strings><ButtonText>Fix All Issues</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="GoToDefinition" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="SuggestGroup" />
-        <Strings><ButtonText>Go to definition</ButtonText></Strings>
+        <Strings><ButtonText>Go To Definition</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FindInvalidObjects" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="AnalyzeGroup" />
-        <Strings><ButtonText>Find invalid objects</ButtonText></Strings>
+        <Strings><ButtonText>Find Invalid Objects</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SplitTable" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Split table (script)...</ButtonText></Strings>
+        <Strings><ButtonText>Split Table...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="EditFormattingStyle" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="SettingsGroup" />
-        <Strings><ButtonText>Formatting style and rules...</ButtonText></Strings>
+        <Strings><ButtonText>Edit Formatting Styles...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="FormatFolder" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Format SQL files in folder...</ButtonText></Strings>
+        <Strings><ButtonText>Bulk Format SQL Files...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CompareObject" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="EditorGroup" />
-        <Strings><ButtonText>Querywright: compare object with database...</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Compare Object With Database...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsIn" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: copy as IN clause</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Copy As IN Clause</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsInsert" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: script as INSERT</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Script As INSERT</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="OpenInExcel" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: open in Excel</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Open In Excel</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SaveAsCsv" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: save as CSV...</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Save As CSV...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsMarkdown" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: copy as Markdown table</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Copy As Markdown Table</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsJson" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: copy as JSON</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Copy As JSON</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsUpdate" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: script as UPDATE</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Script As UPDATE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsMerge" priority="0x0080" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: script as MERGE</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Script As MERGE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsCreateTable" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: script as CREATE TABLE</ButtonText></Strings>
+        <Strings><ButtonText>Querywright: Script As CREATE TABLE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="Options" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="SettingsGroup" />
@@ -243,31 +243,31 @@
       </Button>
       <Button guid="CommandsGuid" id="CheckForUpdates" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="SettingsGroup" />
-        <Strings><ButtonText>Check for updates...</ButtonText></Strings>
+        <Strings><ButtonText>Check For Updates...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ExecuteBatch" priority="0x0062" type="Button">
         <Parent guid="CommandsGuid" id="SuggestGroup" />
-        <Strings><ButtonText>Execute current batch</ButtonText></Strings>
+        <Strings><ButtonText>Execute Current Batch</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ExecuteToCursor" priority="0x0064" type="Button">
         <Parent guid="CommandsGuid" id="SuggestGroup" />
-        <Strings><ButtonText>Execute to cursor</ButtonText></Strings>
+        <Strings><ButtonText>Execute To Cursor</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="Unformat" priority="0x00B0" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Unformat selection/document</ButtonText></Strings>
+        <Strings><ButtonText>Unformat</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AddCommas" priority="0x00B2" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Add commas to lines</ButtonText></Strings>
+        <Strings><ButtonText>Add Commas</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AddQuotesAndCommas" priority="0x00B4" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Add quotes and commas to lines</ButtonText></Strings>
+        <Strings><ButtonText>Add Quotes And Commas</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RemoveComments" priority="0x00B6" type="Button">
         <Parent guid="CommandsGuid" id="FormatGroup" />
-        <Strings><ButtonText>Remove comments</ButtonText></Strings>
+        <Strings><ButtonText>Remove Comments</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ExecuteSqlToPlain" priority="0x00A2" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
@@ -279,35 +279,35 @@
       </Button>
       <Button guid="CommandsGuid" id="InsertToUpdate" priority="0x00A6" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
-        <Strings><ButtonText>Convert INSERT to UPDATE</ButtonText></Strings>
+        <Strings><ButtonText>Refactor INSERT Into UPDATE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AiPanel" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="AiGroup" />
-        <Strings><ButtonText>AI assistant</ButtonText></Strings>
+        <Strings><ButtonText>AI Assistant</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AiExplain" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="AiGroup" />
-        <Strings><ButtonText>AI: explain SQL</ButtonText></Strings>
+        <Strings><ButtonText>AI Explain Selected SQL</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AiFix" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="AiGroup" />
-        <Strings><ButtonText>AI: fix errors</ButtonText></Strings>
+        <Strings><ButtonText>AI Fix Selected SQL</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AiOptimize" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="AiGroup" />
-        <Strings><ButtonText>AI: optimize query</ButtonText></Strings>
+        <Strings><ButtonText>AI Optimize Selected SQL</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AiComplete" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="AiGroup" />
-        <Strings><ButtonText>AI: complete at caret</ButtonText></Strings>
+        <Strings><ButtonText>AI Complete At Caret</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyMcpConfiguration" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="AiGroup" />
-        <Strings><ButtonText>Copy MCP configuration</ButtonText></Strings>
+        <Strings><ButtonText>Copy MCP Configuration</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="AiOptionsCommand" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="AiGroup" />
-        <Strings><ButtonText>AI options...</ButtonText></Strings>
+        <Strings><ButtonText>AI Options...</ButtonText></Strings>
       </Button>
     </Buttons>
   </Commands>

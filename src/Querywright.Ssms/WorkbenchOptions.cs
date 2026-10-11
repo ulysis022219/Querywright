@@ -33,13 +33,23 @@ namespace Querywright.Ssms
         public bool CloseQuotes { get; set; } = true;
 
         [Category("Completion")]
+        [DisplayName("Close square brackets")]
+        [Description("Typing [ inserts [] with the caret between them; typing ] before the closing bracket steps over it, and Backspace in an empty pair removes both.")]
+        public bool CloseBrackets { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Close parentheses")]
+        [Description("Typing ( inserts () with the caret between them; typing ) before the closing parenthesis steps over it, and Backspace in an empty pair removes both.")]
+        public bool CloseParentheses { get; set; }
+
+        [Category("Completion")]
         [DisplayName("Qualify columns of a single table")]
         [Description("Insert Table.Column even when the statement reads one table. Off inserts just Column; joins always use the alias.")]
         public bool QualifySingleTable { get; set; }
 
         [Category("Completion")]
         [DisplayName("Suggest while typing")]
-        [Description("Open the suggestion list as you type a name, '.' or space. Off shows it only on Ctrl+Space (Edit > IntelliSense > List Members).")]
+        [Description("Open the suggestion list as you type a name, a space or an operator such as . ( , = + -. Never opens on a blank line or while a number is typed. Off shows it only on Ctrl+Space (Edit > IntelliSense > List Members).")]
         public bool SuggestWhileTyping { get; set; } = true;
 
         [Category("Completion")]
@@ -65,7 +75,7 @@ namespace Querywright.Ssms
         [Category("Completion")]
         [DisplayName("Alias with AS")]
         [Description("Insert dbo.Orders AS o instead of dbo.Orders o.")]
-        public bool AliasWithAs { get; set; }
+        public bool AliasWithAs { get; set; } = true;
 
         [Category("Completion")]
         [DisplayName("Uppercase aliases")]
@@ -105,7 +115,7 @@ namespace Querywright.Ssms
         [Category("Completion")]
         [DisplayName("Order columns alphabetically")]
         [Description("Off lists columns in table definition order.")]
-        public bool ColumnsAlphabetical { get; set; }
+        public bool ColumnsAlphabetical { get; set; } = true;
 
         [Category("Completion")]
         [DisplayName("Keywords after a table")]
@@ -113,8 +123,23 @@ namespace Querywright.Ssms
         public bool ContextKeywords { get; set; } = true;
 
         [Category("Completion")]
+        [DisplayName("Commit with Tab")]
+        [Description("Tab inserts the selected suggestion. Off closes the list and types the tab.")]
+        public bool CommitOnTab { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Commit with Enter")]
+        [Description("Enter inserts the selected suggestion. Off closes the list and starts a new line.")]
+        public bool CommitOnEnter { get; set; } = true;
+
+        [Category("Completion")]
+        [DisplayName("Commit with ]")]
+        [Description("] inserts the selected suggestion; a name already inserted in brackets does not get a second ].")]
+        public bool CommitOnBrackets { get; set; }
+
+        [Category("Completion")]
         [DisplayName("Commit with Space")]
-        [Description("Space inserts the selected suggestion, then the space. Never applies to a soft selection (dotted outline). Tab and Enter always insert.")]
+        [Description("Space inserts the selected suggestion, then the space. Never applies to a soft selection (dotted outline).")]
         public bool CommitOnSpace { get; set; }
 
         [Category("Completion")]
@@ -138,7 +163,7 @@ namespace Querywright.Ssms
         public bool CommitOnSemicolon { get; set; }
 
         internal string CommitCharacters() =>
-            (CommitOnSpace ? " " : "") + (CommitOnDot ? "." : "") + (CommitOnComma ? "," : "") + (CommitOnParentheses ? "()" : "") + (CommitOnSemicolon ? ";" : "");
+            (CommitOnSpace ? " " : "") + (CommitOnDot ? "." : "") + (CommitOnComma ? "," : "") + (CommitOnParentheses ? "()" : "") + (CommitOnSemicolon ? ";" : "") + (CommitOnBrackets ? "]" : "");
 
         /// <summary>Core completion settings. <paramref name="filter"/> false returns every candidate for the item manager to filter as the user types.</summary>
         internal Querywright.Core.CompletionOptions Completion(bool filter)

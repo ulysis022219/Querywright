@@ -16,6 +16,8 @@ namespace Querywright.Core
         public int? InputTokens { get; private set; }
         public int? OutputTokens { get; private set; }
         public int? ReasoningTokens { get; private set; }
+        public string? FinishReason { get; private set; }
+        public bool TokenLimitReached => FinishReason == "length" || FinishReason == "max_tokens";
         public AiStream(bool anthropic) { this.anthropic = anthropic; }
 
         public string Line(string line)
@@ -64,6 +66,7 @@ namespace Querywright.Core
                 ReadUsage(MiniJson.Get(type == "message_start" ? MiniJson.Get(root, "message") : root, "usage"));
                 if (type == "message_stop") { Done = true; return ""; }
                 var delta = MiniJson.Get(root, "delta");
+                if (type == "message_delta") FinishReason = AiProvider.KnownFinishReason(MiniJson.Text(delta, "stop_reason")) ?? FinishReason;
                 if (type == "content_block_delta" && MiniJson.Text(delta, "type") == "text_delta") return MiniJson.Text(delta, "text") ?? "";
                 if (type == "content_block_delta" && MiniJson.Text(delta, "type") == "thinking_delta") ReasoningDelta = MiniJson.Text(delta, "thinking") ?? "";
                 var block = MiniJson.Get(root, "content_block");
@@ -72,6 +75,7 @@ namespace Querywright.Core
             }
             ReadUsage(MiniJson.Get(root, "usage"));
             var first = (MiniJson.Get(root, "choices") as List<object?>)?.FirstOrDefault(c => MiniJson.Get(c, "index") is double index && index == 0);
+            FinishReason = AiProvider.KnownFinishReason(MiniJson.Text(first, "finish_reason")) ?? FinishReason;
             ReasoningDelta = MiniJson.Text(MiniJson.Get(first, "delta"), "reasoning_content") ?? "";
             return MiniJson.Text(MiniJson.Get(first, "delta"), "content") ?? "";
         }

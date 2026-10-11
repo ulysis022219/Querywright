@@ -98,7 +98,7 @@ namespace Querywright.Ssms
                 catch (OperationCanceledException) { }
                 catch (Exception error) when (!(error is OutOfMemoryException))
                 {
-                    Microsoft.VisualStudio.Shell.ActivityLog.TryLogWarning("Querywright", "Live analysis failed: " + error.GetType().Name);
+                    Diagnostics.TryLogWarning("Querywright", "Live analysis failed: " + error.GetType().Name);
                 }
             });
         }

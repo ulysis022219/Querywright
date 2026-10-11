@@ -310,6 +310,11 @@ namespace Querywright.Ssms
         [Description("Once a day, ask github.com for the latest Querywright release and show a notice when it is newer. Sends no query text, connection or user data.")]
         public bool CheckForUpdates { get; set; } = true;
 
+        [Category("Diagnostics")]
+        [DisplayName("Verbose diagnostics")]
+        [Description("Keep bounded Querywright process events and AI request summaries in memory for export, including query, prompt, answer and result text. Known API keys and credential patterns are redacted, but exports can contain sensitive database data: review before sharing. Off by default; turning off clears the session log.")]
+        public bool VerboseDiagnostics { get; set; }
+
         [Category("Snippets")]
         [DisplayName("Snippet folder")]
         [Description("Folder of editable .sql templates; ssf.sql expands when you type ssf and press Tab. Use a shared folder for team snippets. New files are picked up within 30 seconds.")]
@@ -323,7 +328,11 @@ namespace Querywright.Ssms
         protected override void OnApply(PageApplyEventArgs e)
         {
             base.OnApply(e);
-            if (e.ApplyBehavior == ApplyKind.Apply && !CacheSchemaOnDisk) Querywright.Ssms.LiveMetadata.ClearDiskCache();
+            if (e.ApplyBehavior == ApplyKind.Apply)
+            {
+                Diagnostics.Enabled = VerboseDiagnostics;
+                if (!CacheSchemaOnDisk) Querywright.Ssms.LiveMetadata.ClearDiskCache();
+            }
         }
 
         [Category("Snippets")]

@@ -169,13 +169,15 @@ namespace Querywright.Ssms
             textManager = await GetServiceAsync(typeof(SVsTextManager)) as IVsTextManager;
             if (textManager == null) throw new InvalidOperationException("SSMS text services unavailable.");
             options = (WorkbenchOptions)GetDialogPage(typeof(WorkbenchOptions));
+            Diagnostics.Enabled = options.VerboseDiagnostics;
+            Diagnostics.Write("Package", nameof(InitializeAsync), "start");
             errorList = new ErrorListProvider(this) { ProviderName = "Querywright", ProviderGuid = new Guid("c493165c-47d9-43d7-b28b-d2d7144d45ac") };
             GridTotals.Start(() => options?.GridTotals != false, text => (GetService(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText(text));
-            void Add(int id, Func<Task> handler) => commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
+            void Add(int id, Func<Task> handler) => commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(() => InvokeMenuCommandAsync(id, handler)); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id)));
             void AddGrid(int id, Func<bool> shown, Func<Task> handler)
             {
-                var command = new OleMenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(handler); },
+                var command = new OleMenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(() => InvokeMenuCommandAsync(id, handler)); },
                     new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id));
                 command.BeforeQueryStatus += (sender, args) => ((OleMenuCommand)sender).Visible = shown();
                 commands.AddCommand(command);
@@ -241,7 +243,8 @@ namespace Querywright.Ssms
             InitializeAi(Add);
             ServerColorMenu.Start();
             PriorityCommands.Start(this);
-            ActivityLog.TryLogInformation("Querywright", "Package initialized");
+            Diagnostics.TryLogInformation("Querywright", "Package initialized");
+            Diagnostics.Write("Package", nameof(InitializeAsync), "success");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
             if (options.CheckForUpdates && Environment.GetEnvironmentVariable("QUERYWRIGHT_SELFTEST") == null)
                 _ = Task.Run(() => UpdateCheck.RunAsync(this));
@@ -454,7 +457,7 @@ namespace Querywright.Ssms
             IWpfTextView view;
             try { view = GetSqlView(); } catch (InvalidOperationException) { return; }
             TryGoToDefinition(view);
-            ActivityLog.TryLogInformation("Querywright", "F12 (Querywright command): " + SelfTest.Note);
+            Diagnostics.TryLogInformation("Querywright", "F12 (Querywright command): " + SelfTest.Note);
         });
 
         /// <summary>SQL Prompt's F12: a table opens as CREATE TABLE, a procedure/view/function/trigger as ALTER, in a new query. Never executed.</summary>
@@ -857,7 +860,7 @@ namespace Querywright.Ssms
                 connection.Database + ": " + full, other + ": " + full, null, null, (uint)(__VSDIFFSERVICEOPTIONS.VSDIFFOPT_LeftFileIsTemporary | __VSDIFFSERVICEOPTIONS.VSDIFFOPT_RightFileIsTemporary));
         });
 
-        private async Task<bool> ShowDialogAsync(System.Windows.Window dialog)
+        internal async Task<bool> ShowDialogAsync(System.Windows.Window dialog)
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var shell = await GetServiceAsync(typeof(SVsUIShell)) as IVsUIShell;
@@ -894,11 +897,20 @@ namespace Querywright.Ssms
 
         private async Task RunCommandAsync(Func<Task> body, [System.Runtime.CompilerServices.CallerMemberName] string command = "")
         {
-            try { await body(); }
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            Diagnostics.Write("Commands", command, "start");
+            LogCommandQuery(command);
+            try
+            {
+                await body();
+                LogCommandQuery(command + "Result");
+                Diagnostics.Write("Commands", command, "success", elapsed.ElapsedMilliseconds);
+            }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 var cause = (error as System.Reflection.TargetInvocationException)?.InnerException ?? error;
+                Diagnostics.Write("Commands", command, cause is OperationCanceledException ? "canceled" : "error", elapsed.ElapsedMilliseconds, cause);
                 // ponytail: InvalidOperationException ("select a table"), Core's FormatException ("fix SQL syntax errors first") and file errors (file in use) are user-facing messages; anything else is a bug worth reporting.
                 if (cause is InvalidOperationException || cause is FormatException || cause is IOException || cause is UnauthorizedAccessException) { ShowWarning(cause.Message); return; }
                 // A server error is not a bug, and its text can name the server or login.
@@ -910,6 +922,35 @@ namespace Querywright.Ssms
                 if (answer == (int)VSConstants.MessageBoxResult.IDYES)
                     try { System.Diagnostics.Process.Start(Updates.IssueUrl(line)); } catch (System.ComponentModel.Win32Exception) { }
             }
+        }
+
+        private async Task InvokeMenuCommandAsync(int id, Func<Task> handler)
+        {
+            string command = "Menu" + id.ToString("X4", CultureInfo.InvariantCulture);
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            Diagnostics.Write("Commands", command, "start");
+#pragma warning disable VSTHRD010 // LogCommandQuery checks UI access and skips capture on worker threads without yielding.
+            LogCommandQuery(command);
+#pragma warning restore VSTHRD010
+            try
+            {
+                await handler();
+                Diagnostics.Write("Commands", command, "success", elapsed.ElapsedMilliseconds);
+            }
+            catch (Exception error) when (!(error is OutOfMemoryException))
+            {
+                Diagnostics.Write("Commands", command, error is OperationCanceledException ? "canceled" : "error", elapsed.ElapsedMilliseconds, error);
+                throw;
+            }
+        }
+
+        private void LogCommandQuery(string command)
+        {
+            if (!Diagnostics.Enabled || !ThreadHelper.CheckAccess()) return;
+#pragma warning disable VSTHRD010 // CheckAccess above guards optional capture without yielding away from the focused grid.
+            try { Diagnostics.Write("Editor", command, text: QueryTextOrNull()); }
+            catch (Exception error) when (!(error is OutOfMemoryException)) { Diagnostics.Write("Editor", "QueryCapture", "error", error: error); }
+#pragma warning restore VSTHRD010
         }
 
         /// <summary>SQL Prompt's column picker: choose which columns replace * (or alias.*).</summary>
@@ -1221,7 +1262,7 @@ namespace Querywright.Ssms
 
         /// <summary>
         /// Reads the focused results grid. Must run before the command's first yielding await, while the grid
-        /// still has keyboard focus. Cell text stays in memory; it is never logged.
+        /// still has keyboard focus. Opt-in diagnostics can capture the bounded result text.
         /// </summary>
         private GridCells ReadFocusedGrid(bool valuesOnly)
         {
@@ -1235,10 +1276,19 @@ namespace Querywright.Ssms
                 throw new InvalidOperationException("Could not read this SSMS version's results grid (" + (error.InnerException ?? error).GetType().Name + ").");
             }
             if (cells.Rows.Count == 0) throw new InvalidOperationException(valuesOnly ? "Select the cells to copy." : "The results grid has no rows.");
+            if (Diagnostics.Enabled)
+                try
+                {
+                    int rowLimit = Math.Min(100, Math.Max(1, 4096 / Math.Max(1, cells.Headers.Count)));
+                    string text = ResultGrid.Json(cells.Headers, cells.Types, cells.Rows.Take(rowLimit).ToArray());
+                    if (cells.Rows.Count > rowLimit || cells.Truncated) text += "\r\n[truncated: first " + rowLimit + " rows]";
+                    Diagnostics.Write("ResultsGrid", nameof(ReadFocusedGrid), "success", text: text);
+                }
+                catch (Exception error) when (!(error is OutOfMemoryException)) { Diagnostics.Write("ResultsGrid", "Capture", "error", error: error); }
             return cells;
         }
 
-        /// <summary>Selected text of the query window, else its whole text; null when there is none. Never logged.</summary>
+        /// <summary>Selected text of the query window, else its whole text; null when there is none.</summary>
         private string QueryTextOrNull()
         {
             ThreadHelper.ThrowIfNotOnUIThread();

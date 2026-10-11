@@ -1,9 +1,20 @@
 # Loopback HTTP fixtures only. No provider requests, SQL, stored key reads or user file writes.
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Net.Http
+$resolver = [ResolveEventHandler] {
+    param($sender, $eventArgs)
+    $ide = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE'
+    $name = [Reflection.AssemblyName]::new($eventArgs.Name).Name + '.dll'
+    foreach ($folder in 'PublicAssemblies', 'PrivateAssemblies', '') {
+        $path = Join-Path (Join-Path $ide $folder) $name
+        if (Test-Path -LiteralPath $path) { return [Reflection.Assembly]::LoadFrom($path) }
+    }
+    return $null
+}
+[AppDomain]::CurrentDomain.add_AssemblyResolve($resolver)
 $bin = Join-Path $PSScriptRoot '../src/Querywright.Ssms/bin/Debug/net472'
 $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Ssms.dll'))
 [void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Core.dll'))
-Add-Type -AssemblyName System.Net.Http
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -69,6 +80,14 @@ public sealed class AiFixture : IDisposable
                             string message = mode == "reasoncredit" ? "reasoning_effort and stream not supported; credit exhausted credential echo"
                                 : mode == "reasonbad400" ? "model not supported credential echo" : "reasoning_effort not supported credential echo";
                             Write(stream, "HTTP/1.1 " + status + "\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":{\"message\":\"" + message + "\"}}");
+                        }
+                        else if (mode == "reasonlength" || mode == "reasonlengthplain")
+                        {
+                            string usage = "\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":4096,\"completion_tokens_details\":{\"reasoning_tokens\":4096}}";
+                            string reply = mode == "reasonlengthplain"
+                                ? "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\",\"reasoning_content\":\"Private thinking\"}}]," + usage + "}"
+                                : "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"Private thinking\"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]," + usage + "}\n\ndata: [DONE]\n\n";
+                            Write(stream, "HTTP/1.1 200 OK\r\nContent-Type: " + (mode == "reasonlengthplain" ? "application/json" : "text/event-stream") + "\r\nConnection: close\r\n\r\n" + reply);
                         }
                         else if (mode == "reasonfallback" || mode == "reasonplain" || mode == "reasonplainanthropic")
                         {
@@ -142,6 +161,9 @@ $originalPath = $keyPath.GetValue($null)
 $ask = $assembly.GetType('Querywright.Ssms.AiClient', $true).GetMethod('AskAsync', [Reflection.BindingFlags]'NonPublic,Static')
 $reply = $assembly.GetType('Querywright.Ssms.AiClient', $true).GetMethod('ReplyAsync', [Reflection.BindingFlags]'NonPublic,Static')
 $models = $assembly.GetType('Querywright.Ssms.AiClient', $true).GetMethod('ModelsAsync', [Reflection.BindingFlags]'NonPublic,Static')
+$diagnostics = $assembly.GetType('Querywright.Ssms.AiClient', $true).GetField('DiagnosticLog', [Reflection.BindingFlags]'NonPublic,Static').GetValue($null)
+$processLogs = $assembly.GetType('Querywright.Ssms.Diagnostics', $true)
+$capture = $processLogs.GetProperty('Enabled', [Reflection.BindingFlags]'NonPublic,Static')
 $messages = [Collections.Generic.List[Querywright.Core.AiMessage]]::new()
 $messages.Add([Querywright.Core.AiMessage]::new('user', 'fixture only'))
 try {
@@ -220,6 +242,25 @@ try {
             foreach ($streaming in $server.Streaming) { Check ($streaming -eq ($mode -notin 'reasonplain', 'reasonplainanthropic')) "$mode must retain requested stream setting" }
         } finally { $cancel.Dispose(); $server.Dispose() }
     }
+    $capture.SetValue($null, $true)
+    foreach ($mode in 'reasonlength', 'reasonlengthplain') {
+        $server = [AiFixture]::new($mode); $progress = [AiFixtureProgress]::new(); $thoughts = [AiFixtureProgress]::new()
+        $cancel = [Threading.CancellationTokenSource]::new(); $cancel.CancelAfter(6000)
+        try {
+            $format = [Enum]::Parse($assembly.GetType('Querywright.Ssms.AiApiFormat'), 'OpenAiCompatible')
+            $task = $reply.Invoke($null, @($format, $server.Url, 'fixture', $messages, $cancel.Token, 4096, $(if ($mode -eq 'reasonlength') { $progress } else { $null }), [Querywright.Core.AiReasoningLevel]::High, '', $thoughts))
+            try { $task.GetAwaiter().GetResult(); throw 'Length fixture unexpectedly succeeded' }
+            catch { Check ($task.IsFaulted -and $task.Exception.ToString().Contains('token limit') -and $task.Exception.ToString().Contains('Out: 4096')) 'Reasoning-only length exhaustion must show cause and usage' }
+            Check ($server.Worker.Wait(5000) -and $server.Bodies.Count -eq 1) 'Token exhaustion must not silently bill a retry'
+            $entry = $diagnostics.Entries[$diagnostics.Entries.Count - 1]
+            Check ($entry.FinishReason -eq 'length' -and $entry.OutputTokens -eq 4096 -and $entry.ReasoningTokens -eq 4096 -and $entry.AnswerCharacters -eq 0 -and $entry.ReasoningCharacters -eq 16) 'Diagnostics must retain finish reason, usage and character counts from failed response'
+            Check ($entry.Outcome -eq 'empty' -and $entry.ErrorCategory -eq 'empty_answer' -and $entry.MaxOutputTokens -eq 4096 -and $entry.HttpStatus -eq 200) 'Diagnostics must identify successful HTTP response with empty final answer'
+            if ($mode -eq 'reasonlength') { Check ($thoughts.Text -eq 'Private thinking' -and $progress.Text.Length -eq 0) 'Stream failure must preserve reasoning separately' }
+        } finally { $cancel.Dispose(); $server.Dispose() }
+    }
+    $verbose = $processLogs.GetMethod('Export', [Reflection.BindingFlags]'NonPublic,Static').Invoke($null, @())
+    Check ($verbose.Contains('finish_reason') -and $verbose.Contains('Private thinking') -and $verbose.Contains('fixture only')) 'Verbose diagnostics must include request text, raw stream fields and response text'
+    $capture.SetValue($null, $false)
     foreach ($mode in 'models', 'anthropicmodels') {
         $server = [AiFixture]::new($mode)
         $cancel = [Threading.CancellationTokenSource]::new()
@@ -241,5 +282,5 @@ try {
             foreach ($version in $server.AnthropicVersion) { Check ($version -eq $anthropic) 'Anthropic discovery must retain version header' }
         } finally { $cancel.Dispose(); $server.Dispose() }
     }
-} finally { $keyPath.SetValue($null, $originalPath) }
+} finally { $keyPath.SetValue($null, $originalPath); $capture.SetValue($null, $false); [AppDomain]::CurrentDomain.remove_AssemblyResolve($resolver) }
 Write-Host 'PASS: AI HTTP fixtures for both formats, reasoning and usage, JSON fallback, rejection/session suppression, no auth/credit/server retries or redirects, bounded responses, model cache/refresh/pagination, truncation and prompt Stop. No provider or database used.'

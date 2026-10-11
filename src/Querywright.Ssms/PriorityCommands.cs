@@ -37,7 +37,7 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                ActivityLog.TryLogWarning("Querywright", "Execute warning unavailable: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("Querywright", "Execute warning unavailable: " + error.GetType().Name);
             }
             try
             {
@@ -48,7 +48,7 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                ActivityLog.TryLogWarning("Querywright", "Priority commands unavailable: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("Querywright", "Priority commands unavailable: " + error.GetType().Name);
             }
         }
 
@@ -69,7 +69,7 @@ namespace Querywright.Ssms
                 {
                     var standard = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Edit.GoToDefinition", -1 });
                     // ponytail: the full scan touches every command, so it runs only when the usual binding is missing.
-                    if (OnF12(standard)) { ActivityLog.TryLogInformation("Querywright", "F12 bound to: Edit.GoToDefinition"); return; }
+                    if (OnF12(standard)) { Diagnostics.TryLogInformation("Querywright", "F12 bound to: Edit.GoToDefinition"); return; }
                 }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 // ponytail: Count/Item(i) rather than foreach; the COM enumerator can throw part way on some SSMS builds.
@@ -84,11 +84,11 @@ namespace Querywright.Ssms
                     }
                     catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 }
-                ActivityLog.TryLogInformation("Querywright", "F12 bound to: " + string.Join(", ", F12Commands.Select(c => c.Name)));
+                Diagnostics.TryLogInformation("Querywright", "F12 bound to: " + string.Join(", ", F12Commands.Select(c => c.Name)));
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                ActivityLog.TryLogWarning("Querywright", "F12 binding lookup failed: " + ((error as System.Reflection.TargetInvocationException)?.InnerException ?? error).GetType().Name);
+                Diagnostics.TryLogWarning("Querywright", "F12 binding lookup failed: " + ((error as System.Reflection.TargetInvocationException)?.InnerException ?? error).GetType().Name);
             }
         }
 
@@ -124,7 +124,7 @@ namespace Querywright.Ssms
                 {
                     bool handled = package.TryGoToDefinition(package.GetSqlView());
                     // No query text: just which path F12 took, so a user's ActivityLog shows why nothing opened.
-                    ActivityLog.TryLogInformation("Querywright", "F12 (" + pguidCmdGroup + ":" + nCmdID + "): " + SelfTest.Note);
+                    Diagnostics.TryLogInformation("Querywright", "F12 (" + pguidCmdGroup + ":" + nCmdID + "): " + SelfTest.Note);
                     return handled ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
                 }
                 catch (InvalidOperationException) { SelfTest.Note = "f12 no view"; return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data.SqlClient;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -124,6 +125,7 @@ namespace Querywright.Ssms
         private static readonly HttpClient Http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(5), MaxResponseContentBufferSize = 2_000_000 };
         private static readonly Dictionary<string, IReadOnlyList<string>> ModelLists = new Dictionary<string, IReadOnlyList<string>>();
         private static readonly HashSet<string> UnsupportedReasoning = new HashSet<string>();
+        internal static readonly AiDiagnostics DiagnosticLog = new AiDiagnostics();
 
         private static string Identity(AiApiFormat format, string baseUrl) => format + ":" + AiModels.Key(baseUrl);
         private static HttpRequestMessage Request(HttpMethod method, string url, bool anthropic, string key)
@@ -195,10 +197,12 @@ namespace Querywright.Ssms
             => (await ReplyAsync(format, baseUrl, model, messages, cancellation, maxTokens, progress).ConfigureAwait(false)).Text;
 
         internal static async Task<AiReply> ReplyAsync(AiApiFormat format, string baseUrl, string model, IReadOnlyList<AiMessage> messages, CancellationToken cancellation,
-            int maxTokens = 4096, IProgress<string> progress = null, AiReasoningLevel reasoning = AiReasoningLevel.Off, string extraJson = null, IProgress<string> thoughts = null)
+            int? maxTokens = null, IProgress<string> progress = null, AiReasoningLevel reasoning = AiReasoningLevel.Off, string extraJson = null, IProgress<string> thoughts = null)
         {
             bool anthropic = format == AiApiFormat.Anthropic;
             string url = AiAssist.Endpoint(baseUrl, anthropic), key = Key(url);
+            Diagnostics.SetSecret(key);
+            string requestId = Guid.NewGuid().ToString("N"); int attempt = 0;
             string identity = Identity(format, baseUrl) + ":" + model;
             bool unsupported;
             lock (UnsupportedReasoning) unsupported = reasoning != AiReasoningLevel.Off && UnsupportedReasoning.Contains(identity);
@@ -222,72 +226,130 @@ namespace Querywright.Ssms
 
                 async Task<AiReply> PostAsync(bool streaming, AiReasoningLevel effort, string extra)
                 {
-                    string requestBody = AiAssist.RequestBody(model, messages, anthropic, maxTokens, stream: streaming, reasoning: effort, extraRequestJson: extra, baseUrl: baseUrl);
-                    using (var request = Request(HttpMethod.Post, url, anthropic, key))
+                    var clock = Stopwatch.StartNew();
+                    var trace = new AiDiagnosticEntry
                     {
-                        request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-                        using (var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false))
-                        using (timeout.Token.Register(() => response.Dispose()))
+                        AppVersion = typeof(AiClient).Assembly.GetName().Version.ToString(), RequestId = requestId,
+                        ProviderHost = new Uri(url).Host, ApiFormat = format.ToString(), Model = model,
+                        Reasoning = effort.ToString().ToLowerInvariant(), Attempt = ++attempt, Streaming = streaming, ErrorCategory = "configuration"
+                    };
+                    var answer = new StringBuilder(); var reasoningText = new StringBuilder(); var streamTrace = new StringBuilder();
+                    try
+                    {
+                        string requestBody = AiAssist.RequestBody(model, messages, anthropic, maxTokens, stream: streaming, reasoning: effort, extraRequestJson: extra, baseUrl: baseUrl);
+                        var requestJson = MiniJson.Parse(requestBody);
+                        trace.MaxOutputTokens = AiProvider.TokenCount(requestJson, "max_completion_tokens") ?? AiProvider.TokenCount(requestJson, "max_tokens") ?? 0;
+                        if (Diagnostics.Enabled) Diagnostics.Write("ai", "request", text: "Request " + requestId + " attempt " + trace.Attempt + "\n" + requestBody);
+                        trace.ErrorCategory = "network";
+                        using (var request = Request(HttpMethod.Post, url, anthropic, key))
                         {
-                            if (response.IsSuccessStatusCode && streaming && response.Content.Headers.ContentType?.MediaType == "text/event-stream")
+                            request.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+                            using (var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false))
+                            using (timeout.Token.Register(() => response.Dispose()))
                             {
-                                var parser = new AiStream(anthropic);
-                                var answer = new StringBuilder(); var reasoningText = new StringBuilder();
-                                using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
-                                using (var reader = new StreamReader(stream, Encoding.UTF8))
-                                using (timeout.Token.Register(() => stream.Dispose()))
+                                trace.HttpStatus = (int)response.StatusCode;
+                                if (response.IsSuccessStatusCode && streaming && response.Content.Headers.ContentType?.MediaType == "text/event-stream")
                                 {
-                                    var chunk = new char[4096]; var line = new StringBuilder(); bool afterCr = false;
-                                    while (!parser.Done)
+                                    trace.ResponseFormat = "sse"; trace.ErrorCategory = "stream";
+                                    var parser = new AiStream(anthropic);
+                                    using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                                    using (var reader = new StreamReader(stream, Encoding.UTF8))
+                                    using (timeout.Token.Register(() => stream.Dispose()))
                                     {
-                                        timeout.Token.ThrowIfCancellationRequested();
-                                        int read = await reader.ReadAsync(chunk, 0, chunk.Length).ConfigureAwait(false);
-                                        if (read == 0)
+                                        var chunk = new char[4096]; var line = new StringBuilder(); bool afterCr = false;
+                                        while (!parser.Done)
                                         {
-                                            if (line.Length > 0) Emit(line.ToString());
-                                            Emit(""); parser.Finish(); break;
-                                        }
-                                        for (int i = 0; i < read && !parser.Done; i++)
-                                        {
-                                            if (afterCr && chunk[i] == '\n') { afterCr = false; continue; }
-                                            afterCr = chunk[i] == '\r';
-                                            if (chunk[i] == '\n' || chunk[i] == '\r') { Emit(line.ToString()); line.Clear(); }
-                                            else
+                                            timeout.Token.ThrowIfCancellationRequested();
+                                            int read = await reader.ReadAsync(chunk, 0, chunk.Length).ConfigureAwait(false);
+                                            if (read == 0)
                                             {
-                                                if (line.Length >= 1_000_000) throw new InvalidOperationException("The AI provider sent an oversized stream line.");
-                                                line.Append(chunk[i]);
+                                                if (line.Length > 0) Emit(line.ToString());
+                                                Emit(""); parser.Finish(); break;
+                                            }
+                                            for (int i = 0; i < read && !parser.Done; i++)
+                                            {
+                                                if (afterCr && chunk[i] == '\n') { afterCr = false; continue; }
+                                                afterCr = chunk[i] == '\r';
+                                                if (chunk[i] == '\n' || chunk[i] == '\r') { Emit(line.ToString()); line.Clear(); }
+                                                else
+                                                {
+                                                    if (line.Length >= 1_000_000) throw new InvalidOperationException("The AI provider sent an oversized stream line.");
+                                                    line.Append(chunk[i]);
+                                                }
                                             }
                                         }
+                                        void Emit(string value)
+                                        {
+                                            if (Diagnostics.Enabled && streamTrace.Length < Diagnostics.MaxTextBytes)
+                                                streamTrace.AppendLine(value.Length + streamTrace.Length <= Diagnostics.MaxTextBytes ? value : value.Substring(0, Diagnostics.MaxTextBytes - streamTrace.Length));
+                                            string delta = parser.Line(value);
+                                            if (answer.Length + delta.Length > 2_000_000) throw new InvalidOperationException("The AI answer is too large to display.");
+                                            answer.Append(delta); if (delta.Length > 0) progress.Report(delta);
+                                            if (reasoningText.Length + parser.ReasoningDelta.Length > 2_000_000) throw new InvalidOperationException("The AI reasoning is too large to display.");
+                                            reasoningText.Append(parser.ReasoningDelta); if (parser.ReasoningDelta.Length > 0) thoughts?.Report(parser.ReasoningDelta);
+                                            trace.AnswerCharacters = answer.Length; trace.ReasoningCharacters = reasoningText.Length;
+                                            trace.FinishReason = parser.FinishReason ?? "";
+                                            trace.InputTokens = parser.InputTokens; trace.OutputTokens = parser.OutputTokens; trace.ReasoningTokens = parser.ReasoningTokens;
+                                        }
                                     }
-                                    void Emit(string value)
-                                    {
-                                        string delta = parser.Line(value);
-                                        if (answer.Length + delta.Length > 2_000_000) throw new InvalidOperationException("The AI answer is too large to display.");
-                                        answer.Append(delta); if (delta.Length > 0) progress.Report(delta);
-                                        if (reasoningText.Length + parser.ReasoningDelta.Length > 2_000_000) throw new InvalidOperationException("The AI reasoning is too large to display.");
-                                        reasoningText.Append(parser.ReasoningDelta); if (parser.ReasoningDelta.Length > 0) thoughts?.Report(parser.ReasoningDelta);
-                                    }
+                                    timeout.Token.ThrowIfCancellationRequested();
+                                    return Complete(new AiReply(answer.ToString(), reasoningText.ToString(), parser.InputTokens, parser.OutputTokens, parser.ReasoningTokens, parser.FinishReason));
                                 }
+                                trace.ResponseFormat = "json"; trace.ErrorCategory = response.IsSuccessStatusCode ? "invalid_json" : "http";
+                                await response.Content.LoadIntoBufferAsync(2_000_000).ConfigureAwait(false);
+                                string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                                if (Diagnostics.Enabled) Diagnostics.Write("ai", "response_json", response.IsSuccessStatusCode ? "info" : "error", text: "Request " + requestId + " attempt " + trace.Attempt + "\n" + body);
                                 timeout.Token.ThrowIfCancellationRequested();
-                                if (string.IsNullOrWhiteSpace(answer.ToString())) throw new InvalidOperationException("The AI provider returned an empty answer.");
-                                return new AiReply(answer.ToString(), reasoningText.ToString(), parser.InputTokens, parser.OutputTokens, parser.ReasoningTokens);
+                                if (effort != AiReasoningLevel.Off && AiProvider.ReasoningRejected((int)response.StatusCode, body, anthropic, requestBody))
+                                {
+                                    lock (UnsupportedReasoning) UnsupportedReasoning.Add(identity);
+                                    unsupported = true;
+                                    trace.Outcome = "retry"; trace.ErrorCategory = "reasoning_unsupported";
+                                    return await PostAsync(streaming, AiReasoningLevel.Off, AiProvider.WithoutReasoningJson(extra)).ConfigureAwait(false);
+                                }
+                                if (streaming && AiStream.Rejected((int)response.StatusCode, body))
+                                {
+                                    trace.Outcome = "retry"; trace.ErrorCategory = "stream_unsupported";
+                                    return await PostAsync(false, effort, extra).ConfigureAwait(false);
+                                }
+                                if (!response.IsSuccessStatusCode)
+                                    throw new InvalidOperationException("The AI provider answered HTTP " + (int)response.StatusCode + ". Check the base URL, model, API key and account credit.");
+                                // Provider error bodies can echo credentials; report only local diagnostic text.
+                                AiReply reply;
+                                try { reply = AiProvider.Reply(body, anthropic); }
+                                catch (Exception error) when (error is InvalidOperationException || error is FormatException) { throw new InvalidOperationException("The AI provider returned an invalid or empty answer. Check the base URL and model."); }
+                                return Complete(reply);
                             }
-                            await response.Content.LoadIntoBufferAsync(2_000_000).ConfigureAwait(false);
-                            string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                            timeout.Token.ThrowIfCancellationRequested();
-                            if (effort != AiReasoningLevel.Off && AiProvider.ReasoningRejected((int)response.StatusCode, body, anthropic, requestBody))
-                            {
-                                lock (UnsupportedReasoning) UnsupportedReasoning.Add(identity);
-                                unsupported = true;
-                                return await PostAsync(streaming, AiReasoningLevel.Off, AiProvider.WithoutReasoningJson(extra)).ConfigureAwait(false);
-                            }
-                            if (streaming && AiStream.Rejected((int)response.StatusCode, body)) return await PostAsync(false, effort, extra).ConfigureAwait(false);
-                            if (!response.IsSuccessStatusCode)
-                                throw new InvalidOperationException("The AI provider answered HTTP " + (int)response.StatusCode + ". Check the base URL, model, API key and account credit.");
-                            // Provider error bodies can echo credentials; report only local diagnostic text.
-                            try { return AiProvider.Reply(body, anthropic); }
-                            catch (Exception error) when (error is InvalidOperationException || error is FormatException) { throw new InvalidOperationException("The AI provider returned an invalid or empty answer. Check the base URL and model."); }
                         }
+                    }
+                    catch (Exception error) when (!(error is OutOfMemoryException))
+                    {
+                        if (timeout.IsCancellationRequested) { trace.Outcome = cancellation.IsCancellationRequested ? "canceled" : "error"; trace.ErrorCategory = cancellation.IsCancellationRequested ? "canceled" : "timeout"; }
+                        else if (error is HttpRequestException) trace.ErrorCategory = "network";
+                        Diagnostics.Write("ai", "failed", "error", error: error);
+                        throw;
+                    }
+                    finally
+                    {
+                        trace.DurationMilliseconds = clock.ElapsedMilliseconds;
+                        DiagnosticLog.Add(trace);
+                        if (Diagnostics.Enabled && streamTrace.Length > 0)
+                            Diagnostics.Write("ai", "response_stream", trace.Outcome, trace.DurationMilliseconds, text: "Request " + requestId + " attempt " + trace.Attempt + "\n" + streamTrace + (streamTrace.Length >= Diagnostics.MaxTextBytes ? "\n[truncated]" : ""));
+                        if (Diagnostics.Enabled && (answer.Length > 0 || reasoningText.Length > 0))
+                            Diagnostics.Write("ai", "response_text", trace.Outcome, trace.DurationMilliseconds, text: "Request " + requestId + " attempt " + trace.Attempt + "\nReasoning:\n" + reasoningText + "\nAnswer:\n" + answer);
+                    }
+
+                    AiReply Complete(AiReply reply)
+                    {
+                        trace.InputTokens = reply.InputTokens; trace.OutputTokens = reply.OutputTokens; trace.ReasoningTokens = reply.ReasoningTokens;
+                        trace.FinishReason = reply.FinishReason ?? ""; trace.AnswerCharacters = reply.Text.Length; trace.ReasoningCharacters = reply.Reasoning.Length;
+                        if (string.IsNullOrWhiteSpace(reply.Text))
+                        {
+                            trace.Outcome = "empty"; trace.ErrorCategory = "empty_answer";
+                            throw new InvalidOperationException(AiProvider.CompletionProblem(reply) ?? "The AI provider returned an empty answer. Export diagnostics to inspect the provider response.");
+                        }
+                        trace.Outcome = "success"; trace.ErrorCategory = "none";
+                        return reply;
                     }
                 }
             }
@@ -303,6 +365,7 @@ namespace Querywright.Ssms
         // ponytail: compile-time errors only; a missing table (deferred name resolution) or a runtime error such as a conversion failure is not seen.
         internal static List<string> Errors(ActiveConnection connection, string sql)
         {
+            Diagnostics.Write("sql", "compile", text: sql);
             var errors = new List<string>();
             using (var server = connection.Open())
             {
@@ -319,12 +382,14 @@ namespace Querywright.Ssms
                 }
                 finally { try { Run(server, "SET NOEXEC OFF;"); } catch (Exception error) when (error is SqlException || error is InvalidOperationException) { } }
             }
+            if (Diagnostics.Enabled) Diagnostics.Write("sql", "compile_result", errors.Count == 0 ? "success" : "error", text: string.Join("\n", errors));
             return errors;
         }
 
         /// <summary>Estimated plan XML of each statement (SET SHOWPLAN_XML ON); the script is compiled, not run.</summary>
         internal static string Plan(ActiveConnection connection, string sql)
         {
+            Diagnostics.Write("sql", "estimated_plan", text: sql);
             var plans = new StringBuilder();
             using (var server = connection.Open())
             {
@@ -338,12 +403,13 @@ namespace Querywright.Ssms
                 }
                 finally { try { Run(server, "SET SHOWPLAN_XML OFF;"); } catch (Exception error) when (error is SqlException || error is InvalidOperationException) { } }
             }
-            return plans.ToString();
+            string plan = plans.ToString(); Diagnostics.Write("sql", "estimated_plan_result", "success", text: plan); return plan;
         }
 
         /// <summary>Runs the script for real, batch by batch, and returns result sets, messages and row counts as JSON. Stops at the first failing batch.</summary>
         internal static string Execute(ActiveConnection connection, string sql, int maxRows)
         {
+            Diagnostics.Write("sql", "execute", text: sql);
             maxRows = Math.Max(1, Math.Min(maxRows, 5000));
             var sets = new List<object>();
             var messages = new List<object>();
@@ -387,7 +453,9 @@ namespace Querywright.Ssms
             }
             var result = new Dictionary<string, object> { ["resultSets"] = sets, ["rowsAffected"] = affected, ["messages"] = messages };
             if (failure != null) result["error"] = failure;
-            return MiniJson.Write(result);
+            string json = MiniJson.Write(result);
+            Diagnostics.Write("sql", "result", failure == null ? "success" : "error", text: json);
+            return json;
         }
 
         private static object Cell(object value)

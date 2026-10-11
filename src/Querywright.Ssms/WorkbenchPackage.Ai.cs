@@ -45,7 +45,7 @@ namespace Querywright.Ssms
             try { mcp = new McpHost(this, aiOptions.McpPort); }
             catch (Exception error) when (error is System.Net.HttpListenerException || error is ArgumentException || error is InvalidOperationException)
             {
-                ActivityLog.TryLogWarning("Querywright", "MCP server not started: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("Querywright", "MCP server not started: " + error.GetType().Name);
                 _ = JoinableTaskFactory.RunAsync(async () =>
                 {
                     await JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -128,6 +128,7 @@ namespace Querywright.Ssms
             bool followUp = task == AiTask.Chat && conversation.Count > 0;
             var messages = followUp ? conversation.ToList() : new List<AiMessage>();
             string sql = AiEditorText(wholeScript: wholeScript);
+            if (Diagnostics.Enabled) Diagnostics.Write("ai_context", task.ToString(), text: "Query:\n" + sql + "\nPrompt:\n" + instruction);
             AiAssist.Messages(task, instruction, sql, null); // validate before any server work
             var names = LiveMetadata.CaptureNames();
             string scope = !wholeScript && AiEditorText(true).Length > 0 ? "Selection (" + (sql.Count(c => c == '\n') + 1) + " lines)" : "Whole script";

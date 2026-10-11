@@ -33,11 +33,13 @@ namespace Querywright.Ssms
             Token();
             protocol = new McpProtocol("querywright", typeof(McpHost).Assembly.GetName().Version.ToString(), Tools());
             listener = Listen(port);
+            Diagnostics.Write("mcp", "started");
             _ = Task.Run(AcceptAsync);
         }
 
         public void Dispose()
         {
+            Diagnostics.Write("mcp", "stopped");
             try { listener.Close(); }
             catch (Exception error) when (error is HttpListenerException || error is ObjectDisposedException) { }
         }
@@ -51,7 +53,7 @@ namespace Querywright.Ssms
                 if (File.Exists(TokenFile))
                 {
                     string saved = File.ReadAllText(TokenFile).Trim();
-                    if (saved.Length >= 32) return token = saved;
+                    if (saved.Length >= 32) { Diagnostics.SetSecret(saved); return token = saved; }
                 }
             }
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
@@ -61,7 +63,7 @@ namespace Querywright.Ssms
             try { Directory.CreateDirectory(Path.GetDirectoryName(TokenFile)); File.WriteAllText(TokenFile, made); }
             // Not saved: the token then lasts until SSMS closes.
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
-            return token = made;
+            Diagnostics.SetSecret(made); return token = made;
         }
 
         // Loopback prefixes only: http.sys drops any request whose Host is something else, which also stops DNS rebinding.
@@ -115,11 +117,14 @@ namespace Querywright.Ssms
                 }
                 string body = Body(request);
                 if (body == null) { Reply(response, 413, null); return; }
+                Diagnostics.Write("mcp", "request", text: body);
                 string answer = protocol.Handle(body);
+                Diagnostics.Write("mcp", "response", text: answer);
                 Reply(response, answer == null ? 202 : 200, answer);
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
+                Diagnostics.Write("mcp", "failed", "error", error: error);
                 try { Reply(response, 500, null); }
                 catch (Exception again) when (again is HttpListenerException || again is ObjectDisposedException || again is InvalidOperationException) { }
             }

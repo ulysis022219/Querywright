@@ -9,7 +9,7 @@ code analysis, refactoring, tab history and server colors, with no license or su
 
 - **No AI.** Everything is plain, predictable code.
 - **Never runs your SQL on its own.** Generated scripts open in a new window for you to review.
-- **Private by default.** Credentials, query text and result data are never logged.
+- **Private by default.** Query and result logging stays off unless verbose diagnostics is enabled; credentials are redacted.
 - **MIT licensed.**
 
 > Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/Querywright/issues).
@@ -99,10 +99,12 @@ run the **Build VSIX** workflow with a tag such as `v0.4.0`; it is published onl
 ## Contributing
 
 Issues and pull requests are welcome. When reporting a bug, use the error line Querywright shows
-(version, command and error type). Please never paste passwords, server names, real queries or data.
+(version, command and error type). For detailed debugging, enable **Tools > Options > Querywright > General > Verbose diagnostics**, reproduce the problem, then open **Querywright AI > Logs > Export logs**.
+Capture is off by default. Logs include Querywright commands, background activity, query and result text, AI request/response text, errors, timing, and provider token/finish metadata. API keys and common credential fields are redacted. Review exports before sharing: database text can still contain sensitive data.
+**Import logs** opens a validated, read-only snapshot; it does not change settings, send requests, or execute queries. Logs live in memory, expire at bounded limits, and clear when capture is switched off or SSMS exits.
+Text capture is limited to 128 KiB per event; grid samples contain at most 100 rows / 4,096 cells. Truncation is marked. Native SSMS operations outside Querywright, including F5 execution, are not traced.
 
-Ground rules for changes: no AI features, no automatic query execution or database changes,
-and no logging of credentials, query text or result data.
+Ground rules for changes: no automatic query execution or database changes. Credential logging is forbidden; query and result logging requires the explicit verbose diagnostics option.
 
 ## License
 

@@ -94,6 +94,10 @@ namespace Querywright.Ssms
             header.Children.Add(new TextBlock { Text = "Querywright AI", FontSize = 16, FontWeight = FontWeights.SemiBold });
             var navigation = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
             navigation.Children.Add(fresh); navigation.Children.Add(regenerate); navigation.Children.Add(editLast); header.Children.Add(navigation);
+            navigation.Children.Add(Button("Logs", "View, export or import verbose Querywright diagnostic logs", () =>
+            {
+                ThreadHelper.JoinableTaskFactory.Run(async () => await WorkbenchPackage.Instance.ShowDialogAsync(new DiagnosticsDialog()));
+            }));
             var providers = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
             providers.Children.Add(new TextBlock { Text = "Model", VerticalAlignment = VerticalAlignment.Center }); providers.Children.Add(model);
             refreshModels = Button("Refresh models", "Reload provider model metadata. Sends no SQL or prompt.", () => LoadModels(true)); providers.Children.Add(refreshModels);
@@ -491,18 +495,21 @@ namespace Querywright.Ssms
                     if (reply.InputTokens.HasValue) details.Add("In: " + reply.InputTokens);
                     if (reply.OutputTokens.HasValue) details.Add("Out: " + reply.OutputTokens);
                     if (reply.ReasoningTokens.HasValue) details.Add("Reasoning tokens: " + reply.ReasoningTokens);
+                    if (reply.TokenLimitReached) details.Add("output limit reached; answer may be incomplete");
                     status.Text = string.Join(" | ", details) + ". Review SQL before using it.";
                     if (instruction.Length > 0) Remember(instruction);
                     prompt.Clear(); selected = null; UpdateChips();
                 }
                 catch (OperationCanceledException)
                 {
+                    Diagnostics.Write("ai_panel", "stopped", "canceled");
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(); timer.Stop();
                     reasoningClock.Stop(); Finish(body, deltas.Text); AddReasoning(body, thoughts.Text, reasoningClock.Elapsed.TotalSeconds);
                     body.Children.Add(new TextBlock { Text = "Stopped — partial answer", FontStyle = FontStyles.Italic }); status.Text = "Stopped.";
                 }
                 catch (Exception error) when (!(error is OutOfMemoryException))
                 {
+                    Diagnostics.Write("ai_panel", "failed", "error", error: error);
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(); timer.Stop();
                     reasoningClock.Stop(); Finish(body, deltas.Text); AddReasoning(body, thoughts.Text, reasoningClock.Elapsed.TotalSeconds);
                     body.Children.Add(new TextBlock { Text = Problem(error), TextWrapping = TextWrapping.Wrap }); status.Text = Problem(error);

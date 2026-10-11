@@ -1600,3 +1600,68 @@ var customReasoning = MiniJson.Parse(AiAssist.RequestBody("fixture-model", aiMes
 Check(MiniJson.Text(MiniJson.Get(customReasoning, "reasoning"), "effort") == "high" && MiniJson.Get(customReasoning, "reasoning_effort") == null,
     "custom nested effort can replace generic effort field");
 Console.WriteLine($"PASS: {checks} total checks including custom reasoning overrides. SSMS integration not tested.");
+
+// DeepSeek shares its output cap between reasoning and the final answer, even with default thinking.
+foreach (var level in new[] { AiReasoningLevel.Off, AiReasoningLevel.Low, AiReasoningLevel.Medium, AiReasoningLevel.High })
+{
+    var deepSeekDefault = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, false, reasoning: level, baseUrl: "https://api.deepseek.com/v1"));
+    Check((double)MiniJson.Get(deepSeekDefault, "max_tokens")! == 65_536, "DeepSeek default leaves room for reasoning and answer " + level);
+}
+foreach (int explicitCap in new[] { 700, 4096 })
+{
+    var deepSeekExplicit = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, false, maxTokens: explicitCap,
+        reasoning: AiReasoningLevel.High, baseUrl: "https://api.deepseek.com"));
+    Check((double)MiniJson.Get(deepSeekExplicit, "max_tokens")! == explicitCap, "explicit DeepSeek cap preserved " + explicitCap);
+}
+var deepSeekOverride = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, false, reasoning: AiReasoningLevel.High,
+    extraRequestJson: """{"max_tokens":8192}""", baseUrl: "https://api.deepseek.com"));
+Check((double)MiniJson.Get(deepSeekOverride, "max_tokens")! == 8192, "DeepSeek custom output limit wins over default");
+foreach (string providerUrl in new[] { "https://api.openai.com/v1", "https://api.deepseek.com.evil.example", "https://example.com/api.deepseek.com", "http://localhost:11434/v1" })
+{
+    var unchangedLimit = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, false, reasoning: AiReasoningLevel.High, baseUrl: providerUrl));
+    Check((double)(MiniJson.Get(unchangedLimit, "max_tokens") ?? MiniJson.Get(unchangedLimit, "max_completion_tokens"))! == 4096,
+        "DeepSeek output default requires exact provider host " + providerUrl);
+}
+var unchangedAnthropicLimit = MiniJson.Parse(AiAssist.RequestBody("fixture-think", aiMessages, true, baseUrl: "https://api.deepseek.com"));
+Check((double)MiniJson.Get(unchangedAnthropicLimit, "max_tokens")! == 4096, "DeepSeek output default applies only to OpenAI-compatible format");
+
+var exhaustedReply = AiProvider.Reply("""{"choices":[{"message":{"content":null,"reasoning_content":"private plan"},"finish_reason":"length"}],"usage":{"prompt_tokens":3000,"completion_tokens":4096,"completion_tokens_details":{"reasoning_tokens":4096}}}""", false);
+string? exhaustedProblem = AiProvider.CompletionProblem(exhaustedReply);
+Check(exhaustedReply.Text == "" && exhaustedReply.Reasoning == "private plan" && exhaustedReply.TokenLimitReached && exhaustedReply.FinishReason == "length"
+    && exhaustedReply.InputTokens == 3000 && exhaustedReply.OutputTokens == 4096 && exhaustedReply.ReasoningTokens == 4096,
+    "reasoning-only token-limited JSON retains stop reason and usage");
+Check(exhaustedProblem != null && exhaustedProblem.Contains("while reasoning") && exhaustedProblem.Contains("Out: 4096") && exhaustedProblem.Contains("Reasoning tokens: 4096")
+    && !exhaustedProblem.Contains("private plan"), "token-limit diagnostic gives local remedy and usage without provider text");
+var anthropicExhaustedReply = AiProvider.Reply("""{"content":[{"type":"thinking","thinking":"private plan"}],"stop_reason":"max_tokens","usage":{"input_tokens":17,"output_tokens":8192}}""", true);
+Check(anthropicExhaustedReply.TokenLimitReached && anthropicExhaustedReply.OutputTokens == 8192 && AiProvider.CompletionProblem(anthropicExhaustedReply)!.Contains("token limit"),
+    "Anthropic reasoning-only max_tokens stop receives same diagnostic");
+var contextLimitReply = AiProvider.Reply("""{"content":[],"stop_reason":"model_context_window_exceeded","usage":{"input_tokens":8192,"output_tokens":0}}""", true);
+Check(!contextLimitReply.TokenLimitReached && AiProvider.CompletionProblem(contextLimitReply)!.Contains("context limit"), "context exhaustion is distinguished from output exhaustion");
+var partialLimitReply = AiProvider.Reply("""{"choices":[{"message":{"content":"partial answer"},"finish_reason":"length"}]}""", false);
+Check(partialLimitReply.Text == "partial answer" && partialLimitReply.TokenLimitReached && AiProvider.CompletionProblem(partialLimitReply) == null,
+    "nonempty token-limited answer remains visible with stop metadata");
+Throws<InvalidOperationException>(() => AiProvider.Reply("""{"choices":[{"message":{"content":"","reasoning_content":"private plan"},"finish_reason":"stop"}]}""", false),
+    "reasoning-only normal stop remains an empty-answer failure");
+var unknownFinishReply = AiProvider.Reply("""{"choices":[{"message":{"content":"answer"},"finish_reason":"credential echo\nfixture-secret"}]}""", false);
+Check(unknownFinishReply.FinishReason == null && !unknownFinishReply.TokenLimitReached
+    && new AiReply("answer", finishReason: "LENGTH").FinishReason == null, "unknown or malicious stop reasons cannot enter diagnostic metadata");
+
+var exhaustedStream = new AiStream(false);
+Check(StreamEvent(exhaustedStream, """data: {"choices":[{"index":0,"delta":{"reasoning_content":"private plan"},"finish_reason":"length"}]}""") == ""
+    && exhaustedStream.ReasoningDelta == "private plan" && exhaustedStream.TokenLimitReached, "streaming reasoning-only length stop preserves separate reasoning");
+StreamEvent(exhaustedStream, """data: {"choices":[],"usage":{"prompt_tokens":31,"completion_tokens":4096}}""");
+StreamEvent(exhaustedStream, "data: [DONE]");
+Check(exhaustedStream.Done && exhaustedStream.Finish() == "" && exhaustedStream.FinishReason == "length" && exhaustedStream.OutputTokens == 4096,
+    "usage-only and DONE chunks retain token-limit stop reason");
+var exhaustedThinkingStream = new AiStream(true);
+StreamEvent(exhaustedThinkingStream, """data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":8192}}""");
+StreamEvent(exhaustedThinkingStream, """data: {"type":"message_stop"}""");
+Check(exhaustedThinkingStream.Done && exhaustedThinkingStream.TokenLimitReached && exhaustedThinkingStream.FinishReason == "max_tokens" && exhaustedThinkingStream.OutputTokens == 8192,
+    "Anthropic message_delta retains final stop reason through message_stop");
+var unknownFinishStream = new AiStream(false);
+StreamEvent(unknownFinishStream, """data: {"choices":[{"index":1,"delta":{},"finish_reason":"length"},{"index":0,"delta":{},"finish_reason":"fixture-secret"}]}""");
+Check(unknownFinishStream.FinishReason == null && !unknownFinishStream.TokenLimitReached, "other-choice and arbitrary stream stop reasons are ignored");
+StreamEvent(unknownFinishStream, """data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""");
+StreamEvent(unknownFinishStream, """data: {"choices":[{"index":0,"delta":{},"finish_reason":"fixture-secret"}]}""");
+Check(unknownFinishStream.FinishReason == "stop", "unknown stream stop value cannot replace known metadata");
+Console.WriteLine($"PASS: {checks} total checks including reasoning output caps and safe stop diagnostics. SSMS integration not tested.");

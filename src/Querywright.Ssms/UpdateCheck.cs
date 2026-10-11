@@ -21,16 +21,7 @@ namespace Querywright.Ssms
         private bool started;
 
         /// <summary>Version from the installed extension.vsixmanifest (CI stamps the build number there); null when unreadable.</summary>
-        internal static string InstalledVersion()
-        {
-            try
-            {
-                string manifest = Path.Combine(Path.GetDirectoryName(typeof(UpdateCheck).Assembly.Location), "extension.vsixmanifest");
-                return Regex.Match(File.ReadAllText(manifest), "<Identity [^>]*Version=\"([^\"]+)\"").Groups[1].Value;
-            }
-            catch (IOException) { return null; }
-            catch (UnauthorizedAccessException) { return null; }
-        }
+        internal static string InstalledVersion() => Diagnostics.InstalledVersion();
 
         internal static async Task RunAsync(WorkbenchPackage package, bool manual = false)
         {

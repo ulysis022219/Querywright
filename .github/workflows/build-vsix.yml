@@ -83,7 +83,7 @@ jobs:
         run: scripts/Test-AiClient.ps1
       - name: Diagnostic capture and import checks
         shell: powershell
-        run: scripts/Test-Diagnostics.ps1
+        run: scripts/Test-Diagnostics.ps1 -HostIde no-host-sdk-required
       - name: Dialog layout and interaction checks
         shell: powershell
         run: |

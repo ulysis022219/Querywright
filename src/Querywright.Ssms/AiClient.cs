@@ -229,8 +229,8 @@ namespace Querywright.Ssms
                     var clock = Stopwatch.StartNew();
                     var trace = new AiDiagnosticEntry
                     {
-                        AppVersion = typeof(AiClient).Assembly.GetName().Version.ToString(), RequestId = requestId,
-                        ProviderHost = new Uri(url).Host, ApiFormat = format.ToString(), Model = model,
+                        AppVersion = Diagnostics.InstalledVersion() ?? typeof(AiClient).Assembly.GetName().Version.ToString(), RequestId = requestId,
+                        ProviderHost = Diagnostics.Redact(new Uri(url).Host), ApiFormat = format.ToString(), Model = Diagnostics.Redact(model),
                         Reasoning = effort.ToString().ToLowerInvariant(), Attempt = ++attempt, Streaming = streaming, ErrorCategory = "configuration"
                     };
                     var answer = new StringBuilder(); var reasoningText = new StringBuilder(); var streamTrace = new StringBuilder();

@@ -552,7 +552,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     defaults != null && defaults.TryGetValue(c.DefaultId, out var value) && value != null ? c.Note + " DEFAULT " + value : c.Note)),
                     keys.Select(k => (k.Id, (string)k.Schema, (string)k.Table, (string)k.Column, (string)k.RefSchema, (string)k.RefTable, (string)k.RefColumn)));
                 var built = Assemble(null);
-                if (built.Skipped > 0) ActivityLog.TryLogWarning("Querywright", "Live metadata skipped " + built.Skipped + " objects with unusable names");
+                if (built.Skipped > 0) Diagnostics.TryLogWarning("Querywright", "Live metadata skipped " + built.Skipped + " objects with unusable names");
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
                 if (databases != null) databaseCache[connection.Key] = databases;
                 if (parameters != null)
@@ -562,7 +562,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     procedureCache[connection.Key] = Build(false).Concat(Build(true).Select(f => new SchemaProcedure(f.Schema, f.Name, f.Parameters.ToArray(), isFunction: true))).ToArray();
                 }
                 LastProblem = problems.Count == 0 ? "" : "partial: " + string.Join(", ", problems);
-                ActivityLog.TryLogInformation("Querywright", "Live metadata loaded: " + built.Tables.Length + " tables"
+                Diagnostics.TryLogInformation("Querywright", "Live metadata loaded: " + built.Tables.Length + " tables"
                     + (capped ? " (column cap reached)" : "") + (problems.Count == 0 ? "" : " (" + LastProblem + ")"));
                 stale.TryRemove(connection.Key, out _);
                 var saved = procedureCache.TryGetValue(connection.Key, out var known) ? known : null;
@@ -586,7 +586,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                         }
                     }
                     // ponytail: defaults are cosmetic; a failure keeps the plain notes and only the type is logged.
-                    catch (Exception error) when (IsRecoverable(error)) { ActivityLog.TryLogWarning("Querywright", "Live metadata defaults unavailable: " + Describe(error)); }
+                    catch (Exception error) when (IsRecoverable(error)) { Diagnostics.TryLogWarning("Querywright", "Live metadata defaults unavailable: " + Describe(error)); }
                     if (path == null) return;
                     // A unique temp file keeps two overlapping saves of one connection from interleaving; the last one to finish wins whole.
                     {
@@ -612,7 +612,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             {
                 // Type and SQL error number only: messages can echo server or login names.
                 LastProblem = Describe(error);
-                ActivityLog.TryLogWarning("Querywright", "Live metadata unavailable: " + LastProblem);
+                Diagnostics.TryLogWarning("Querywright", "Live metadata unavailable: " + LastProblem);
                 return null;
             }
         }
@@ -624,7 +624,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         internal static void ClearDiskCache()
         {
             try { if (Directory.Exists(DiskCacheFolder)) Directory.Delete(DiskCacheFolder, true); }
-            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { ActivityLog.TryLogWarning("Querywright", "Schema cache not cleared: " + error.GetType().Name); }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { Diagnostics.TryLogWarning("Querywright", "Schema cache not cleared: " + error.GetType().Name); }
         }
 
         private static string DiskCachePath(ActiveConnection connection)
@@ -766,7 +766,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         private static void LogOnce(string message)
         {
             lock (logged) if (!logged.Add(message)) return;
-            ActivityLog.TryLogInformation("Querywright", message);
+            Diagnostics.TryLogInformation("Querywright", message);
         }
 
         /// <summary>Public, non-public or explicit-interface property; SSMS types vary between releases.</summary>

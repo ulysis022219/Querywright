@@ -68,7 +68,7 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                ActivityLog.TryLogWarning("Querywright", "Update check skipped: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("Querywright", "Update check skipped: " + error.GetType().Name);
                 if (manual) await ShowAsync(package, "Could not check for updates: " + error.Message, OLEMSGICON.OLEMSGICON_WARNING);
             }
         }

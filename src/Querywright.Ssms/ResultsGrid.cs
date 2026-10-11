@@ -9,7 +9,7 @@ using System.Windows.Forms;
 
 namespace Querywright.Ssms
 {
-    /// <summary>Cells read from an SSMS results grid. Display text; null = SQL NULL. Never logged.</summary>
+    /// <summary>Cells read from an SSMS results grid. Display text; null = SQL NULL. Captured only with verbose diagnostics enabled.</summary>
     internal sealed class GridCells
     {
         internal List<string?> Headers = new List<string?>();

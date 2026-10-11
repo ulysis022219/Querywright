@@ -1,6 +1,7 @@
 # Offscreen panel checks using installed SSMS SDK assemblies. No SSMS process, SQL, API calls or history writes.
 param([string]$HostIde = 'C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE', [string]$Out)
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Net.Http
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 $resolver = [ResolveEventHandler] {
     param($sender, $eventArgs)
@@ -63,6 +64,7 @@ This block is explanatory text, not executable SQL.
     }
     Check (@($buttons | Where-Object Content -eq 'Copy').Count -eq 3) 'Every code block must be copyable'
     Check (@($buttons | Where-Object Content -eq 'Copy answer').Count -eq 1) 'Whole Markdown answer must be copyable'
+    Check (@($buttons | Where-Object Content -eq 'Logs').Count -eq 1) 'Panel must expose diagnostic logs without requiring a provider request'
     foreach ($button in $buttons) { Check (![string]::IsNullOrWhiteSpace([Windows.Automation.AutomationProperties]::GetName($button))) 'All panel buttons need accessible names' }
     $boxes = @($nodes | Where-Object { $_ -is [Windows.Controls.RichTextBox] })
     Check ($boxes.Count -eq 4 -and @($boxes | Where-Object { !$_.IsReadOnly -or !$_.IsDocumentEnabled }).Count -eq 0) 'Output must be selectable, read-only and allow embedded SQL actions'
@@ -77,6 +79,15 @@ This block is explanatory text, not executable SQL.
     Check ($thought.Content -is [Windows.Controls.RichTextBox] -and $thought.Content.IsReadOnly) 'Reasoning must be plain, selectable and read-only'
     Check ($thought.Content.VerticalScrollBarVisibility -eq [Windows.Controls.ScrollBarVisibility]::Auto) 'Long reasoning must remain scrollable within its height limit'
     Check (@(Nodes $thought | Where-Object { $_ -is [Windows.Controls.Button] }).Count -eq 0) 'Reasoning must never expose insert/replace/run/copy-answer actions'
+    $logType = $assembly.GetType('Querywright.Ssms.DiagnosticsDialog', $true)
+    $logDialog = [Activator]::CreateInstance($logType, $flags, $null, @(), $null)
+    $logView = $logType.GetField('view', $flags).GetValue($logDialog)
+    Check ($logView.IsReadOnly -and $logView.VerticalScrollBarVisibility -eq [Windows.Controls.ScrollBarVisibility]::Auto -and $logView.HorizontalScrollBarVisibility -eq [Windows.Controls.ScrollBarVisibility]::Auto) 'Imported diagnostic text must be read-only and scrollable'
+    $logButtons = @(Nodes $logDialog | Where-Object { $_ -is [Windows.Controls.Button] })
+    foreach ($action in '_Refresh', '_Import logs', '_Export logs', '_Close') { Check (@($logButtons | Where-Object Content -eq $action).Count -eq 1) "Diagnostics dialog needs $action" }
+    $logDialog.Content.Measure([Windows.Size]::new(460, 320)); $logDialog.Content.Arrange([Windows.Rect]::new(0, 0, 460, 320)); $logDialog.Content.UpdateLayout()
+    Check ($logView.ActualHeight -gt 0) 'Diagnostic text must remain visible at minimum dialog size'
+    $logDialog.Close()
     # Model persistence runs against a temporary file, never user settings.
     $models = $assembly.GetType('Querywright.Ssms.AiModels', $true)
     $staticFlags = [Reflection.BindingFlags]'Static,NonPublic'

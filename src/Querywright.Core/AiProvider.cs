@@ -14,9 +14,11 @@ namespace Querywright.Core
         public int? InputTokens { get; }
         public int? OutputTokens { get; }
         public int? ReasoningTokens { get; }
+        public string? FinishReason { get; }
+        public bool TokenLimitReached => FinishReason == "length" || FinishReason == "max_tokens";
         public bool ReasoningUnsupported { get; set; }
-        public AiReply(string text, string reasoning = "", int? inputTokens = null, int? outputTokens = null, int? reasoningTokens = null)
-        { Text = text; Reasoning = reasoning; InputTokens = inputTokens; OutputTokens = outputTokens; ReasoningTokens = reasoningTokens; }
+        public AiReply(string text, string reasoning = "", int? inputTokens = null, int? outputTokens = null, int? reasoningTokens = null, string? finishReason = null)
+        { Text = text; Reasoning = reasoning; InputTokens = inputTokens; OutputTokens = outputTokens; ReasoningTokens = reasoningTokens; FinishReason = AiProvider.KnownFinishReason(finishReason); }
     }
 
     /// <summary>Provider metadata, reasoning options and response parsing. No network or model-name catalog.</summary>
@@ -41,17 +43,43 @@ namespace Querywright.Core
 
         public static AiReply Reply(string json, bool anthropic)
         {
-            string text = AiAssist.ReplyText(json, anthropic);
+            string text = AiAssist.ReplyText(json, anthropic, allowEmpty: true);
             var root = MiniJson.Parse(json);
+            var first = (MiniJson.Get(root, "choices") as List<object?>)?.FirstOrDefault();
             string reasoning = anthropic
                 ? string.Concat((MiniJson.Get(root, "content") as List<object?> ?? new List<object?>()).Where(part => MiniJson.Text(part, "type") == "thinking").Select(part => MiniJson.Text(part, "thinking")))
-                : MiniJson.Text(MiniJson.Get((MiniJson.Get(root, "choices") as List<object?>)?.FirstOrDefault(), "message"), "reasoning_content") ?? "";
+                : MiniJson.Text(MiniJson.Get(first, "message"), "reasoning_content") ?? "";
             var usage = MiniJson.Get(root, "usage");
-            return new AiReply(text, reasoning, TokenCount(usage, anthropic ? "input_tokens" : "prompt_tokens"), TokenCount(usage, anthropic ? "output_tokens" : "completion_tokens"),
-                TokenCount(MiniJson.Get(usage, anthropic ? "output_tokens_details" : "completion_tokens_details"), anthropic ? "thinking_tokens" : "reasoning_tokens"));
+            var reply = new AiReply(text, reasoning, TokenCount(usage, anthropic ? "input_tokens" : "prompt_tokens"), TokenCount(usage, anthropic ? "output_tokens" : "completion_tokens"),
+                TokenCount(MiniJson.Get(usage, anthropic ? "output_tokens_details" : "completion_tokens_details"), anthropic ? "thinking_tokens" : "reasoning_tokens"),
+                anthropic ? MiniJson.Text(root, "stop_reason") : MiniJson.Text(first, "finish_reason"));
+            if (text.Length == 0 && CompletionProblem(reply) == null) throw new InvalidOperationException("The AI provider returned an empty answer.");
+            return reply;
         }
 
-        internal static int? TokenCount(object? usage, string field)
+        private static readonly string[] FinishReasons = { "stop", "length", "content_filter", "tool_calls", "insufficient_system_resource", "aborted",
+            "end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal", "model_context_window_exceeded" };
+        internal static string? KnownFinishReason(string? value) => FinishReasons.Contains(value, StringComparer.Ordinal) ? value : null;
+
+        /// <summary>A local diagnostic for an empty answer stopped at a known token limit; provider text is never echoed.</summary>
+        public static string? CompletionProblem(AiReply reply)
+        {
+            if (!string.IsNullOrWhiteSpace(reply.Text)) return null;
+            string message;
+            if (reply.FinishReason == "model_context_window_exceeded")
+                message = "The provider reached its context limit before returning an answer. Shorten the script, schema or conversation, then retry.";
+            else if (reply.TokenLimitReached)
+                message = "The provider reached its token limit" + (string.IsNullOrWhiteSpace(reply.Reasoning) ? "" : " while reasoning")
+                    + " before returning an answer. Lower reasoning, shorten context or raise the output limit in Extra request JSON, then retry.";
+            else return null;
+            var usage = new List<string>();
+            if (reply.InputTokens.HasValue) usage.Add("In: " + reply.InputTokens);
+            if (reply.OutputTokens.HasValue) usage.Add("Out: " + reply.OutputTokens);
+            if (reply.ReasoningTokens.HasValue) usage.Add("Reasoning tokens: " + reply.ReasoningTokens);
+            return message + (usage.Count == 0 ? "" : " " + string.Join(" | ", usage) + ".");
+        }
+
+        public static int? TokenCount(object? usage, string field)
         {
             object? value = MiniJson.Get(usage, field);
             if (value is int count) return count >= 0 ? count : (int?)null;
@@ -65,13 +93,16 @@ namespace Querywright.Core
         internal static bool Host(string? baseUrl, string host) => Uri.TryCreate(baseUrl, UriKind.Absolute, out var url)
             && url.Host.Equals(host, StringComparison.OrdinalIgnoreCase);
 
-        public static Dictionary<string, object?> RequestOptions(bool anthropic, string model, AiReasoningLevel level, int maxTokens = 4096, string? baseUrl = null)
+        public static Dictionary<string, object?> RequestOptions(bool anthropic, string model, AiReasoningLevel level, int? maxTokens = null, string? baseUrl = null)
         {
             if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Choose an AI model name.");
-            if (maxTokens <= 0) throw new ArgumentOutOfRangeException(nameof(maxTokens));
+            int tokenLimit = maxTokens ?? (!anthropic && Host(baseUrl, "api.deepseek.com") ? 65_536 : 4096);
+            if (tokenLimit <= 0) throw new ArgumentOutOfRangeException(nameof(maxTokens));
             if ((uint)level > (uint)AiReasoningLevel.High) throw new ArgumentOutOfRangeException(nameof(level));
             var fields = new Dictionary<string, object?>();
-            if (!anthropic && Host(baseUrl, "api.openai.com")) fields["max_completion_tokens"] = maxTokens;
+            if (!anthropic && Host(baseUrl, "api.openai.com")) fields["max_completion_tokens"] = tokenLimit;
+            // DeepSeek reasons by default, including when our Off setting omits reasoning fields.
+            if (!anthropic && Host(baseUrl, "api.deepseek.com")) fields["max_tokens"] = tokenLimit;
             if (level == AiReasoningLevel.Off) return fields;
             fields["temperature"] = null;
             if (anthropic)
@@ -79,7 +110,7 @@ namespace Querywright.Core
                 // ponytail: manual budgets; use Extra request JSON for models requiring adaptive thinking.
                 int budget = level == AiReasoningLevel.Low ? 1024 : level == AiReasoningLevel.Medium ? 4096 : 8192;
                 fields["thinking"] = new Dictionary<string, object?> { ["type"] = "enabled", ["budget_tokens"] = budget };
-                fields["max_tokens"] = checked(maxTokens + budget);
+                fields["max_tokens"] = checked(tokenLimit + budget);
             }
             else
             {

@@ -90,6 +90,18 @@ namespace Querywright.Ssms
             return cache != null && cache.Item1 == path ? cache.Item3 : null;
         }
 
+        /// <summary>Everything a suggestion list reads, from a single connection lookup. Never blocks or throws (typing path).</summary>
+        internal (IReadOnlyList<SchemaTable> Tables, IReadOnlyList<string> Databases, Func<string, IReadOnlyList<SchemaTable>> OtherDatabase,
+            IReadOnlyList<SchemaProcedure> Procedures) CurrentCatalog()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
+            Func<string, IReadOnlyList<SchemaTable>> other = null;
+            if (connection != null) other = name => LiveMetadata.TryGet(connection.WithDatabase(name));
+            return (Merge(LiveMetadata.TryGet(connection), OfflineSchemaNow()), LiveMetadata.DatabaseNames(connection), other,
+                LiveMetadata.Procedures(connection) ?? Array.Empty<SchemaProcedure>());
+        }
+
         /// <summary>Databases on the connected server for USE. Never blocks (typing path).</summary>
         internal IReadOnlyList<string> CurrentDatabases()
         {
@@ -136,9 +148,16 @@ namespace Querywright.Ssms
         private static IReadOnlyList<SchemaTable> Merge(IReadOnlyList<SchemaTable> live, IReadOnlyList<SchemaTable> offline)
         {
             if (live == null || offline == null) return live ?? offline;
+            // Both lists are cached instances, so the merge is redone only when one of them reloads, not on every keystroke.
+            var last = merged;
+            if (last != null && ReferenceEquals(last.Item1, live) && ReferenceEquals(last.Item2, offline)) return last.Item3;
             var names = new HashSet<string>(live.Select(t => t.Schema + "." + t.Name), StringComparer.OrdinalIgnoreCase);
-            return live.Concat(offline.Where(t => !names.Contains(t.Schema + "." + t.Name))).ToArray();
+            var result = live.Concat(offline.Where(t => !names.Contains(t.Schema + "." + t.Name))).ToArray();
+            merged = Tuple.Create(live, offline, (IReadOnlyList<SchemaTable>)result);
+            return result;
         }
+
+        private static volatile Tuple<IReadOnlyList<SchemaTable>, IReadOnlyList<SchemaTable>, IReadOnlyList<SchemaTable>> merged;
 
         /// <summary>Offline schema, reparsed only when the file changes. Null when none is configured. Thread-safe.</summary>
         internal IReadOnlyList<SchemaTable> LoadSchema()

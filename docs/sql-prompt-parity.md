@@ -91,11 +91,16 @@ suppression. Remaining syntax-only candidates:
 
 Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: host (fix at caret / fix all for SW001, SW003, SW004, SW009, SW010, SW015, SW016, SW017, SW040, SW048–SW051; every fix must re-parse).
 
-## 7. Checked against the shipped product (October 10, 2026)
+## 7. Checked against the shipped product (October 11, 2026)
 
-Command names, rule IDs and option names were read from the SQL Prompt 11.5.5 installer by static inspection
-(nothing was executed, no code or text copied). Status: done = covered by the core checks; host = wired into
-the SSMS menu and compiled, not yet run in SSMS.
+Command names, rule IDs and option names were read from the SQL Prompt 11.5.5 installer by static inspection.
+On October 11, 2026 the suggestion code of the installed SQL Prompt 11.5.5.27669 was also decompiled and read
+(matching, ranking, list triggers, commit keys, option defaults), and its name matcher was loaded in a local test
+harness to compare results with Querywright's on 2,000,000 generated inputs (no differences). The harness and the
+decompiled sources are not in this repository; the code here was written for Querywright, and no SQL Prompt code,
+icons or text blocks were copied in. Redgate's licence terms may restrict decompilation; anyone redistributing this
+work should check them. Status: done = covered by the core checks; host = wired into the SSMS menu and compiled,
+not yet run in SSMS.
 
 | SQL Prompt feature | Querywright |
 |---|---|
@@ -110,7 +115,9 @@ the SSMS menu and compiled, not yet run in SSMS.
 | Formatting disabled regions | done: `-- querywright:format off` ... `-- querywright:format on`, between statements |
 | Code analysis rules | 73 rules (SW048–SW073 added), 13 with fixes |
 | Comment / uncomment selection | core only; SSMS already has Ctrl+K, Ctrl+C / Ctrl+U |
-| Suggestion matching, ranking, aliases, join suggestions, commit keys | see section 1 and features.md "Suggestion matching and ranking". Option names came from the installer; its default values and ranking code were not read, so defaults and tie-breaks here are Querywright's own |
+| Suggestion matching, ranking, aliases, join suggestions, commit keys | see section 1 and features.md "Suggestion matching and ranking". Matching, group order (exact name, promoted, others, snippets), list triggers, commit keys and the alias and column-order defaults follow the decompiled 11.5.5.27669 behaviour. Known differences: ordinal instead of culture-aware comparison, keywords first in a general context, usage as a tie-break only, a soft selection while a new alias may be typed |
+| Menu | command captions and group order (suggestions, formatting, refactoring, analysis) follow SQL Prompt's command names; the order inside its menu was not recovered and is inferred. Accent colours are blue |
+| SSMS versions | SSMS 22: VSIX, tested. SSMS 18 to 20: `src/Querywright.Ssms.Legacy` builds the same sources against the Visual Studio 2017 shell and `scripts/Install-Legacy.ps1` copies it into the SSMS Extensions folder; compiled only, not yet run. SSMS 21 and SSMS 17 or older: not supported |
 
 Not implemented:
 
@@ -121,7 +128,7 @@ Not implemented:
 - Snippet manager window and create snippet from selection, options import/export, command palette,
   Select in Object Explorer, close unmodified tabs, duplicate tab, password breach check.
 - Suggestions: bracketed-name option, join conditions matched by data type alone or on part of a composite key,
-  item icons and filter tabs, usage ranking kept between SSMS sessions, turning off Tab or Enter as commit keys.
+  item icons and filter tabs, usage ranking kept between SSMS sessions, suggestion delay, closing double quotes.
 - AI features: see [ai.md](ai.md). Not matched: grey inline completion while typing, streamed answers.
 
 ## Remaining

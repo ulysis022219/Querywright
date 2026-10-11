@@ -361,9 +361,18 @@ namespace Querywright.Core
         internal static string QuoteIfNeeded(string name)
         {
             if (name.Length == 0 || !(char.IsLetter(name[0]) || name[0] == '_') || !name.All(c => char.IsLetterOrDigit(c) || c == '_')) return Quote(name);
+            // A list asks about every catalog name; lexing each one again per keystroke was most of the completion time.
+            if (plainNames.TryGetValue(name, out bool plain)) return plain ? name : Quote(name);
             var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(name), out var errors).Where(t => t.TokenType != TSqlTokenType.EndOfFile).ToList();
-            return errors.Count == 0 && tokens.Count == 1 && tokens[0].TokenType == TSqlTokenType.Identifier ? name : Quote(name);
+            plain = errors.Count == 0 && tokens.Count == 1 && tokens[0].TokenType == TSqlTokenType.Identifier;
+            // ponytail: dropping everything at the cap is simpler than LRU; the next list refills it.
+            if (plainNames.Count > 200_000) plainNames.Clear();
+            plainNames[name] = plain;
+            return plain ? name : Quote(name);
         }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> plainNames =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.Ordinal);
 
         private static List<Tok> Tokenize(TSql170Parser parser, string text, int shift, out bool errors, out TSqlParserToken? last)
         {

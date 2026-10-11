@@ -212,13 +212,23 @@ namespace Querywright.Ssms
         private static bool IsGoToDefinition(Guid group, uint id) =>
             group == VSConstants.GUID_VSStandardCommandSet97 && id == (uint)VSConstants.VSStd97CmdID.GotoDefn;
 
+        /// <summary>The session's list, or null when it is still being computed: a keystroke never waits on a slow list.</summary>
+        private static ComputedCompletionItems? Computed(IAsyncCompletionSession session)
+        {
+            using (var wait = new CancellationTokenSource(150))
+            {
+                try { return session.GetComputedItems(wait.Token); }
+                catch (OperationCanceledException) { return null; }
+            }
+        }
+
         /// <summary>False when the typed word does not match the selected item, so Tab never swaps in an unrelated name.</summary>
         private bool SelectionMatches()
         {
             var session = completion.GetSession(view);
             if (session == null || session.IsDismissed) return true;
             string typed = session.ApplicableToSpan.GetText(view.TextBuffer.CurrentSnapshot);
-            var selected = session.GetComputedItems(CancellationToken.None).SelectedItem;
+            var selected = Computed(session)?.SelectedItem;
             if (typed.Length == 0 || selected == null) return typed.Length == 0;
             var options = WorkbenchPackage.Instance?.Options;
             return options?.SmartMatching != false ? SqlCompletion.Match(selected.FilterText, typed, options?.CamelHumps != false) != MatchKind.None
@@ -232,7 +242,8 @@ namespace Querywright.Ssms
             if (options == null || options.CommitCharacters().IndexOf(typed) < 0) return false;
             var session = completion.GetSession(view);
             if (session == null || session.IsDismissed) return false;
-            var computed = session.GetComputedItems(CancellationToken.None);
+            var computed = Computed(session);
+            if (computed == null) return false;
             string word = session.ApplicableToSpan.GetText(view.TextBuffer.CurrentSnapshot);
             return computed.SelectedItem != null && !computed.UsesSoftSelection && word.Length > 0 && SelectionMatches() &&
                 !CompletionRules.KeepsTyping(computed.SelectedItem.FilterText, word, typed);
@@ -379,10 +390,8 @@ namespace Querywright.Ssms
             // Connection lookup needs the UI thread, where the broker normally calls this.
             if (Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess())
             {
-                tables = WorkbenchPackage.Instance.CurrentTables();
-                databases = WorkbenchPackage.Instance.CurrentDatabases();
-                otherDatabase = WorkbenchPackage.Instance.CurrentOtherDatabase();
-                procedures = WorkbenchPackage.Instance.CurrentProcedures(""); // live only; the script is parsed off the UI thread
+                // Live only; the script is parsed off the UI thread.
+                (tables, databases, otherDatabase, procedures) = WorkbenchPackage.Instance.CurrentCatalog();
             }
             if (insertion && WorkbenchPackage.Instance.Options?.SuggestWhileTyping == false)
                 return false;

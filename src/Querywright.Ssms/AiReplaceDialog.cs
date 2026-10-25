@@ -12,11 +12,11 @@ namespace Querywright.Ssms
         {
             Title = "Querywright: review AI replacement";
             DialogParts.Style(this);
-            Width = 480; Height = 260; MinWidth = 360; MinHeight = 240;
+            Width = 480; Height = 300; MinWidth = 380; MinHeight = 290;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowActivated = false;
             var root = new DockPanel { Margin = new Thickness(12) };
-            root.Children.Add(DialogParts.Header("Review replacement", "Review changes in the comparison tab. You can scroll and inspect that tab while this window stays open. Apply replaces the original selection or script; Ctrl+Z undoes it."));
+            root.Children.Add(DialogParts.Header("Review replacement", "Compare the change in the comparison tab, which stays usable while this window is open. Apply replaces the original selection or script. Ctrl+Z undoes it."));
             root.Children.Add(DialogParts.Footer(DialogParts.Buttons(this,
                 ("_Apply", false, false, () => { Apply = true; Close(); }), ("_Cancel", true, true, Close))));
             Content = root;

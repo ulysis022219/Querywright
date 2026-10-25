@@ -19,6 +19,24 @@ function Nodes($element) {
     Write-Output -NoEnumerate $element
     foreach ($child in [Windows.LogicalTreeHelper]::GetChildren($element)) { Nodes $child }
 }
+# IsVisible is always false offscreen, so walk the logical parents for a collapsed ancestor instead.
+function Shown($element) {
+    for ($node = $element; $null -ne $node; $node = [Windows.LogicalTreeHelper]::GetParent($node)) {
+        if ($node -is [Windows.UIElement] -and $node.Visibility -ne [Windows.Visibility]::Visible) { return $false }
+    }
+    return $true
+}
+function Named($items, $name) { @($items | Where-Object { [Windows.Automation.AutomationProperties]::GetName($_) -eq $name }) }
+function Snap($element, $size, $name) {
+    if (!$Out) { return }
+    [void][IO.Directory]::CreateDirectory($Out)
+    $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new([int]$size.Width, [int]$size.Height, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
+    $bitmap.Render($element)
+    $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
+    $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+    $file = [IO.File]::Create((Join-Path $Out "$name.png"))
+    try { $encoder.Save($file) } finally { $file.Dispose() }
+}
 try {
     $bin = Join-Path $PSScriptRoot '../src/Querywright.Ssms/bin/Debug/net472'
     $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Ssms.dll'))
@@ -43,6 +61,11 @@ HAVING COUNT(*) > 1; -- review duplicates
 - Check how NULL email addresses should be handled.
 - Review results before changing data.
 
+| Column | Meaning |
+| --- | --- |
+| `Email` | The address shared by duplicates |
+| `DuplicateCount` | Rows sharing that address |
+
 ### Inspect one address
 
 ```sql
@@ -64,9 +87,10 @@ This block is explanatory text, not executable SQL.
     }
     Check (@($buttons | Where-Object Content -eq 'Copy').Count -eq 3) 'Every code block must be copyable'
     Check (@($buttons | Where-Object Content -eq 'Copy answer').Count -eq 1) 'Whole Markdown answer must be copyable'
-    Check (@($buttons | Where-Object Content -eq 'Logs').Count -eq 1) 'Panel must expose diagnostic logs without requiring a provider request'
-    foreach ($button in $buttons) { Check (![string]::IsNullOrWhiteSpace([Windows.Automation.AutomationProperties]::GetName($button))) 'All panel buttons need accessible names' }
+    Check ((Named $buttons 'Logs').Count -eq 1) 'Panel must expose diagnostic logs without requiring a provider request'
     $boxes = @($nodes | Where-Object { $_ -is [Windows.Controls.RichTextBox] })
+    Check (@($boxes | Where-Object { @($_.Document.Blocks | Where-Object { $_ -is [Windows.Documents.Table] }).Count -eq 1 }).Count -eq 1) 'Markdown tables must render as document tables'
+    foreach ($button in $buttons) { Check (![string]::IsNullOrWhiteSpace([Windows.Automation.AutomationProperties]::GetName($button))) 'All panel buttons need accessible names' }
     Check ($boxes.Count -eq 4 -and @($boxes | Where-Object { !$_.IsReadOnly -or !$_.IsDocumentEnabled }).Count -eq 0) 'Output must be selectable, read-only and allow embedded SQL actions'
     $model = $type.GetField('model', $flags).GetValue($panel)
     $model.ItemsSource = @('fixture-model'); $model.Text = 'fixture-model'
@@ -110,9 +134,9 @@ This block is explanatory text, not executable SQL.
         [IO.File]::Delete($temporaryFile); [IO.File]::Delete($temporaryFile + '.tmp')
     }
     $prompt = $type.GetField('prompt', $flags).GetValue($panel)
-    $type.GetField('context', $flags).GetValue($panel).Text = 'DEV-SQL · Sales | Schema: 2 tables (fixture)'
+    $type.GetField('context', $flags).GetValue($panel).Text = 'Sales on DEV-SQL, 2 tables'
     Check ($prompt.MinLines -eq 2 -and $prompt.MaxLines -eq 6 -and $prompt.AcceptsReturn) 'Composer must grow to six lines'
-    Check (@($nodes | Where-Object { $_.GetType().FullName -eq 'System.Windows.Controls.Primitives.ToggleButton' }).Count -eq 5) 'Five quick-action chips required'
+    Check (@($nodes | Where-Object { $_.GetType().FullName -eq 'System.Windows.Controls.Primitives.ToggleButton' }).Count -eq 8) 'Eight task chips required'
     $colors = [Microsoft.VisualStudio.PlatformUI.EnvironmentColors]
     foreach ($theme in 'light', 'dark') {
         $background = $(if ($theme -eq 'dark') { '#1E1E1E' } else { '#FFFFFF' })
@@ -137,21 +161,36 @@ This block is explanatory text, not executable SQL.
             Check ($boxes[0].Foreground -eq $panel.Resources[$colors::ToolWindowTextBrushKey]) 'Reply foreground must follow changed theme resources'
             Check ($thought.Foreground -eq $panel.Resources[$colors::ToolWindowTextBrushKey]) 'Reasoning heading must follow theme foreground'
             Check ($thought.Header.Foreground -eq $panel.Resources[$colors::ToolWindowTextBrushKey]) 'Reasoning header text must follow theme foreground'
-            foreach ($button in $buttons) { Check ($button.ActualWidth -gt 0 -and $button.ActualHeight -ge 30) 'Panel buttons must retain usable size' }
-            if ($Out) {
-                [void][IO.Directory]::CreateDirectory($Out)
-                $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new([int]$size.Width, [int]$size.Height, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
-                $bitmap.Render($panel)
-                $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
-                $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
-                $file = [IO.File]::Create((Join-Path $Out "ai-panel-$theme-$scale.png"))
-                try { $encoder.Save($file) } finally { $file.Dispose() }
-            }
+            foreach ($button in @($buttons | Where-Object { Shown $_ })) { Check ($button.ActualWidth -gt 0 -and $button.ActualHeight -ge 30) "Panel button '$([Windows.Automation.AutomationProperties]::GetName($button))' must retain usable size" }
+            Snap $panel $size "ai-panel-$theme-$scale"
         }
     }
-    $fresh = $buttons | Where-Object Content -eq 'New conversation'
-    $fresh.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    $layout = {
+        $panel.LayoutTransform = $null
+        $size = [Windows.Size]::new(440, 820)
+        $panel.Measure($size); $panel.Arrange([Windows.Rect]::new($size)); $panel.UpdateLayout()
+        $panel.Dispatcher.Invoke([Action]{}, [Windows.Threading.DispatcherPriority]::ApplicationIdle)
+        $size
+    }
+    $drawer = $type.GetField('drawer', $flags).GetValue($panel)
+    $type.GetMethod('ToggleDrawer', $flags).Invoke($panel, @())
+    Check ($drawer.Visibility -eq [Windows.Visibility]::Visible) 'Model button must open the model drawer'
+    $surfaces = { param($node) if ($node -is [Windows.Controls.Border]) { $node }; for ($i = 0; $i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($node); $i++) { & $surfaces ([Windows.Media.VisualTreeHelper]::GetChild($node, $i)) } }
+    $pickerBorders = @(& $surfaces $reasoning)
+    Check ($pickerBorders.Count -gt 0 -and @($pickerBorders | Where-Object { $_.Background -ne $panel.Resources[$colors::ComboBoxBackgroundBrushKey] }).Count -eq 0) 'Reasoning picker must be themed after the drawer opens'
+    Snap $panel (& $layout) 'ai-panel-dark-drawer'
+    $type.GetMethod('ToggleDrawer', $flags).Invoke($panel, @())
+    Check ($drawer.Visibility -eq [Windows.Visibility]::Collapsed) 'Model button must close the model drawer'
+    $fresh = Named $buttons 'New conversation'
+    Check ($fresh.Count -eq 1) 'Panel needs one New conversation button'
+    $fresh[0].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
     $transcript = $type.GetField('transcript', $flags).GetValue($panel)
     Check ($transcript.Children.Count -eq 1 -and $transcript.Children[0].Tag -eq 'welcome') 'New conversation must restore welcome state'
+    $welcomeButtons = @(Nodes $transcript | Where-Object { $_ -is [Windows.Controls.Button] })
+    Check ($welcomeButtons.Count -eq 5 -and @($welcomeButtons | Where-Object { [string]::IsNullOrWhiteSpace([Windows.Automation.AutomationProperties]::GetName($_)) }).Count -eq 0) 'Welcome state needs five named starters'
+    $welcomeButtons[0].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    Check ($prompt.Text -eq '/write ') 'Welcome starter must seed the prompt'
+    $prompt.Clear()
+    Snap $panel (& $layout) 'ai-panel-dark-welcome'
 } finally { [AppDomain]::CurrentDomain.remove_AssemblyResolve($resolver) }
 Write-Host 'PASS: AI transcript, per-block actions, separate reasoning, model persistence, accessibility, theme resource updates and 100/125/150/200% layouts. Offscreen fixtures; hands-on SSMS not tested.'

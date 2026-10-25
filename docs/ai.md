@@ -23,7 +23,11 @@ Tools > Options > Querywright > AI (also Querywright > AI options...).
 
 Only when you use an AI command: your prompt, the script (or selection) in the query window, and the definitions of
 the tables that the prompt or script mentions (names, columns, types, foreign keys) plus the names of other objects.
-Fix adds SQL Server's compile errors; Optimize adds the estimated plan XML. Table data is never sent by the panel.
+Fix adds SQL Server's compile errors; Optimize adds the estimated plan XML; Review adds Querywright's own analysis
+findings for the script. Each `@name` in the prompt adds that object's full script, the same text the MCP
+`list_*_details` tools return: columns and keys for a table, the module code for a view or procedure. Mentions are
+sent even with Schema switched off, so do not mention an object whose code you would not paste to the provider.
+Table data is never sent by the panel.
 Opening the model dropdown or clicking Refresh models sends a metadata-only GET with the stored key; no SQL,
 schema or prompt is sent. Opening the panel alone makes no provider request.
 
@@ -31,7 +35,7 @@ schema or prompt is sent. Opening the panel alone makes no provider request.
 
 | Command | What it does |
 | --- | --- |
-| AI assistant (Alt+Z) | Dockable chat transcript: write a query, change the selection, explain, fix, optimize, ask follow-ups. Up in an empty prompt recalls the last prompt. Recent prompts are kept in `%LocalAppData%\Querywright\ai-prompts.json`. |
+| AI assistant (Alt+Z) | Dockable chat transcript: write a query, change the selection, explain, fix, optimize, review, document, write tests, ask follow-ups. Up in an empty prompt recalls the last prompt. Recent prompts are kept in `%LocalAppData%\Querywright\ai-prompts.json`. |
 | AI: explain SQL | Explains the selection or script. |
 | AI: fix errors | Compiles each GO batch with `SET NOEXEC ON` (nothing runs) and asks for a corrected script. |
 | AI: optimize query | Reads the estimated plan with `SET SHOWPLAN_XML ON` (nothing runs) and asks for a faster rewrite. |
@@ -40,17 +44,48 @@ schema or prompt is sent. Opening the panel alone makes no provider request.
 
 ## Chat panel
 
-The panel uses a Codex-style layout: a scrolling transcript, user cards, spacious assistant replies and a rounded
-composer at the bottom. Colors follow the SSMS light, dark or blue theme. Prose uses the normal UI font; SQL uses
-Consolas with ScriptDom keyword, string and comment coloring. Markdown headings, lists, bold, italic, inline code,
-fenced code and simple tables are rendered as text only; HTML, links and images are never loaded or opened.
+The panel has three parts: a header, a scrolling transcript and a composer at the bottom. Colors follow the SSMS
+light, dark or blue theme. Prose uses the normal UI font; SQL uses Consolas with ScriptDom keyword, string and
+comment coloring and an accent rail down its left edge. Markdown headings, lists, bold, italic, inline code, fenced
+code and tables are rendered as text only (tables as real grids); HTML, links and images are never loaded or opened.
+
+The header shows the current model. Click it to open a drawer with the model picker, Refresh models, reasoning
+effort and Provider settings; click again to close it. The icons on the right start a new conversation, export the
+conversation as Markdown and open the diagnostic logs. An empty conversation shows starter prompts (write, explain,
+review, mention a table, list commands); they fill the composer and send nothing.
 
 Each SQL block has its own Copy, Insert, Replace, New window and Run actions. Earlier replies remain visible;
-scrolling up suspends automatic scrolling until you return to the bottom. Explain, Fix, Optimize, Change selection
-and Write query chips choose the next task. Without a chip, the first prompt writes a query and subsequent prompts
-follow up. A chip starts fresh model context while earlier messages remain visible. New conversation clears both.
-Enter or Ctrl+Enter sends; Shift+Enter inserts a newline. The prompt grows to six lines. Example prompts only fill
-the composer; they do not send anything.
+scrolling up suspends automatic scrolling until you return to the bottom. The chips under the prompt choose the next
+task: Write query, Change selection, Explain, Fix, Optimize, Review, Document and Tests. Without a chip, the first
+prompt writes a query and subsequent prompts follow up. A chip starts fresh model context while earlier messages
+remain visible. New conversation clears both. Enter or Ctrl+Enter sends; Shift+Enter inserts a newline. The prompt
+grows to six lines.
+
+| Task | What it asks for |
+| --- | --- |
+| Review | Findings grouped under correctness, performance, security and maintainability, each with its line and fix. Querywright's analysis findings are sent as hints. A corrected script follows only when a change is worth making. |
+| Document | The same script with a header comment (purpose, parameters, result, side effects) and comments on non-obvious steps. Code is not changed. |
+| Tests | A test script that arranges data in a transaction, asserts with `THROW` and rolls back, covering normal, edge and failure cases. |
+
+### Slash commands and mentions
+
+Type `/` at the start of the prompt for a command list; Up and Down choose, Tab or Enter inserts, Escape closes.
+`/help` or `/?` shows the list in the transcript without contacting the provider.
+
+| Command | Does |
+| --- | --- |
+| `/write`, `/edit`, `/explain`, `/fix`, `/optimize` | Same as the matching chip, for this message only |
+| `/review`, `/doc`, `/test` | Review, Document or Tests for this message |
+| `/ask` | Follow-up question in this conversation |
+| `/export` | Save the conversation as a Markdown file |
+| `/clear` | Start a new conversation |
+
+Type `@` to pick a table or view from the connected database; `@dbo.Orders` and `@[Sales].[usp_Recalc]` also work
+typed by hand. Up to eight mentioned objects per message are scripted and sent with it (see What is sent). A name
+the database does not know, such as a T-SQL `@variable`, is skipped.
+
+Export writes the visible conversation, prompts and answers in order, as Markdown (`.md`) or plain text, with the
+database and time at the top. Reasoning text, the `/help` card and a reply still streaming are not exported.
 
 Answers stream as text, refreshed at most about 20 times a second; completed and stopped replies receive Markdown
 formatting. Stop cancels the network request and leaves a clearly marked partial answer. A broken stream keeps its
@@ -58,9 +93,10 @@ partial text and reports failure. Explicit provider rejection of streaming retri
 that return ordinary JSON also work. Failed requests do not add a turn to model history. Stopped partial answers
 stay visible; they are not sent back as completed assistant turns.
 
-The context bar shows server/database, Selection (line count) or Whole script, and the number of schema definitions.
-Before Send, the count is a cached preview; while sending, it shows the actual count. Click scope to toggle editor
-selection versus whole script. Uncheck Include schema to omit new schema context for one message; it resets after
+The row above the prompt shows what the next message shares: a connection dot with Database on Server and the
+number of schema tables, a scope pill reading Selection (with its line count) or Whole script, and a Schema pill.
+Before Send, the count is a cached preview; while sending, it shows the actual count. Click the scope pill to toggle
+editor selection versus whole script. Switch Schema off to omit new schema context for one message; it resets after
 the request. Previously sent schema remains in follow-up history: use New conversation to discard that history.
 Fix and Optimize additionally send compile errors or estimated plan XML. No query results are collected or sent.
 
@@ -70,11 +106,11 @@ files, removed when review ends. If the editor changes while the preview is open
 Run still goes through the existing confirmation option;
 its confirmation flags ScriptDom-detected data/schema writes, execution, SELECT INTO and unrecognized SQL.
 
-Regenerate retries the last request with its original SQL/schema context. Edit last prompt fills the composer;
+Regenerate retries the last request with its original SQL/schema context. Edit prompt fills the composer;
 Send replaces that prompt/reply using current editor context. Copy answer copies the entire Markdown response.
-Transcripts remain in memory only; full conversation storage, slash templates, actual
-plans and Messages-pane capture are deferred. Inline ghost completion is outside this round; it needs editor
-adornments, cancellation and a separate acceptance/undo path. The existing completion command remains available.
+Transcripts stay in memory until you export them; automatic conversation storage, actual plans and Messages-pane
+capture are deferred. Inline ghost completion is outside this round; it needs editor adornments, cancellation and a
+separate acceptance/undo path. The existing completion command remains available.
 
 Limits: completion is a command, not grey text while you type; Fix sees compile
 errors only (a missing table or a runtime error is not found by `NOEXEC`).
@@ -128,8 +164,9 @@ at two million characters each. Provider destination/options are captured before
 Automated Core checks cover markdown, token coloring, SSE framing, schema counts and SQL warnings. Local HTTP
 fixtures cover both stream formats, fallback, errors, truncation and cancellation without contacting a provider.
 Provider checks cover model parsing, reasoning fields, separate reasoning deltas and usage. Panel fixtures verify
-typed model selection, ten-choice persistence and a collapsed reasoning area without SQL actions.
-Offscreen panel/dialog checks cover per-block actions, theme resource changes and 100/125/150/200% layout. Run:
+typed model selection, ten-choice persistence and a collapsed reasoning area without SQL actions. Core checks
+also cover slash commands, `@` mention parsing and Markdown export. Offscreen panel/dialog checks cover per-block
+actions, table grids, the model drawer, starter prompts, theme resource changes and 100/125/150/200% layout. Run:
 
 ```powershell
 dotnet run --project tests/Querywright.Checks
@@ -154,6 +191,10 @@ theme dictionaries, not a claim of hands-on host validation. Hands-on panel chec
 - Discover models, refresh, type an unlisted model, switch base URL, restart SSMS and check picker/options agree.
 - Off/Low/Med/High with your provider; explicit unsupported-field retry; token counts when reported; Stop during reasoning.
 - Expand reasoning containing SQL: no Insert/Replace/Run actions; next request must contain answer text only.
+- Review, Document and Tests on a stored procedure; `/help` and `/?` show the card without a provider request.
+- Type `@` against a live connection: suggestions list tables and views; a mentioned procedure's code reaches the request.
+- Export a conversation to `.md`, open it, and confirm prompts and answers appear in order without reasoning text.
+- Open and close the model drawer in each theme; both pickers must match the theme the first time the drawer opens.
 
 ## MCP server
 

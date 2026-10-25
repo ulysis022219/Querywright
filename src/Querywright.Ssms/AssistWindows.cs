@@ -15,9 +15,16 @@ namespace Querywright.Ssms
 {
     internal static class DialogParts
     {
+        /// <summary>Separator brush: the system border standalone, the host theme's border inside SSMS.</summary>
+        private static readonly object Line = new object();
+
+        /// <summary>"1 version", "3 versions": counts read as words, never "version(s)".</summary>
+        internal static string Count(int count, string noun) => count.ToString("N0", CultureInfo.CurrentCulture) + " " + noun + (count == 1 ? "" : "s");
+
         internal static void Style(Window window)
         {
             window.ShowInTaskbar = false;
+            window.Resources[Line] = SystemColors.ActiveBorderBrush;
             window.UseLayoutRounding = true;
             window.FontFamily = SystemFonts.MessageFontFamily;
             window.FontSize = Math.Max(13, SystemFonts.MessageFontSize);
@@ -59,6 +66,9 @@ namespace Querywright.Ssms
                 window.SetResourceReference(Control.BackgroundProperty, Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey);
             if (window.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey) is Brush)
                 window.SetResourceReference(Control.ForegroundProperty, Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey);
+            // Dialogs are modal, so the border brush read at open time stays current while they are up.
+            if (window.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBorderBrushKey) is Brush line)
+                window.Resources[Line] = line;
         }
 
         internal static void Style(System.Windows.Forms.Form form)
@@ -129,9 +139,20 @@ namespace Querywright.Ssms
             Paint(form);
         }
 
-        internal static System.Windows.Forms.Label FormHeader(string title, string description)
-            => new System.Windows.Forms.Label { Text = title + "\r\n" + description, Dock = System.Windows.Forms.DockStyle.Top,
-                AutoSize = true, Padding = new System.Windows.Forms.Padding(0, 0, 0, 16), UseMnemonic = false };
+        /// <summary>WinForms counterpart of <see cref="Header"/>: a semibold title over a wrapping description.</summary>
+        internal static System.Windows.Forms.Control FormHeader(string title, string description)
+        {
+            var header = new System.Windows.Forms.TableLayoutPanel { Dock = System.Windows.Forms.DockStyle.Top, AutoSize = true, ColumnCount = 1,
+                Padding = new System.Windows.Forms.Padding(0, 0, 0, 12) };
+            header.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100));
+            // Left and right anchors make auto-size labels wrap to the column instead of running past the form edge.
+            var anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+            header.Controls.Add(new System.Windows.Forms.Label { Text = title, AutoSize = true, Anchor = anchor, UseMnemonic = false,
+                Font = new System.Drawing.Font("Segoe UI Semibold", 15f), Margin = new System.Windows.Forms.Padding(0, 0, 0, 4) });
+            header.Controls.Add(new System.Windows.Forms.Label { Text = description, AutoSize = true, Anchor = anchor, UseMnemonic = false,
+                Margin = new System.Windows.Forms.Padding(0) });
+            return header;
+        }
 
         internal static StackPanel Header(string title, string description)
         {
@@ -145,7 +166,7 @@ namespace Querywright.Ssms
         internal static Border Footer(UIElement buttons)
         {
             var footer = new Border { Child = buttons, BorderThickness = new Thickness(0, 1, 0, 0), Margin = new Thickness(0, 12, 0, 0) };
-            footer.SetResourceReference(Border.BorderBrushProperty, SystemColors.ActiveBorderBrushKey);
+            footer.SetResourceReference(Border.BorderBrushProperty, Line);
             DockPanel.SetDock(footer, Dock.Bottom);
             return footer;
         }
@@ -362,7 +383,7 @@ namespace Querywright.Ssms
                     return Name ?? (Caption.Length > 0 ? Caption : first.Substring(0, Math.Min(80, first.Length)));
                 }
             }
-            internal string Detail => Versions[0].Time.ToString("MMM d, h:mm tt", CultureInfo.InvariantCulture) + "  ·  " + Versions.Count + " version(s)" + (Connection.Length > 0 ? "\n" + Connection : "");
+            internal string Detail => Versions[0].Time.ToString("MMM d, h:mm tt", CultureInfo.InvariantCulture) + ", " + DialogParts.Count(Versions.Count, "version") +(Connection.Length > 0 ? "\n" + Connection : "");
             public override string ToString() => DisplayName + "\n" + Detail;
         }
 
@@ -539,7 +560,7 @@ namespace Querywright.Ssms
                 ("_Delete tab", false, false, () =>
                 {
                     if (!(Selected() is Tab tab)) return;
-                    if (MessageBox.Show(this, "Delete \"" + tab.DisplayName + "\" and all " + tab.Versions.Count + " saved version(s)? This cannot be undone.",
+                    if (MessageBox.Show(this, "Delete \"" + tab.DisplayName + "\" and " + (tab.Versions.Count == 1 ? "its saved version" : "all " + DialogParts.Count(tab.Versions.Count, "saved version")) + "? This cannot be undone.",
                         "Delete saved tab", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
                     try
                     {

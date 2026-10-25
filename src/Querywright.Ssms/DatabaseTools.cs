@@ -121,7 +121,7 @@ ELSE
         /// <summary>Read-only result grid. With <paramref name="open"/>, double-click or Enter on a row closes the dialog and hands it the row.</summary>
         internal static void Show(string title, DataTable table, List<string> errors, Action<DataRow> open = null)
         {
-            string status = table.Rows.Count + " row(s)" + (errors.Count == 0 ? "" : open != null ? "; " + string.Join(" ", errors) : "; " + errors.Count + " database(s) failed: " + string.Join(" | ", errors));
+            string status = DialogParts.Count(table.Rows.Count, "row") + (errors.Count == 0 ? "" : open != null ? "; " + string.Join(" ", errors) : "; " + DialogParts.Count(errors.Count, "database") + " failed: " + string.Join(" | ", errors));
             DataRow chosen = null;
             using (var form = new Form { Text = title, Width = 1000, Height = 600, MinimumSize = new System.Drawing.Size(640, 400), Font = System.Drawing.SystemFonts.MessageBoxFont, AutoScaleMode = AutoScaleMode.Dpi, Padding = new Padding(12), StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false })
             {
@@ -132,7 +132,7 @@ ELSE
                     AllowUserToDeleteRows = false, AllowUserToOrderColumns = true, RowHeadersVisible = false, BackgroundColor = System.Drawing.SystemColors.Window,
                     BorderStyle = BorderStyle.FixedSingle, AccessibleName = "Database query results",
                 };
-                var label = new TextBox { Dock = DockStyle.Bottom, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Height = errors.Count == 0 ? 48 : 96, Text = status + ". Select cells and press Ctrl+C to copy.", AccessibleName = "Result status and database errors" };
+                var label = new TextBox { Dock = DockStyle.Bottom, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Height = errors.Count == 0 ? 48 : 96, Text = status + ".",AccessibleName = "Result status and database errors" };
                 var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 8, 0, 0) };
                 var close = new Button { Text = "&Close", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new System.Drawing.Size(90, 32) };
                 buttons.Controls.Add(close); form.CancelButton = close;

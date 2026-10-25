@@ -8,7 +8,7 @@ using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 namespace Querywright.Core
 {
-    public enum AiTask { Generate, Edit, Explain, Fix, Optimize, Complete, Chat }
+    public enum AiTask { Generate, Edit, Explain, Fix, Optimize, Complete, Chat, Review, Document, Test }
 
     public sealed class AiMessage
     {
@@ -31,12 +31,14 @@ namespace Querywright.Core
 
         private const string SqlOnly = " Reply with one ```sql code block holding the complete result, then at most two short sentences about what changed or what to check.";
 
-        /// <summary>System and user messages for one task. <paramref name="extra"/> is the server's error list (Fix) or the execution plan (Optimize).</summary>
-        public static IReadOnlyList<AiMessage> Messages(AiTask task, string? instruction, string? sql, string? schema, string? extra = null)
+        /// <summary>System and user messages for one task. <paramref name="extra"/> is the server's error list (Fix), the execution plan (Optimize)
+        /// or the Querywright analysis findings (Review). <paramref name="objects"/> holds definitions of objects the prompt mentions with @name.</summary>
+        public static IReadOnlyList<AiMessage> Messages(AiTask task, string? instruction, string? sql, string? schema, string? extra = null, string? objects = null)
         {
             instruction = (instruction ?? "").Trim();
             sql = Clip(sql ?? "", MaxSql);
             extra = Clip(extra ?? "", MaxExtra);
+            objects = Clip(objects ?? "", MaxExtra);
             string system = Rules, ask;
             switch (task)
             {
@@ -68,6 +70,24 @@ namespace Querywright.Core
                     ask = "Make this T-SQL faster." + (instruction.Length > 0 ? "\nNote: " + instruction : "")
                         + Block("Estimated execution plan (XML, may be cut short)", extra) + Block("T-SQL", sql);
                     break;
+                case AiTask.Review:
+                    RequireSql(sql);
+                    system += " Review the script as a senior SQL Server developer. Group findings under Correctness, Performance, Security and Maintainability, most serious first;"
+                        + " cite the line or statement for each and say how to fix it. Skip empty groups. End with one ```sql code block holding the corrected script only when a change is worth making.";
+                    ask = "Review this T-SQL." + (instruction.Length > 0 ? "\nFocus: " + instruction : "")
+                        + Block("Static analysis findings from Querywright (may include false positives)", extra) + Block("T-SQL", sql);
+                    break;
+                case AiTask.Document:
+                    RequireSql(sql);
+                    system += SqlOnly + " Add a header comment block (purpose, parameters, result, side effects) and brief comments on non-obvious steps. Do not change any code, only add comments.";
+                    ask = "Document this T-SQL." + (instruction.Length > 0 ? "\nNote: " + instruction : "") + Block("T-SQL", sql);
+                    break;
+                case AiTask.Test:
+                    RequireSql(sql);
+                    system += " Write a T-SQL test script for the given code: arrange data inside a transaction, act, assert with THROW on unexpected results, and ROLLBACK at the end so nothing persists."
+                        + " Cover the normal case, edge cases (NULLs, empty sets, boundaries) and failure paths. Put the script in one ```sql code block, then list what each test checks.";
+                    ask = "Write tests for this T-SQL." + (instruction.Length > 0 ? "\nNote: " + instruction : "") + Block("T-SQL", sql);
+                    break;
                 case AiTask.Complete:
                     system += " Continue the script at the marker <CURSOR>. Reply with only the text to insert there: no code fence, no explanation, no repetition of text that is already present.";
                     ask = "Complete at <CURSOR>:\n" + sql;
@@ -78,8 +98,83 @@ namespace Querywright.Core
                     ask = instruction + Block("Script in the editor", sql);
                     break;
             }
+            if (objects.Length > 0) ask += Block("Definitions of objects the user mentioned", objects);
             if (!string.IsNullOrWhiteSpace(schema)) ask += Block("Database schema (table(column type, ...); -> marks a foreign key)", schema!);
             return new[] { new AiMessage("system", system), new AiMessage("user", ask) };
+        }
+
+        private static readonly Regex Mention = new Regex(@"(?<![\w@])@((?:\[[^\]\r\n]+\]|[A-Za-z_#][\w#$]*)(?:\.(?:\[[^\]\r\n]+\]|[A-Za-z_#][\w#$]*))?)", RegexOptions.Compiled);
+
+        /// <summary>Objects named with @name, @schema.name or @[schema].[name] in a prompt, without brackets and without duplicates.
+        /// A bare @variable-style word is still returned; the caller drops names the database does not know.</summary>
+        public static IReadOnlyList<(string? Schema, string Name)> Mentions(string? text, int max = 8)
+        {
+            var found = new List<(string?, string)>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match match in Mention.Matches(text ?? ""))
+            {
+                var parts = Regex.Matches(match.Groups[1].Value, @"\[([^\]]+)\]|([^.\[\]]+)").Cast<Match>().Select(p => p.Groups[1].Success ? p.Groups[1].Value : p.Groups[2].Value).ToList();
+                (string? Schema, string Name) name = parts.Count == 2 ? (parts[0], parts[1]) : ((string?)null, parts[0]);
+                if (seen.Add((name.Schema ?? "") + "." + name.Name)) found.Add(name);
+                if (found.Count == max) break;
+            }
+            return found;
+        }
+
+        /// <summary>The @mention being typed just before <paramref name="caret"/>: where it starts (the @) and the text typed after it; null when the caret is not in one.</summary>
+        public static (int Start, string Typed)? MentionAt(string? text, int caret)
+        {
+            text ??= "";
+            caret = Math.Max(0, Math.Min(caret, text.Length));
+            int at = caret;
+            while (at > 0 && (char.IsLetterOrDigit(text[at - 1]) || text[at - 1] == '_' || text[at - 1] == '.' || text[at - 1] == '#' || text[at - 1] == '$')) at--;
+            if (at == 0 || text[at - 1] != '@' || (at > 1 && (char.IsLetterOrDigit(text[at - 2]) || text[at - 2] == '@' || text[at - 2] == '_'))) return null;
+            return (at - 1, text.Substring(at, caret - at));
+        }
+
+        /// <summary>Slash command at the start of a prompt: the task it picks (null for none), the remaining prompt, and panel actions.</summary>
+        public static (AiTask? Task, string Prompt, string? Action) SlashCommand(string? prompt)
+        {
+            string text = (prompt ?? "").TrimStart();
+            var match = Regex.Match(text, @"^/([A-Za-z-]+|\?)(?:\s+|$)");
+            if (!match.Success) return (null, prompt ?? "", null);
+            string rest = text.Substring(match.Length);
+            switch (match.Groups[1].Value.ToLowerInvariant())
+            {
+                case "write": case "generate": case "new": return (AiTask.Generate, rest, null);
+                case "edit": case "change": return (AiTask.Edit, rest, null);
+                case "explain": return (AiTask.Explain, rest, null);
+                case "fix": return (AiTask.Fix, rest, null);
+                case "optimize": case "optimise": case "perf": return (AiTask.Optimize, rest, null);
+                case "review": return (AiTask.Review, rest, null);
+                case "doc": case "document": case "comment": return (AiTask.Document, rest, null);
+                case "test": case "tests": return (AiTask.Test, rest, null);
+                case "ask": case "chat": return (AiTask.Chat, rest, null);
+                case "clear": case "reset": return (null, rest, "clear");
+                case "export": case "save": return (null, rest, "export");
+                case "help": case "?": return (null, rest, "help");
+                default: return (null, prompt ?? "", null);
+            }
+        }
+
+        public const string SlashHelp =
+            "| Command | Does |\n| --- | --- |\n" +
+            "| `/write` | Write a new query from a description |\n| `/edit` | Change the selection as described |\n" +
+            "| `/explain` | Explain the selection or script |\n| `/fix` | Fix compile errors SQL Server reports |\n" +
+            "| `/optimize` | Rewrite for speed using the estimated plan |\n| `/review` | Code review with analysis findings |\n" +
+            "| `/doc` | Add header and step comments |\n| `/test` | Write a rollback-only test script |\n" +
+            "| `/ask` | Follow-up question in this conversation |\n| `/export` | Save this conversation as Markdown |\n| `/clear` | Start a new conversation |\n\n" +
+            "Mention objects with `@schema.name` to send their full definitions, for example `@dbo.Orders` or `@[Sales].[usp_Recalc]`.";
+
+        /// <summary>Markdown for a saved conversation: a title, then each turn under its speaker.</summary>
+        public static string Transcript(IEnumerable<(string Role, string Text)> turns, string? where = null, DateTime? when = null)
+        {
+            var text = new StringBuilder("# Querywright AI conversation\n\n");
+            if (!string.IsNullOrWhiteSpace(where) || when.HasValue)
+                text.Append(string.Join(", ", new[] { where, when?.ToString("yyyy-MM-dd HH:mm") }.Where(s => !string.IsNullOrWhiteSpace(s)))).Append("\n\n");
+            foreach (var (role, body) in turns)
+                text.Append("## ").Append(role).Append("\n\n").Append((body ?? "").Trim()).Append("\n\n");
+            return text.ToString().TrimEnd('\n') + "\n";
         }
 
         private static void RequireSql(string sql)

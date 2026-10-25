@@ -254,20 +254,20 @@ namespace Querywright.Ssms
         }
 
         /// <summary>Rounded button with an optional leading <see cref="IconProperty"/>; default and primary buttons fill with the accent.</summary>
-        internal static Style ButtonStyle(Type type, ThemeKeys keys, Style basedOn)
+        internal static Style ButtonStyle(Type type, ThemeKeys keys, Style basedOn, double radius = 6)
         {
             var style = new Style(type, basedOn);
             // High contrast keeps the native templates and system colors.
             if (SystemParameters.HighContrast) return style;
             var chrome = new FrameworkElementFactory(typeof(Border), "chrome");
-            chrome.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            chrome.SetValue(Border.CornerRadiusProperty, new CornerRadius(radius));
             chrome.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
             chrome.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
             chrome.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
             chrome.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
             var grid = new FrameworkElementFactory(typeof(Grid));
             var hover = new FrameworkElementFactory(typeof(Border), "hover");
-            hover.SetValue(Border.CornerRadiusProperty, new CornerRadius(5));
+            hover.SetValue(Border.CornerRadiusProperty, new CornerRadius(Math.Max(0, radius - 1)));
             hover.SetResourceReference(Border.BackgroundProperty, AccentSoftKey);
             hover.SetValue(UIElement.OpacityProperty, 0.0);
             grid.AppendChild(hover);
@@ -293,7 +293,7 @@ namespace Querywright.Ssms
             content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
             row.AppendChild(content); grid.AppendChild(row);
             var ring = new FrameworkElementFactory(typeof(Border), "ring");
-            ring.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            ring.SetValue(Border.CornerRadiusProperty, new CornerRadius(radius));
             ring.SetValue(Border.BorderThicknessProperty, new Thickness(2));
             ring.SetValue(FrameworkElement.MarginProperty, new Thickness(-1));
             ring.SetResourceReference(Border.BorderBrushProperty, keys.Accent);
@@ -334,7 +334,7 @@ namespace Querywright.Ssms
                 new Setter(Control.BorderBrushProperty, new DynamicResourceExtension(keys.Accent)),
                 new Setter(Control.ForegroundProperty, new DynamicResourceExtension(OnAccentKey)),
                 new Setter(Control.FontWeightProperty, FontWeights.SemiBold)));
-            if (type == typeof(ToggleButton))
+            if (typeof(ToggleButton).IsAssignableFrom(type))
                 style.Triggers.Add(When(ToggleButton.IsCheckedProperty, true,
                     new Setter(Control.BackgroundProperty, new DynamicResourceExtension(AccentSoftKey)),
                     new Setter(Control.BorderBrushProperty, new DynamicResourceExtension(keys.Accent)),

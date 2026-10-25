@@ -128,6 +128,19 @@ namespace Querywright.Ssms
             return preview;
         }
 
+        /// <summary>Cached table and view names for @mention suggestions: prefix matches first, then names containing the typed text.</summary>
+        internal IReadOnlyList<(string Name, bool IsView)> AiMentionNames(string typed, int max = 12)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var tables = CurrentTables();
+            if (tables == null) return new (string, bool)[0];
+            typed = typed ?? "";
+            return tables.Select(t => (Name: t.Schema + "." + t.Name, Short: t.Name, t.IsView))
+                .Where(t => t.Name.IndexOf(typed, StringComparison.OrdinalIgnoreCase) >= 0)
+                .OrderBy(t => t.Short.StartsWith(typed, StringComparison.OrdinalIgnoreCase) || t.Name.StartsWith(typed, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Take(max).Select(t => (t.Name, t.IsView)).ToList();
+        }
+
         /// <summary>One AI request for the panel. A Chat task continues <paramref name="conversation"/> when it has one; any other
         /// task starts over from the query window. The reply is appended to the conversation and returned.</summary>
         internal async Task<AiReply> AiAskAsync(AiTask task, string instruction, List<AiMessage> conversation, Action<string> progress, CancellationToken cancellation,
@@ -160,6 +173,33 @@ namespace Querywright.Ssms
                 try { extra = await Task.Run(() => AiSql.Plan(connection, sql), cancellation); }
                 catch (System.Data.SqlClient.SqlException) { extra = null; }
             }
+            else if (task == AiTask.Review)
+            {
+                var settings = AiSettings();
+                extra = string.Join("\n", SqlAnalysis.Analyze(sql, cancellation, settings).Diagnostics.Take(80)
+                    .Select(d => "Line " + d.Line + ", column " + d.Column + ": [" + d.Rule + "] " + d.Message));
+            }
+            string objects = null; int objectCount = 0;
+            var mentions = AiAssist.Mentions(instruction);
+            if (mentions.Count > 0 && connection != null)
+            {
+                progress("Reading definitions of mentioned objects...");
+                var known = CurrentTables() ?? new SchemaTable[0];
+                objects = await Task.Run(() =>
+                {
+                    var scripts = new List<string>();
+                    foreach (var (schemaName, name) in mentions)
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        string owner = schemaName ?? known.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))?.Schema;
+                        // An unknown name (often a T-SQL @variable) or an unreadable object only costs its definition.
+                        try { var details = LiveMetadata.Details(connection, owner, name); if (details != null) scripts.Add(AiScript(details, owner, name)); }
+                        catch (System.Data.SqlClient.SqlException) { }
+                    }
+                    objectCount = scripts.Count;
+                    return string.Join("\n\nGO\n\n", scripts);
+                }, cancellation);
+            }
             string schema = null; int tableCount = 0;
             if (includeSchema && maxSchemaTables > 0)
             {
@@ -167,9 +207,15 @@ namespace Querywright.Ssms
                 schema = AiAssist.SchemaContext(await AiTablesAsync(connection), instruction + "\n" + sql, out tableCount, maxSchemaTables);
             }
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellation);
-            var request = AiAssist.Messages(task, instruction, sql, schema, extra);
+            var request = AiAssist.Messages(task, instruction, sql, schema, extra, objects);
             if (followUp) messages.Add(request.Last()); else messages.AddRange(request);
-            prepared?.Invoke(messages, (names == null ? "No connection" : names.Value.Server + " · " + names.Value.Database) + " | " + scope + " | Schema: " + tableCount + " tables");
+            prepared?.Invoke(messages, string.Join(", ", new[]
+            {
+                names == null ? "No connection" : names.Value.Database + " on " + names.Value.Server,
+                scope.Substring(0, 1).ToLowerInvariant() + scope.Substring(1),
+                includeSchema ? tableCount + (tableCount == 1 ? " table" : " tables") : "no schema",
+                objectCount > 0 ? objectCount + " mentioned object" + (objectCount == 1 ? "" : "s") : null
+            }.Where(part => part != null)));
             progress("Waiting for " + provider.Model + "...");
             return await AiReplyAsync(messages, conversation, cancellation, deltas, thoughts, provider);
         }

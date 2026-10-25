@@ -16,6 +16,9 @@ namespace Querywright.Ssms
 {
     internal static class DialogParts
     {
+        /// <summary>"1 version", "3 versions": counts read as words, never "version(s)".</summary>
+        internal static string Count(int count, string noun) => count.ToString("N0", CultureInfo.CurrentCulture) + " " + noun + (count == 1 ? "" : "s");
+
         internal static void Style(Window window)
         {
             window.ShowInTaskbar = false;
@@ -440,7 +443,7 @@ namespace Querywright.Ssms
                     return Name ?? (Caption.Length > 0 ? Caption : first.Substring(0, Math.Min(80, first.Length)));
                 }
             }
-            internal string Detail => Versions[0].Time.ToString("MMM d, h:mm tt", CultureInfo.InvariantCulture) + "  ·  " + Versions.Count + " version(s)" + (Connection.Length > 0 ? "\n" + Connection : "");
+            internal string Detail => Versions[0].Time.ToString("MMM d, h:mm tt", CultureInfo.InvariantCulture) + "  ·  " + DialogParts.Count(Versions.Count, "version") + (Connection.Length > 0 ? "\n" + Connection : "");
             public override string ToString() => DisplayName + "\n" + Detail;
         }
 
@@ -617,7 +620,7 @@ namespace Querywright.Ssms
                 ("_Delete tab", false, false, () =>
                 {
                     if (!(Selected() is Tab tab)) return;
-                    if (MessageBox.Show(this, "Delete \"" + tab.DisplayName + "\" and all " + tab.Versions.Count + " saved version(s)? This cannot be undone.",
+                    if (MessageBox.Show(this, "Delete \"" + tab.DisplayName + "\" and " + (tab.Versions.Count == 1 ? "its saved version" : "all " + DialogParts.Count(tab.Versions.Count, "saved version")) + "? This cannot be undone.",
                         "Delete saved tab", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
                     try
                     {

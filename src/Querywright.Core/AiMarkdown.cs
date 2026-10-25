@@ -97,6 +97,23 @@ namespace Querywright.Core
 
         private static bool TableRule(string line) => line.Contains("|") && line.Contains("-") && line.Trim().All(c => c == '|' || c == '-' || c == ':' || char.IsWhiteSpace(c));
 
+        /// <summary>Cells of a Markdown table block, header row first, the alignment rule dropped; short rows padded to the widest.</summary>
+        public static IReadOnlyList<IReadOnlyList<string>> TableRows(string table)
+        {
+            var rows = new List<List<string>>();
+            foreach (string raw in (table ?? "").Replace("\r\n", "\n").Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || TableRule(line)) continue;
+                if (line.StartsWith("|")) line = line.Substring(1);
+                if (line.EndsWith("|") && !line.EndsWith("\\|")) line = line.Substring(0, line.Length - 1);
+                rows.Add(Regex.Split(line, @"(?<!\\)\|").Select(c => c.Trim().Replace("\\|", "|")).ToList());
+            }
+            int width = rows.Count == 0 ? 0 : rows.Max(r => r.Count);
+            foreach (var row in rows) while (row.Count < width) row.Add("");
+            return rows;
+        }
+
         public static IReadOnlyList<AiInline> Inlines(string text)
         {
             var runs = new List<AiInline>();

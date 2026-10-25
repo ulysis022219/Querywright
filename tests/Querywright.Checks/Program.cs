@@ -1508,6 +1508,20 @@ Check(AiStream.Rejected(400, "{\"error\":{\"message\":\"stream is not supported\
 Check(AiAssist.SqlChanges("SELECT 'DELETE DROP'; -- UPDATE\nSELECT [CREATE] FROM dbo.t;").Count == 0, "AI run warning ignores literals, comments and quoted identifiers");
 Check(AiAssist.SqlChanges("IF 1 = 1 DELETE FROM dbo.t; EXEC dbo.p; CREATE TABLE dbo.x (Id int);").SequenceEqual(new[] { "DELETE", "EXEC", "CREATE" }), "AI run warning includes nested writes, execution and DDL");
 Check(AiAssist.SqlChanges("SELECT Id INTO dbo.CopyOfT FROM dbo.t;").Contains("INTO") && AiAssist.SqlChanges("SELECT FROM;").Any(c => c.Contains("effects unknown")) && AiAssist.SqlChanges("SELEC 1;").Contains("EXEC"), "AI run warning flags SELECT INTO, implicit execution and unparsed SQL conservatively");
+var aiMentions = AiAssist.Mentions("Join @dbo.Orders to @[Sales].[Order Lines] and @Customers, again @DBO.orders; email@example.com is not one");
+Check(aiMentions.Count == 3 && aiMentions[0] == ("dbo", "Orders") && aiMentions[1] == ("Sales", "Order Lines") && aiMentions[2] == ((string?)null, "Customers"), "AI @mentions parse schema, brackets, duplicates and skip emails");
+Check(AiAssist.MentionAt("show @dbo.Cus", 13) == (5, "dbo.Cus") && AiAssist.MentionAt("@", 1) == (0, "") && AiAssist.MentionAt("a@b", 3) == null && AiAssist.MentionAt("plain", 5) == null, "AI @mention under caret");
+Check(AiAssist.SlashCommand("/review  focus on locking").Task == AiTask.Review && AiAssist.SlashCommand("/review  focus on locking").Prompt == "focus on locking"
+    && AiAssist.SlashCommand("/clear").Action == "clear" && AiAssist.SlashCommand("/nope x").Task == null && AiAssist.SlashCommand("/nope x").Prompt == "/nope x"
+    && AiAssist.SlashCommand("write /test later").Task == null && AiAssist.SlashCommand("/DOC").Task == AiTask.Document
+    && AiAssist.SlashCommand("/?").Action == "help" && AiAssist.SlashCommand("/help").Action == "help" && AiAssist.SlashCommand("/?x").Action == null, "AI slash commands");
+var aiReview = AiAssist.Messages(AiTask.Review, null, "SELECT * FROM dbo.t", null, "Line 1: [QW001] SELECT *", "CREATE TABLE dbo.t (Id int);");
+Check(aiReview[0].Content.Contains("Security") && aiReview[1].Content.Contains("[QW001]") && aiReview[1].Content.Contains("Definitions of objects the user mentioned"), "AI review sends analysis findings and mentioned definitions");
+Check(AiAssist.Messages(AiTask.Test, null, "SELECT 1", null)[0].Content.Contains("ROLLBACK") && AiAssist.Messages(AiTask.Document, null, "SELECT 1", null)[0].Content.Contains("only add comments"), "AI test and document prompts");
+Throws<InvalidOperationException>(() => AiAssist.Messages(AiTask.Review, null, " ", null), "review needs SQL");
+Check(AiAssist.Transcript(new[] { ("You", "hi"), ("Assistant", "```sql\nSELECT 1;\n```") }, "DEV / Sales").Contains("## You\n\nhi\n\n## Assistant\n\n```sql"), "AI transcript export");
+var aiTable = AiMarkdown.TableRows("| A | B \\| C |\n| --- | :---: |\n| 1 |\n| 2 | 3 |");
+Check(aiTable.Count == 3 && aiTable[0][1] == "B | C" && aiTable[1].Count == 2 && aiTable[1][1] == "" && aiTable[2][0] == "2", "AI markdown table cells");
 AiAssist.SchemaContext(aiCatalog, "invoices", out int schemaSent, 5);
 AiAssist.SchemaContext(aiCatalog, "invoices", out int cappedSchemaSent, 5, 1);
 Check(schemaSent == 1 && cappedSchemaSent == 0, "schema preview counts definitions actually sent, including character cap");

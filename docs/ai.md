@@ -41,7 +41,8 @@ schema or prompt is sent. Opening the panel alone makes no provider request.
 ## Chat panel
 
 The panel uses a Codex-style layout: a scrolling transcript, user cards, spacious assistant replies and a rounded
-composer at the bottom. Colors follow the SSMS light, dark or blue theme. Prose uses the normal UI font; SQL uses
+composer at the bottom. Colors follow the SSMS light, dark or blue theme, or the theme and accent chosen under
+Tools > Options > UlysiSQL > General > Appearance. Prose uses the normal UI font; SQL uses
 Consolas with ScriptDom keyword, string and comment coloring. Markdown headings, lists, bold, italic, inline code,
 fenced code and simple tables are rendered as text only; HTML, links and images are never loaded or opened.
 

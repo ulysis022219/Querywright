@@ -14,12 +14,12 @@ namespace Querywright.Ssms
         /// <summary>Preview-then-apply rename; <paramref name="rename"/> runs off the UI thread with the requested name.</summary>
         internal RenameVariableDialog(string sql, string what, string initialName, Func<string, RenameResult> rename)
         {
-            Title = "Querywright: rename " + what;
+            Title = "UlysiSQL: rename " + what;
             DialogParts.Style(this);
             Width = 1000; Height = 700; MinWidth = 640; MinHeight = 500;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
-            root.Children.Add(DialogParts.Header("Rename " + what, "Compare changes before applying them. SQL will not be executed."));
+            root.Children.Add(DialogParts.Header("Rename " + what, "Compare changes before applying them. SQL will not be executed.", Icons.Rename));
             var controls = new StackPanel();
             var name = new TextBox { Text = initialName, Margin = new Thickness(0, 4, 0, 8) };
             controls.Children.Add(new Label { Content = "_New " + what + " name:", Target = name });
@@ -32,8 +32,8 @@ namespace Querywright.Ssms
             controls.Children.Add(progress);
             DockPanel.SetDock(controls, Dock.Top); root.Children.Add(controls);
             var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
-            var preview = new Button { Content = "_Preview", MinWidth = 90, Margin = new Thickness(4), IsDefault = true };
-            var apply = new Button { Content = "_Apply", MinWidth = 90, Margin = new Thickness(4), IsEnabled = false };
+            var preview = DialogParts.Iconize(new Button { Content = "_Preview", MinWidth = 90, Margin = new Thickness(4), IsDefault = true });
+            var apply = DialogParts.Iconize(new Button { Content = "_Apply", MinWidth = 90, Margin = new Thickness(4), IsEnabled = false });
             apply.ToolTip = "Apply only the changes shown in Proposed SQL.";
             preview.ToolTip = "Check the new name and generate a preview (Enter).";
             var cancel = new Button { Content = "_Cancel", MinWidth = 90, Margin = new Thickness(4), IsCancel = true };

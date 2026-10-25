@@ -62,10 +62,19 @@ namespace Querywright.Core
         internal string? NoteOf(string column) => Of(ColumnNotes, column);
         private string? Of(IReadOnlyList<string?>? values, string column)
         {
-            if (values == null) return null;
-            for (int i = 0; i < Columns.Count; i++) if (string.Equals(Columns[i], column, StringComparison.OrdinalIgnoreCase)) return values[i];
-            return null;
+            if (values == null || column == null) return null;
+            // Hover, INSERT fill and the AI schema look up every column, which a scan makes quadratic on wide tables.
+            var index = columnIndex;
+            if (index == null)
+            {
+                index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                for (int i = Columns.Count - 1; i >= 0; i--) index[Columns[i]] = i; // from the back, so a duplicate name finds its first column
+                columnIndex = index;
+            }
+            return index.TryGetValue(column, out int at) && at < values.Count ? values[at] : null;
         }
+        // Built on first lookup; Columns never changes. A race only builds the same index twice.
+        private Dictionary<string, int>? columnIndex;
     }
 
     public sealed class CompletionItem

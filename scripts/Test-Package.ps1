@@ -24,7 +24,7 @@ try {
         if ($expandedSize -gt 500MB) { throw 'Package expanded size exceeds the limit.' }
     }
     foreach ($required in @('extension.vsixmanifest', 'Querywright.Ssms.dll', 'Querywright.Ssms.pkgdef',
-        'Querywright.Core.dll', 'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt',
+        'Querywright.Core.dll', 'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt', 'THIRD-PARTY-LICENSES/FluentUISystemIcons.txt',
         'Updater/Update-Querywright.ps1', 'Updater/Update-Release.ps1', 'Updater/Install-Development.ps1', 'Updater/Test-Package.ps1')) {
         if ($names -notcontains $required) { throw "Package missing $required" }
     }

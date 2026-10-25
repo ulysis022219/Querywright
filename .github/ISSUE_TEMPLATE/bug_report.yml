@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in Querywright failed or behaved wrongly.
+description: Something in UlysiSQL failed or behaved wrongly.
 labels: [bug]
 body:
   - type: markdown
@@ -10,8 +10,8 @@ body:
     id: error
     attributes:
       label: Error line
-      description: The "Querywright <version> · <command> · <error type>" line from the error box, if there was one.
-      placeholder: Querywright 0.3.0.42 · SplitTable · NullReferenceException
+      description: The "UlysiSQL <version> · <command> · <error type>" line from the error box, if there was one.
+      placeholder: UlysiSQL 0.3.0.42 · SplitTable · NullReferenceException
   - type: input
     id: ssms
     attributes:

@@ -47,7 +47,7 @@ context.Remove("SELECTEDTEXT");
 Reject("$SELECTEDTEXT$");
 Console.WriteLine($"PASS: {checks} snippet checks. SSMS integration not tested.");
 
-var folder = Path.Combine(Path.GetTempPath(), "Querywright-check-" + Guid.NewGuid().ToString("N"));
+var folder = Path.Combine(Path.GetTempPath(), "UlysiSQL-check-" + Guid.NewGuid().ToString("N"));
 try
 {
     SnippetFiles.Initialize(folder);
@@ -63,7 +63,7 @@ try
 finally { Directory.Delete(folder, true); }
 Console.WriteLine($"PASS: {checks} total checks including snippet files. SSMS integration not tested.");
 
-var library = Path.Combine(Path.GetTempPath(), "Querywright-library-" + Guid.NewGuid().ToString("N"));
+var library = Path.Combine(Path.GetTempPath(), "UlysiSQL-library-" + Guid.NewGuid().ToString("N"));
 try
 {
     SnippetFiles.Initialize(library);
@@ -116,7 +116,7 @@ try
 }
 finally { Directory.Delete(library, true); }
 
-var listFolder = Path.Combine(Path.GetTempPath(), "Querywright-list-" + Guid.NewGuid().ToString("N"));
+var listFolder = Path.Combine(Path.GetTempPath(), "UlysiSQL-list-" + Guid.NewGuid().ToString("N"));
 try
 {
     Check(SnippetFiles.List(listFolder).Count == 0, "list missing folder");
@@ -340,7 +340,7 @@ Console.WriteLine($"PASS: {checks} total checks including navigation. SSMS integ
 
 Check(SnippetFiles.ShortcutBefore("SELECT 1;\nssf", 13) == "ssf", "shortcut word");
 Check(SnippetFiles.ShortcutBefore("@ssf", 4) == null && SnippetFiles.ShortcutBefore("x.ssf", 5) == null && SnippetFiles.ShortcutBefore("ssf ", 4) == null, "shortcut boundaries");
-var shortcutFolder = Path.Combine(Path.GetTempPath(), "Querywright-shortcut-" + Guid.NewGuid().ToString("N"));
+var shortcutFolder = Path.Combine(Path.GetTempPath(), "UlysiSQL-shortcut-" + Guid.NewGuid().ToString("N"));
 try
 {
     Check(SnippetFiles.List("").Count == 0 && SnippetFiles.List(Path.Combine(shortcutFolder, "missing")).Count == 0, "empty or missing snippet folder lists nothing");
@@ -436,12 +436,15 @@ Check(Rules("SELECT TOP (100) PERCENT a FROM dbo.T ORDER BY a;").SequenceEqual(n
 Check(Rules("DECLARE @t sysname = N'x'; EXEC('SELECT 1 FROM ' + @t);").Contains("SW047") && !Rules("EXEC('SELECT 1');").Contains("SW047"), "concatenated EXEC");
 Check(SqlRefactoring.UnwrapDynamicSql(SqlRefactoring.WrapAsDynamicSql("SELECT 'a';")).Trim() == "SELECT 'a';" && SqlRefactoring.WrapAsDynamicSql("SELECT 'a';").Contains("N'SELECT ''a'';'"), "wrap and unwrap dynamic SQL");
 Check(new[] { "N'abc", "'", "EXEC('x" }.All(s => { try { SqlRefactoring.UnwrapDynamicSql(s); return false; } catch (InvalidOperationException) { return true; } }), "unwrap unterminated literal warns");
+Throws<InvalidOperationException>(() => SqlRefactoring.UnwrapDynamicSql("DECLARE @sql nvarchar(max) = N'SELECT ' + QUOTENAME(@c) + N' FROM t';"), "unwrap refuses concatenated dynamic SQL");
 Check(SqlAnalysis.DatabaseSwitchChanges("USE Other; DELETE FROM dbo.T WHERE Id = 1;").SequenceEqual(new[] { "USE Other" }) && SqlAnalysis.DatabaseSwitchChanges("USE Other; SELECT 1;").Count == 0 && SqlAnalysis.DatabaseSwitchChanges("DELETE FROM dbo.T WHERE Id = 1;").Count == 0, "USE with data changes");
 Check(Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T WHERE a = 1) SELECT 1;").SequenceEqual(new[] { "SW044" }) &&
     Rules("IF EXISTS (SELECT COUNT(*) FROM dbo.T GROUP BY a) SELECT 1; IF EXISTS (SELECT MAX(a) FROM dbo.T HAVING MAX(a) > 1) SELECT 1;").Length == 0, "EXISTS aggregate");
 Check(Rules("EXEC master.dbo.xp_cmdshell 'dir';").SequenceEqual(new[] { "SW046" }) && Rules("EXEC xp_cmdshell 'dir';").SequenceEqual(new[] { "SW017", "SW046" }) &&
     Rules("EXEC dbo.xp_other;").Length == 0, "xp_cmdshell");
 Check(Rules("-- querywright-disable SW029\nGOTO done; done: SELECT 1;").Length == 0, "new rule suppression");
+Check(Rules("-- ulysisql-disable SW029\nGOTO done; done: SELECT 1;").Length == 0 && Rules("/* ULYSISQL-disable-next-line */\nSELECT * FROM dbo.T;").Length == 0
+    && Rules("-- ulysisql-disabled\nSELECT * FROM dbo.T;").Length == 1, "suppression under the UlysiSQL name");
 Console.WriteLine($"PASS: {checks} total checks including analysis batch 4. SSMS integration not tested.");
 var styled = SqlFormatting.Format("select a, b from dbo.T t where a = 1 and b = 2 group by a, b order by a", new FormattingStyle
 { NewLineBeforeWhere = false, NewLineBeforeJoin = false, NewLineBeforeGrouping = false, MultilinePredicates = false, MultilineColumns = false, NewLineBeforeFrom = false, IncludeSemicolons = true });
@@ -772,7 +775,7 @@ Check(spaced is { Start: 16, Length: 2 } && spaced.Text.StartsWith(" @Name = "),
 Check(Fill("EXEC dbo.usp_Add\n|") == null, "no fill on the next line");
 var dated = SqlAssist.ProceduresFromScript("CREATE PROC dbo.p @At datetime, @Id uniqueidentifier, @Off datetimeoffset AS SELECT 1;");
 var execDates = SqlAssist.FillStatement("EXEC dbo.p", 10, null, dated, now: new DateTimeOffset(2026, 9, 29, 5, 10, 6, TimeSpan.FromHours(8)))?.Text ?? "";
-Check(execDates.Contains("@At = '2026-09-29 05:10:06',") && execDates.Contains("@Off = '2026-09-29 05:10:06 +08:00'") && !execDates.Contains("("),
+Check(execDates.Contains("@At = '2026-09-29T05:10:06',") && execDates.Contains("@Off = '2026-09-29 05:10:06 +08:00'") && !execDates.Contains("("),
     "EXEC fill uses the current time as literals");
 string[] ProcNames(string text) { int at = text.IndexOf('|'); return SqlCompletion.Complete(text.Remove(at, 1), at, null, procedures: procs).Items.Select(i => i.InsertText).ToArray(); }
 Check(ProcNames("EXEC usp|").SequenceEqual(new[] { "dbo.usp_Add" }) && ProcNames("EXEC @rc = N|").SequenceEqual(new[] { "dbo.NoArgs" }) &&
@@ -900,6 +903,8 @@ Check(!SqlAnalysis.Analyze("SELECT " + new string('(', 5000)).Parsed, "deep uncl
 Throws<FormatException>(() => SqlFormatting.Format("SELECT 1 WHERE " + string.Join(" AND ", Enumerable.Range(0, 5000).Select(i => "1 = " + i))), "long operator chain is a format error");
 Check(SqlFormatting.Format(string.Join(" UNION ALL ", Enumerable.Range(0, 1500).Select(i => "SELECT " + i))).Contains("SELECT 1499"), "1,500 UNION ALL branches still format");
 Check(SqlFormatting.Format("BEGIN TRAN; " + string.Concat(Enumerable.Repeat("SELECT 1; ", 300)) + "COMMIT").Contains("COMMIT"), "BEGIN TRAN does not count as nesting");
+Check(SqlAnalysis.Analyze(string.Concat(Enumerable.Repeat("IF @a = 1 PRINT 1 IF @b = 1 RAISERROR('x', 16, 1) WHILE @c = 1 BREAK ", 1000))).Parsed, "sequential IF and WHILE statements do not count as nesting");
+Check(SqlAnalysis.Analyze("SELECT - -1, ~1, 1 - -1 WHERE NOT 1 = 2").Parsed, "short prefix operator runs parse");
 Check(ResultGrid.FileName(null, fileTime) == "Results_20260929_140509", "result file name without query text");
 Check(ResultGrid.InClause(new[] { "3", "1", "3", null, "-2.5" }) == "(3, 1, -2.5)", "IN clause numbers, distinct, NULL dropped");
 Check(ResultGrid.InClause(new[] { "7", "007", "O'Brien" }) == "(N'7', N'007', N'O''Brien')", "IN clause mixed quotes all");
@@ -930,7 +935,7 @@ Check(json == "[\n  {\"Id\": 1, \"Name\": \"a\\\"b\\\\\\n\", \"Code\": \"007\"},
 Check(ResultGrid.Json(new[] { "a" }, null, new List<string?[]>(), "\n") == "[]\n", "json empty");
 var keyed = new List<string?[]> { new[] { "1", "Ann", "0x01" }, new[] { "2", "O'Neil", "0x02" } };
 string update = ResultGrid.UpdateScript(new[] { "Id", "Name", "Ver" }, new[] { "int", "nvarchar(50)", "timestamp" }, keyed, "[dbo].[People]", "\n");
-Check(update.EndsWith("UPDATE [dbo].[People] SET [Name] = N'Ann' WHERE [Id] = 1;\nUPDATE [dbo].[People] SET [Name] = N'O''Neil' WHERE [Id] = 2;\n") && update.StartsWith("-- Querywright"), "update script: " + update);
+Check(update.EndsWith("UPDATE [dbo].[People] SET [Name] = N'Ann' WHERE [Id] = 1;\nUPDATE [dbo].[People] SET [Name] = N'O''Neil' WHERE [Id] = 2;\n") && update.StartsWith("-- UlysiSQL"), "update script: " + update);
 try { ResultGrid.UpdateScript(new[] { "Id" }, null, keyed.Select(r => new[] { r[0] }).ToList(), "t"); Check(false, "update needs a column to set"); } catch (InvalidOperationException) { checks++; }
 string merge = ResultGrid.MergeScript(new[] { "Id", "Name", "Ver" }, new[] { "int", "nvarchar(50)", "rowversion" }, keyed, "[dbo].[People]", "\n");
 Check(merge.Contains("MERGE INTO [dbo].[People] AS target\nUSING (VALUES\n    (1, N'Ann'),\n    (2, N'O''Neil')\n) AS source ([Id], [Name])\nON target.[Id] = source.[Id]\nWHEN MATCHED THEN UPDATE SET target.[Name] = source.[Name]\nWHEN NOT MATCHED BY TARGET THEN INSERT ([Id], [Name]) VALUES (source.[Id], source.[Name]);\n") && !merge.Contains("DELETE"), "merge script: " + merge);
@@ -940,7 +945,7 @@ Check(ResultGrid.SourceTable("SELECT * FROM Sales.Orders o JOIN dbo.X x ON 1=1")
 Check(SqlAnalysis.UnfilteredChanges("TRUNCATE TABLE dbo.T; DROP TABLE dbo.A, #b; DELETE FROM dbo.T", unfiltered: false, dropTruncate: true).SequenceEqual(new[] { "TRUNCATE TABLE dbo.T", "DROP TABLE dbo.A" }), "drop/truncate warning targets");
 Check(SqlAnalysis.UnfilteredChanges("DROP TABLE #a; TRUNCATE TABLE #a; DELETE FROM #a; UPDATE ##g SET x = 1; ALTER TABLE #a ADD c int; DROP TABLE IF EXISTS #a;", true, true, true).Count == 0, "temp tables are not flagged");
 string multi = SqlRefactoring.ForDatabases("CREATE OR ALTER PROC dbo.p AS SELECT 1;\n", new[] { "Sales", "O'Brien]x" }, newline: "\n");
-Check(multi == "-- Querywright: script for 2 databases. Review, then execute. Nothing has been run.\n\nUSE [Sales];\nPRINT N'Sales';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n\nUSE [O'Brien]]x];\nPRINT N'O''Brien]x';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n", "script for databases: " + multi);
+Check(multi == "-- UlysiSQL: script for 2 databases. Review, then execute. Nothing has been run.\n\nUSE [Sales];\nPRINT N'Sales';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n\nUSE [O'Brien]]x];\nPRINT N'O''Brien]x';\nGO\nCREATE OR ALTER PROC dbo.p AS SELECT 1;\nGO\n", "script for databases: " + multi);
 string multiStop = SqlRefactoring.ForDatabases("SELECT 1\ngo", new[] { "A" }, stopOnError: true, printName: false, newline: "\n");
 Check(multiStop.Contains(":on error exit\n") && multiStop.EndsWith("USE [A];\nGO\nSELECT 1\ngo\n") && !multiStop.Contains("PRINT"), "script for databases: stop on error, trailing GO kept once: " + multiStop);
 try { SqlRefactoring.ForDatabases("SELECT 1", new string[0]); Check(false, "script for databases needs a database"); }
@@ -973,9 +978,9 @@ Check(!sheet.Contains("r=\"A3\"") && sheet.Contains(">Column6</t>"), "xlsx NULL 
 Check(Updates.IsNewer("v0.4.0", "0.3.0.57") && Updates.IsNewer("v0.3.1", "0.3.0") && Updates.IsNewer("V1.0", "0.9.9.9"), "newer release detected");
 Check(!Updates.IsNewer("v0.3.0", "0.3.0.57") && !Updates.IsNewer("v0.2.9", "0.3.0.1") && !Updates.IsNewer("dev-master", "0.3.0.1")
     && !Updates.IsNewer("v0.4.0", null) && !Updates.IsNewer(null, "0.3.0") && !Updates.IsNewer("v0.4.0-beta", "0.3.0"), "same, older or malformed versions ignored");
-Check(Updates.ErrorLine("0.3.0.42", "SplitTableAsync", typeof(FormatException)) == "Querywright 0.3.0.42 \u00B7 SplitTable \u00B7 FormatException"
-    && Updates.ErrorLine(null, "Format", typeof(IOException)) == "Querywright unknown \u00B7 Format \u00B7 IOException", "error report line");
-Check(Updates.IssueUrl("Querywright 0.3.0 \u00B7 Format \u00B7 IOException") == "https://github.com/ulysis022219/Querywright/issues/new?template=bug_report.yml&error=Querywright%200.3.0%20%C2%B7%20Format%20%C2%B7%20IOException", "issue link escapes the line");
+Check(Updates.ErrorLine("0.3.0.42", "SplitTableAsync", typeof(FormatException)) == "UlysiSQL 0.3.0.42 \u00B7 SplitTable \u00B7 FormatException"
+    && Updates.ErrorLine(null, "Format", typeof(IOException)) == "UlysiSQL unknown \u00B7 Format \u00B7 IOException", "error report line");
+Check(Updates.IssueUrl("UlysiSQL 0.3.0 \u00B7 Format \u00B7 IOException") == "https://github.com/ulysis022219/Querywright/issues/new?template=bug_report.yml&error=UlysiSQL%200.3.0%20%C2%B7%20Format%20%C2%B7%20IOException", "issue link escapes the line");
 var scriptColumns = new[]
 {
     new ScriptColumn("Id", "int", null, false) { Identity = "1, 1" },
@@ -1135,6 +1140,12 @@ Check(typeof(WorkbenchSettings).GetProperties().Where(p => p.PropertyType == typ
         n => "SELECT " + string.Join(" + ", Enumerable.Range(0, n)),
         n => string.Join(" UNION ALL ", Enumerable.Range(0, n).Select(i => "SELECT " + i)),
         n => "DELETE FROM Orders WHERE " + string.Join(" OR ", Enumerable.Range(0, n).Select(i => "OrderId = " + i)),
+        // Prefix operators and bare IF/WHILE bodies nest without parentheses or BEGIN.
+        n => "SELECT 1 WHERE " + string.Concat(Enumerable.Repeat("NOT ", n)) + "1 = 1",
+        n => "SELECT " + new string('~', n) + "1",
+        n => "SELECT " + string.Concat(Enumerable.Repeat("- ", n)) + "1",
+        n => string.Concat(Enumerable.Repeat("IF 1=1 ", n)) + "SELECT 1",
+        n => string.Concat(Enumerable.Repeat("WHILE 1=0 ", n)) + "SELECT 1",
     };
     Exception? failure = null;
     var thread = new System.Threading.Thread(() =>
@@ -1338,6 +1349,7 @@ bool Raises<T>(Action action) where T : Exception
     Check(SqlFormatting.Format("select 1\r\n-- querywright:format off\r\nselect   2 ,  3").EndsWith("-- querywright:format off\r\nselect   2 ,  3"), "format off without on runs to the end");
     Check(SqlFormatting.Format(regionFormatted) == regionFormatted, "format region is stable");
     Check(!SqlFormatting.Format("select 1\r\n-- querywright:format on\r\nselect   2 ,  3").Contains("select   2"), "format on alone changes nothing");
+    Check(SqlFormatting.Format("select 1\r\n-- ulysisql:format off\r\nselect   2 ,  3").EndsWith("-- ulysisql:format off\r\nselect   2 ,  3"), "format off under the UlysiSQL name");
 }
 CompletionResult Sug(string text, CompletionOptions? o = null)
 {
@@ -1419,6 +1431,8 @@ var jsonValue = MiniJson.Parse("{\"a\":[1,2.5,\"x\\n\\t\",true,null],\"b\":{\"c\
 Check(MiniJson.Text(MiniJson.Get(jsonValue, "b"), "c") == "d" && MiniJson.Get(jsonValue, "a") is List<object?> jsonList && jsonList.Count == 5 && (double)jsonList[1]! == 2.5 && (string)jsonList[2]! == "x\n\t", "json parse");
 Check(MiniJson.Write(MiniJson.Parse(MiniJson.Write(jsonValue))) == MiniJson.Write(jsonValue) && MiniJson.Write(new Dictionary<string, object?> { ["q"] = "a\"b\\c\n" }) == "{\"q\":\"a\\\"b\\\\c\\n\"}", "json round trip and escaping");
 Throws<FormatException>(() => MiniJson.Parse("{\"a\":"), "json syntax error");
+Check(MiniJson.Write(new Dictionary<string, object?> { ["g"] = Guid.Empty, ["d"] = DayOfWeek.Monday, ["n"] = 5m, ["f"] = float.NaN, ["s"] = new Dictionary<string, string> { ["k"] = "v" } })
+    == "{\"g\":\"00000000-0000-0000-0000-000000000000\",\"d\":\"Monday\",\"n\":5,\"f\":null,\"s\":{\"k\":\"v\"}}", "json quotes GUIDs and enums and writes other dictionaries as objects");
 Throws<InvalidOperationException>(() => AiAssist.Messages(AiTask.Generate, " ", "SELECT 1", null), "generate needs a prompt");
 Throws<InvalidOperationException>(() => AiAssist.Messages(AiTask.Explain, null, "  ", null), "explain needs SQL");
 var aiMessages = AiAssist.Messages(AiTask.Fix, null, "SELEC 1", "CREATE TABLE dbo.People (Id int)", "Line 1, Msg 102: Incorrect syntax");
@@ -1462,6 +1476,8 @@ Check(McpText(McpCall("refuse", "{}")) == "declined" && MiniJson.Get(McpCall("re
 Check((double)MiniJson.Get(MiniJson.Get(Mcp("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"nope\"}}"), "error"), "code")! == -32602
     && (double)MiniJson.Get(MiniJson.Get(Mcp("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"resources/list\"}"), "error"), "code")! == -32601
     && (double)MiniJson.Get(MiniJson.Get(Mcp("not json"), "error"), "code")! == -32700, "MCP protocol errors");
+Check(McpText(McpCall("echo", "{\"text\":\"hi\",\"times\":99999999999}")) == "got hi x1" && (double)MiniJson.Get(MiniJson.Get(Mcp("[]"), "error"), "code")! == -32600
+    && MiniJson.Text(MiniJson.Get(Mcp("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{}}"), "error"), "message") == "Missing tool name", "MCP out-of-range integers, empty batches and missing tool names");
 var aiMarkdown = AiMarkdown.Parse("# Answer\n\nUse **bold**, *italic* and `code`.\n\n- One\n2. Two\n\n```sql\nSELECT N'--not comment'; -- comment\n```\n```text\nplain\n```\n\n| A | B |\n| --- | :---: |\n| 1 | 2 |");
 Check(aiMarkdown.Count == 7 && aiMarkdown[0].Kind == AiBlockKind.Heading && aiMarkdown[0].Level == 1 && aiMarkdown[2].Prefix == "•" && aiMarkdown[3].Prefix == "2.", "aiMarkdown block types and list markers");
 Check(aiMarkdown[1].Inlines.Any(i => i.Bold && i.Text == "bold") && aiMarkdown[1].Inlines.Any(i => i.Italic && i.Text == "italic") && aiMarkdown[1].Inlines.Any(i => i.Code && i.Text == "code"), "aiMarkdown emphasis and inline code");
@@ -1497,6 +1513,9 @@ AiAssist.SchemaContext(aiCatalog, "invoices", out int cappedSchemaSent, 5, 1);
 Check(schemaSent == 1 && cappedSchemaSent == 0, "schema preview counts definitions actually sent, including character cap");
 var allAiWrites = AiAssist.SqlChanges("INSERT dbo.t (Id) VALUES (1); UPDATE dbo.t SET Id=2; DELETE FROM dbo.t; MERGE dbo.t AS t USING (SELECT 1 AS Id) AS s ON t.Id=s.Id WHEN MATCHED THEN UPDATE SET Id=s.Id; TRUNCATE TABLE dbo.t; DROP TABLE dbo.t; ALTER TABLE dbo.t ADD Value int; CREATE TABLE dbo.x (Id int); EXEC dbo.p;");
 Check(new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "DROP", "ALTER", "CREATE", "EXEC" }.All(allAiWrites.Contains), "AI run warning covers every requested write operation");
+var serverAiWrites = AiAssist.SqlChanges("BACKUP DATABASE d TO DISK = 'x'; RESTORE DATABASE d FROM DISK = 'x'; DBCC SHRINKDATABASE (d); KILL 53; RECONFIGURE; DISABLE TRIGGER trg ON dbo.t; SHUTDOWN;");
+Check(new[] { "BACKUP", "RESTORE", "DBCC", "KILL", "RECONFIGURE", "DISABLE TRIGGER", "SHUTDOWN" }.All(serverAiWrites.Contains), "AI run warning covers server and trigger operations");
+Check(AiAssist.SqlChanges("SELECT 1 WHERE " + string.Concat(Enumerable.Repeat("NOT ", 3000)) + "1 = 1; DELETE FROM dbo.t;").Contains("DELETE"), "AI run warning still scans SQL too deep to parse");
 Console.WriteLine($"PASS: {checks} total checks including AI markdown, streaming and SQL safety. SSMS integration not tested.");
 
 // Provider metadata and reasoning remain separate from answer text; fixtures use fictional model IDs.

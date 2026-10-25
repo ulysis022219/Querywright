@@ -8,7 +8,7 @@
     <Menus>
       <Menu guid="CommandsGuid" id="QuerywrightMenu" priority="0x0001" type="Menu">
         <Parent guid="guidSHLMainMenu" id="IDG_VS_MM_WINDOWHELP" />
-        <Strings><ButtonText>&amp;Querywright</ButtonText><CommandName>Querywright</CommandName></Strings>
+        <Strings><ButtonText>&amp;UlysiSQL</ButtonText><CommandName>Querywright</CommandName></Strings>
       </Menu>
       <Menu guid="CommandsGuid" id="ResultsMenu" priority="0x0100" type="Menu">
         <Parent guid="CommandsGuid" id="ResultsParentGroup" />
@@ -126,7 +126,7 @@
         <Parent guid="CommandsGuid" id="SuggestGroup" />
         <Icon guid="ImageCatalogGuid" id="History" />
         <CommandFlag>IconIsMoniker</CommandFlag>
-        <Strings><ButtonText>Tab History...</ButtonText><ToolTipText>Querywright: tab history (reopen closed queries)</ToolTipText></Strings>
+        <Strings><ButtonText>Tab History...</ButtonText><ToolTipText>UlysiSQL: tab history (reopen closed queries)</ToolTipText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="RenameObject" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="RefactorGroup" />
@@ -190,52 +190,52 @@
       </Button>
       <Button guid="CommandsGuid" id="CompareObject" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="EditorGroup" />
-        <Strings><ButtonText>Querywright: Compare Object With Database...</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Compare Object With Database...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsIn" priority="0x0010" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Copy As IN Clause</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Copy As IN Clause</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsInsert" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Script As INSERT</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Script As INSERT</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="OpenInExcel" priority="0x0030" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Open In Excel</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Open In Excel</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="SaveAsCsv" priority="0x0040" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Save As CSV...</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Save As CSV...</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsMarkdown" priority="0x0050" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Copy As Markdown Table</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Copy As Markdown Table</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="CopyAsJson" priority="0x0060" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Copy As JSON</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Copy As JSON</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsUpdate" priority="0x0070" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Script As UPDATE</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Script As UPDATE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsMerge" priority="0x0080" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Script As MERGE</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Script As MERGE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="ScriptAsCreateTable" priority="0x0090" type="Button">
         <Parent guid="CommandsGuid" id="GridGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
-        <Strings><ButtonText>Querywright: Script As CREATE TABLE</ButtonText></Strings>
+        <Strings><ButtonText>UlysiSQL: Script As CREATE TABLE</ButtonText></Strings>
       </Button>
       <Button guid="CommandsGuid" id="Options" priority="0x0020" type="Button">
         <Parent guid="CommandsGuid" id="SettingsGroup" />

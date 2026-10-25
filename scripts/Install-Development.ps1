@@ -24,7 +24,7 @@ if ($running) { throw 'Close SSMS 22 after saving your work before installation.
 # ponytail: the release zip ships no Test-Package.ps1 (VSIXInstaller verifies the package); the source tree and updater still run it.
 $check = Join-Path $PSScriptRoot 'Test-Package.ps1'
 if (-not $Uninstall -and (Test-Path -LiteralPath $check)) { & $check -Path $package }
-$log = Join-Path $env:TEMP 'Querywright-vsix-install.log'
+$log = Join-Path $env:TEMP 'UlysiSQL-vsix-install.log'
 $target = if ($Uninstall) { '/uninstall:SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450' } else { '"' + $package + '"' }
 $arguments = @('/quiet', ('/instanceIds:' + $instance[0].instanceId), ('/logFile:"' + $log + '"'), $target)
 $result = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait -WindowStyle Hidden
@@ -34,5 +34,5 @@ else { Write-Output 'Bootstrap installer did not create the requested log. Check
 # 1001: this exact version is already installed (installing a newer build upgrades in place).
 if ($result.ExitCode -eq 1001) { Write-Output 'This version is already installed; nothing to update.'; exit 0 }
 # 1002: nothing to uninstall (never installed, or already removed).
-if ($Uninstall -and $result.ExitCode -eq 1002) { Write-Output 'Querywright is not installed; nothing to remove.'; exit 0 }
+if ($Uninstall -and $result.ExitCode -eq 1002) { Write-Output 'UlysiSQL is not installed; nothing to remove.'; exit 0 }
 if ($result.ExitCode -ne 0) { throw "VSIX $(if ($Uninstall) { 'uninstall' } else { 'installation' }) failed with exit code $($result.ExitCode)." }

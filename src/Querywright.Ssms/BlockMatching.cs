@@ -14,16 +14,29 @@ using Querywright.Core;
 
 namespace Querywright.Ssms
 {
+    /// <summary>One background run: blocks and --region spans of one snapshot.</summary>
+    internal sealed class BlockResult
+    {
+        internal ITextSnapshot Snapshot { get; }
+        internal IReadOnlyList<SqlBlock> Blocks { get; }
+        internal IReadOnlyList<(int Start, int End, string Label)> Regions { get; }
+
+        internal BlockResult(ITextSnapshot snapshot, IReadOnlyList<SqlBlock> blocks, IReadOnlyList<(int, int, string)> regions)
+        {
+            Snapshot = snapshot; Blocks = blocks; Regions = regions;
+        }
+
+        internal void Deconstruct(out ITextSnapshot snapshot, out IReadOnlyList<SqlBlock> blocks) { snapshot = Snapshot; blocks = Blocks; }
+    }
+
     /// <summary>BEGIN/END pairs of a buffer, recomputed in the background after typing pauses.</summary>
     internal sealed class BlockCache
     {
         private readonly ITextBuffer buffer;
         private CancellationTokenSource pending;
-        private (ITextSnapshot Snapshot, IReadOnlyList<SqlBlock> Blocks)? latest;
+        // One reference, written once per run: the UI thread never sees one run's snapshot with another's offsets.
+        private volatile BlockResult latest;
         internal event Action<ITextSnapshot> Updated;
-        /// <summary>--region spans of the Latest snapshot.</summary>
-        internal IReadOnlyList<(int Start, int End, string Label)> Regions => regions;
-        private volatile IReadOnlyList<(int Start, int End, string Label)> regions = Array.Empty<(int, int, string)>();
 
         private BlockCache(ITextBuffer buffer)
         {
@@ -50,8 +63,7 @@ namespace Querywright.Ssms
                     catch (Exception error) when (!(error is OutOfMemoryException)) { found = Array.Empty<(int, int, string)>(); }
                     // A newer edit's run supersedes this one; publishing now could overwrite its result with an older snapshot's.
                     if (cancellation.IsCancellationRequested) return;
-                    regions = found;
-                    latest = (snapshot, blocks);
+                    latest = new BlockResult(snapshot, blocks, found);
                     Updated?.Invoke(snapshot);
                 }
                 catch (OperationCanceledException) { }
@@ -65,7 +77,7 @@ namespace Querywright.Ssms
         }
 
         /// <summary>Latest background result, possibly for an older snapshot.</summary>
-        internal (ITextSnapshot Snapshot, IReadOnlyList<SqlBlock> Blocks)? Latest => latest;
+        internal BlockResult Latest => latest;
 
         /// <summary>Blocks for exactly this snapshot; computes now when the background result is stale (explicit commands only).</summary>
         internal IReadOnlyList<SqlBlock> Current(ITextSnapshot snapshot) =>
@@ -124,8 +136,8 @@ namespace Querywright.Ssms
         {
             if (spans.Count == 0 || WorkbenchPackage.Instance?.Options?.ColorBlocks == false) yield break;
             var latest = cache.Latest;
-            if (latest == null) yield break;
-            var (snapshot, blocks) = latest.Value;
+            if (latest == null || latest.Snapshot.TextBuffer != spans[0].Snapshot.TextBuffer) yield break;
+            var (snapshot, blocks) = latest;
             var target = spans[0].Snapshot;
             int from = spans[0].Start.TranslateTo(snapshot, PointTrackingMode.Negative), to = spans[spans.Count - 1].End.TranslateTo(snapshot, PointTrackingMode.Positive);
             foreach (var block in blocks)
@@ -153,9 +165,15 @@ namespace Querywright.Ssms
         {
             this.view = view;
             cache = BlockCache.For(view.TextBuffer);
-            view.Caret.PositionChanged += (sender, args) => { if (BlockAtCaret() != shown) Refresh(view.TextSnapshot); };
-            cache.Updated += snapshot => Refresh(view.TextSnapshot);
+            view.Caret.PositionChanged += OnCaretMoved;
+            cache.Updated += OnUpdated;
+            // The cache lives with the buffer, which can outlive this view (a second window on the same query).
+            view.Closed += (sender, args) => { view.Caret.PositionChanged -= OnCaretMoved; cache.Updated -= OnUpdated; };
         }
+
+        private void OnCaretMoved(object sender, CaretPositionChangedEventArgs args) { if (BlockAtCaret() != shown) Refresh(view.TextSnapshot); }
+
+        private void OnUpdated(ITextSnapshot snapshot) { if (!view.IsClosed) Refresh(view.TextSnapshot); }
 
         // Caret moves that keep the same pair (usually none) repaint nothing.
         private SqlBlock shown;
@@ -174,7 +192,7 @@ namespace Querywright.Ssms
             if (spans.Count == 0) yield break;
             var latest = cache.Latest;
             if (latest == null) yield break;
-            var (snapshot, blocks) = latest.Value;
+            var (snapshot, blocks) = latest;
             var target = spans[0].Snapshot;
             var caret = view.Caret.Position.BufferPosition;
             if (caret.Snapshot != target) yield break;
@@ -209,10 +227,10 @@ namespace Querywright.Ssms
 
         public IEnumerable<ITagSpan<IOutliningRegionTag>> GetTags(NormalizedSnapshotSpanCollection spans)
         {
-            if (spans.Count == 0 || !(cache.Latest is { } latest)) yield break;
+            if (spans.Count == 0 || !(cache.Latest is { } latest) || latest.Snapshot.TextBuffer != spans[0].Snapshot.TextBuffer) yield break;
             var (snapshot, blocks) = latest;
             var target = spans[0].Snapshot;
-            var folds = cache.Regions.Where(r => r.End <= snapshot.Length)
+            var folds = latest.Regions.Where(r => r.End <= snapshot.Length)
                 .Select(r => (Start: snapshot.GetLineFromPosition(r.Start).End.Position, r.End, Label: r.Label.TrimStart('-', ' ', '\t', '#').Substring(6).Trim()))
                 .Concat(blocks.Select(b => (Start: b.OpenStart + b.OpenLength, End: b.CloseStart + b.CloseLength, Label: "...")));
             foreach (var (start, end, label) in folds)
@@ -243,7 +261,7 @@ namespace Querywright.Ssms
     {
         protected BlockFormat(int level, byte r, byte g, byte b)
         {
-            DisplayName = "Querywright BEGIN/END level " + level;
+            DisplayName = "UlysiSQL BEGIN/END level " + level;
             // ponytail: High Contrast (read once at startup) gets the theme text color; bold still marks the pair words.
             ForegroundColor = System.Windows.SystemParameters.HighContrast ? System.Windows.SystemColors.WindowTextColor : Color.FromRgb(r, g, b);
             IsBold = true;

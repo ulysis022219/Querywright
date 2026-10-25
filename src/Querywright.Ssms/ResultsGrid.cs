@@ -166,8 +166,13 @@ namespace Querywright.Ssms
                     }
                     catch (Exception error) when (!(error is OutOfMemoryException)) { } // ponytail: totals are a nicety; an odd grid just shows none.
                 }
-                grid.MouseUp += (s, e) => Update();
-                grid.KeyUp += (s, e) => { if (e.Shift || e.Control) Update(); };
+                // Shift+arrow runs fire KeyUp per step and each read walks up to MaxCells; read the selection once they pause.
+                var settle = new Timer { Interval = 250 };
+                settle.Tick += (s, e) => { settle.Stop(); Update(); };
+                void Later() { settle.Stop(); settle.Start(); }
+                grid.MouseUp += (s, e) => Later();
+                grid.KeyUp += (s, e) => { if (e.Shift || e.Control) Later(); };
+                grid.Disposed += (s, e) => settle.Dispose();
             };
             timer.Start();
         }

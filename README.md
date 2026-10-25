@@ -1,9 +1,9 @@
-# Querywright
+# UlysiSQL
 
 A free, open-source productivity extension for **SQL Server Management Studio 22**.
 It helps you write, format, check and refactor T-SQL faster, right inside the SSMS query editor.
 
-**Looking for a free alternative to Redgate SQL Prompt?** Querywright is a free SQL Prompt alternative
+**Looking for a free alternative to Redgate SQL Prompt?** UlysiSQL is a free SQL Prompt alternative
 for SSMS 22: SQL IntelliSense and autocomplete, a T-SQL formatter / SQL beautifier, snippets,
 code analysis, refactoring, tab history and server colors, with no license or subscription.
 
@@ -11,6 +11,10 @@ code analysis, refactoring, tab history and server colors, with no license or su
 - **Never runs your SQL on its own.** Generated scripts open in a new window for you to review.
 - **Private by default.** Query and result logging stays off unless verbose diagnostics is enabled; credentials are redacted.
 - **MIT licensed.**
+
+UlysiSQL was called Querywright before. Updating keeps your settings: an existing install keeps its data in
+`%LOCALAPPDATA%\Querywright` (new installs use `%LOCALAPPDATA%\UlysiSQL`), and `-- querywright-disable` and
+`-- querywright:format off` comments still work.
 
 > Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/Querywright/issues).
 
@@ -21,9 +25,9 @@ code analysis, refactoring, tab history and server colors, with no license or su
 2. Close SSMS 22, unzip, and double-click **Install.cmd**.
 3. Start SSMS 22 and open a query window.
 
-Querywright tells you when a newer release is out (once a day; turn it off under
-Tools > Options > Querywright > Updates; check now with Querywright > **Check for updates...**).
-Click **Install update** in the notice: Querywright
+UlysiSQL tells you when a newer release is out (once a day; turn it off under
+Tools > Options > UlysiSQL > Updates; check now with UlysiSQL > **Check for updates...**).
+Click **Install update** in the notice: UlysiSQL
 downloads and verifies the release, then waits for you to save your work and close SSMS.
 The updater installs it automatically; reopen SSMS when it reports success. Your settings are kept.
 Older versions that only show **Download** need one manual update to get this feature.
@@ -39,15 +43,15 @@ then run `scripts/Install-Legacy.ps1` from an elevated PowerShell with SSMS clos
   Press **Ctrl+Shift+D** to reload them after schema changes. Names and types are cached on disk (hashed file names, never credentials or data) so suggestions work right after a restart; turn it off with "Cache schema on disk". Very large databases load up to 100,000 columns by default; raise or remove the cap with "Live metadata row limit" (0 = no limit).
 - Snippets: type a shortcut and press **Tab**, e.g. `ssf` + Tab gives `SELECT * FROM`. Lowercase `$name$` placeholders in a template are fields: Tab selects the next one, then goes to `$CURSOR$`; Esc stops.
   56 built in; add your own `.sql` files or share a team folder.
-- Typing `'` inserts `''` with the cursor inside; typing `'` again steps over the closing quote (turn off under Tools > Options > Querywright).
+- Typing `'` inserts `''` with the cursor inside; typing `'` again steps over the closing quote (turn off under Tools > Options > UlysiSQL).
 - Expand `*` into a column list, or pick the columns you want.
 - **F12** jumps to where a variable, alias or CTE is declared; on a procedure, view, function or trigger it opens an ALTER script in a new query and on a table a CREATE TABLE script (also in scripts with syntax errors elsewhere), including three-part names in another database on the same server (`OtherDb.dbo.Proc`).
 - **BEGIN/END pairs** are colored by nesting level (BEGIN/END, BEGIN TRY/END TRY, CASE/END, with their IF, WHILE or ELSE); the pair at the caret is highlighted, **Ctrl+]** jumps between them, and hovering an END shows the line that opened it. A BEGIN, CASE, END or parenthesis with no partner is underlined as you type.
 - **Parameter hints**: after `EXEC dbo.Proc ` or `dbo.fn(` a tooltip lists the parameters with the current one in bold.
 - **Folding**: `--region name` / `--endregion` sections and multi-line BEGIN/END blocks collapse from the margin.
 - **Shift+F5** runs only the statement under the caret (only when you press it).
-- Executing a **DELETE or UPDATE without WHERE** asks first ("Execute anyway" / "Don't execute"); turn it off in the prompt or under Tools > Options > Querywright.
-- **Production servers**: list patterns such as `prod;live` in Tools > Options > Querywright; on a matching connection, executing DROP, ALTER, TRUNCATE or an unfiltered DELETE/UPDATE always asks first, and Run in multiple databases names matching databases in its prompt. #temp tables never trigger these prompts.
+- Executing a **DELETE or UPDATE without WHERE** asks first ("Execute anyway" / "Don't execute"); turn it off in the prompt or under Tools > Options > UlysiSQL.
+- **Production servers**: list patterns such as `prod;live` in Tools > Options > UlysiSQL; on a matching connection, executing DROP, ALTER, TRUNCATE or an unfiltered DELETE/UPDATE always asks first, and Run in multiple databases names matching databases in its prompt. #temp tables never trigger these prompts.
 
 **Formatting**
 - Format a selection, a whole document, or every `.sql` file in a folder. Optional **Format on save** (off by default) formats the document on Ctrl+S, and every unsaved SQL document on Save All.
@@ -69,14 +73,14 @@ then run `scripts/Install-Legacy.ps1` from an elevated PowerShell with SSMS clos
 - Tab history: every SQL window keeps timestamped versions (a few seconds after each edit, and on execute), grouped per tab with a preview; search covers every saved version; reopen any version, even after a restart (toolbar button next to New Query). Keeps the newest 100 versions per tab, 200 tabs and 256 MB in all (favorites aside); PASSWORD and SECRET literals, password variables and the arguments of password procedures (sp_addlogin, sp_password, sp_addlinkedsrvlogin and similar) are saved as `***`.
 - Select several cells in a results grid to see count, sum, average, min and max in the status bar.
 - A colored strip and a `server · database` label on every query window, so you always know
-  where you are connected. Right-click a server in Object Explorer > **Querywright: server color...**
+  where you are connected. Right-click a server in Object Explorer > **UlysiSQL: server color...**
   to pick its color, or write rules like `prod=Red;test=Orange` in Tools > Options.
-- Highlight an object name, right-click > **Querywright: compare object with database...** to check it against
+- Highlight an object name, right-click > **UlysiSQL: compare object with database...** to check it against
   another database on the same server: a message if identical, otherwise a side-by-side diff.
 - Results grid right-click: copy as `IN (...)`, script rows as `INSERT`, open in Excel, save as CSV.
 
-All commands are in the **Tools** menu under "Querywright". Settings are under
-**Tools > Options > Querywright**; every feature above can be switched off there. Full list: [features](docs/features.md) and [analysis rules](docs/analysis-rules.md).
+All commands are in the **Tools** menu under "UlysiSQL". Settings are under
+**Tools > Options > UlysiSQL**; every feature above can be switched off there. Full list: [features](docs/features.md) and [analysis rules](docs/analysis-rules.md).
 
 ## Build from source
 
@@ -101,17 +105,17 @@ run the **Build VSIX** workflow with a tag such as `v0.4.0`; it is published onl
 
 ## Contributing
 
-Issues and pull requests are welcome. When reporting a bug, use the error line Querywright shows
-(version, command and error type). For detailed debugging, enable **Tools > Options > Querywright > General > Verbose diagnostics**, reproduce the problem, then open **Querywright AI > Logs > Export logs**.
-Capture is off by default. Logs include Querywright commands, background activity, query and result text, AI request/response text, errors, timing, and provider token/finish metadata. API keys and common credential fields are redacted. Review exports before sharing: database text can still contain sensitive data.
+Issues and pull requests are welcome. When reporting a bug, use the error line UlysiSQL shows
+(version, command and error type). For detailed debugging, enable **Tools > Options > UlysiSQL > General > Verbose diagnostics**, reproduce the problem, then open **UlysiSQL AI > Logs > Export logs**.
+Capture is off by default. Logs include UlysiSQL commands, background activity, query and result text, AI request/response text, errors, timing, and provider token/finish metadata. API keys and common credential fields are redacted. Review exports before sharing: database text can still contain sensitive data.
 **Import logs** opens a validated, read-only snapshot; it does not change settings, send requests, or execute queries. Logs live in memory, expire at bounded limits, and clear when capture is switched off or SSMS exits.
-Text capture is limited to 128 KiB per event; grid samples contain at most 100 rows / 4,096 cells. Truncation is marked. Native SSMS operations outside Querywright, including F5 execution, are not traced.
+Text capture is limited to 128 KiB per event; grid samples contain at most 100 rows / 4,096 cells. Truncation is marked. Native SSMS operations outside UlysiSQL, including F5 execution, are not traced.
 
 Ground rules for changes: no automatic query execution or database changes. Credential logging is forbidden; query and result logging requires the explicit verbose diagnostics option.
 
 ## License
 
-[MIT](LICENSE). Querywright is an independent project, not affiliated with or endorsed by Microsoft or Redgate.
+[MIT](LICENSE). UlysiSQL is an independent project, not affiliated with or endorsed by Microsoft or Redgate.
 SQL Prompt is a trademark of Redgate Software Ltd; SQL Server Management Studio is a trademark of Microsoft.
 Names are used only to describe compatibility and comparison.
 

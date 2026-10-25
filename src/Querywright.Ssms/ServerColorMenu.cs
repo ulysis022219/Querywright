@@ -9,7 +9,7 @@ using Querywright.Core;
 namespace Querywright.Ssms
 {
     /// <summary>
-    /// Adds "Querywright: server color..." to the Object Explorer right-click menu of a server node. Object Explorer has no
+    /// Adds "UlysiSQL: server color..." to the Object Explorer right-click menu of a server node. Object Explorer has no
     /// public menu API, so its WinForms tree is found by reflection and the item is added to the menu once it is shown.
     /// </summary>
     internal static class ServerColorMenu
@@ -23,9 +23,15 @@ namespace Querywright.Ssms
         internal static void Start()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            // ponytail: Object Explorer may be created after the package loads; retry every 5 s until its tree exists.
+            // ponytail: Object Explorer may be created after the package loads; retry every 5 s for a minute, then every minute
+            // (each try scans every loaded assembly) until its tree exists.
             var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            timer.Tick += (sender, args) => { if (TryAttach()) timer.Stop(); };
+            int tries = 0;
+            timer.Tick += (sender, args) =>
+            {
+                if (TryAttach()) timer.Stop();
+                else if (++tries == 12) timer.Interval = TimeSpan.FromMinutes(1);
+            };
             timer.Start();
             if (TryAttach()) timer.Stop();
         }
@@ -124,7 +130,7 @@ namespace Querywright.Ssms
             {
                 string pattern = ColorRules.ServerPattern(server);
                 string current = ColorRules.Get(WorkbenchPackage.Instance?.TabColorRules, pattern);
-                var item = new ToolStripMenuItem("Querywright: server color...") { Name = ItemName };
+                var item = new ToolStripMenuItem("UlysiSQL: server color...") { Name = ItemName };
                 item.Click += (sender, args) => Pick(pattern, current);
                 if (current != null)
                     item.DropDownItems.AddRange(new ToolStripItem[]
@@ -151,7 +157,7 @@ namespace Querywright.Ssms
         private static void Save(string pattern, string color)
         {
             try { WorkbenchPackage.Instance?.SetTabColorRules(ColorRules.Set(WorkbenchPackage.Instance.TabColorRules, pattern, color)); }
-            catch (ArgumentException error) { MessageBox.Show(error.Message, "Querywright", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            catch (ArgumentException error) { MessageBox.Show(error.Message, "UlysiSQL", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
     }
 }

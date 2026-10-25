@@ -4,29 +4,29 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/Update-Release.ps1"
-$Host.UI.RawUI.WindowTitle = "Querywright updater - $Tag"
+$Host.UI.RawUI.WindowTitle = "UlysiSQL updater - $Tag"
 function Step([string]$Number, [string]$Text) { Write-Host; Write-Host "[$Number/4] $Text" -ForegroundColor Cyan }
 function Note([string]$Text) { Write-Host "      $Text" -ForegroundColor Gray }
 function Ok([string]$Text) { Write-Host "      OK  $Text" -ForegroundColor Green }
 Write-Host
 Write-Host '  ============================================' -ForegroundColor DarkCyan
-Write-Host "   Querywright updater  $Tag" -ForegroundColor White
+Write-Host "   UlysiSQL updater  $Tag" -ForegroundColor White
 Write-Host '  ============================================' -ForegroundColor DarkCyan
 $mutex = [Threading.Mutex]::new($false, 'Local\Querywright.ReleaseUpdate')
 $owned = $false
 $result = 1
 try {
     try { $owned = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
-    if (-not $owned) { throw 'Another Querywright updater is already running. Use its window.' }
+    if (-not $owned) { throw 'Another UlysiSQL updater is already running. Use its window.' }
     $ssms = Join-Path $SsmsDirectory 'SSMS.exe'
     if (-not (Test-Path -LiteralPath $ssms) -or -not (Test-Path -LiteralPath (Join-Path $SsmsDirectory 'VSIXInstaller.exe'))) {
         throw 'The originating SSMS installation could not be found.'
     }
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    Step 1 "Downloading Querywright $Tag"
+    Step 1 "Downloading UlysiSQL $Tag"
     Note 'You can keep working in SSMS while this runs.'
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ulysis022219/Querywright/releases/tags/$Tag" `
-        -Headers @{ 'User-Agent' = 'Querywright-update'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 30
+        -Headers @{ 'User-Agent' = 'UlysiSQL-update'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 30
     $asset = Get-QuerywrightReleaseAsset -Release $release -Tag $Tag
     $archive = Join-Path $PSScriptRoot 'release.zip'
     $package = Join-Path $PSScriptRoot 'Querywright.Ssms.vsix'
@@ -50,7 +50,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Installer failed (exit code $LASTEXITCODE). See the installer log reported above." }
     Remove-Item -LiteralPath $archive, $package -Force
     Write-Host
-    Write-Host "  SUCCESS  Querywright $Tag is installed." -ForegroundColor Green
+    Write-Host "  SUCCESS  UlysiSQL $Tag is installed." -ForegroundColor Green
     Write-Host '           Reopen SSMS to use it. Your settings are kept.'
     $result = 0
 } catch {

@@ -6,7 +6,7 @@ AI features (assistant panel, fix, optimize, completion, MCP server) use a provi
 
 ## 1. Editor behavior (what makes it feel like SQL Prompt)
 
-| Behavior | SQL Prompt | Querywright | Next step |
+| Behavior | SQL Prompt | UlysiSQL | Next step |
 |---|---|---|---|
 | Suggestions as you type | Popup on every identifier, keyword, after `.`/space | host (live connection metadata or offline schema; keywords, functions, variables, CTEs, aliases, snippets) | — |
 | Ctrl+Space / refresh suggestions | Show list; Ctrl+Shift+D refreshes metadata | host (Ctrl+Space is the editor's own; Ctrl+Shift+D bound) | — |
@@ -15,7 +15,7 @@ AI features (assistant panel, fix, optimize, completion, MCP server) use a provi
 | Join table suggestions | After JOIN, related tables with their ON clause first | done + host | run in SSMS |
 | Alias assignment | Alias inserted with the table; prefixes to ignore, custom aliases, AS, capitals | done + host (options, off by default) | run in SSMS |
 | Commit keys | Choose which keys insert the selected suggestion | host (space, `.`, `,`, parentheses, `;`; Tab and Enter fixed) | run in SSMS |
-| Column picker | Tick columns in a list for SELECT/INSERT | host (Querywright > Pick columns for *: checkbox list replaces `*` or `alias.*`) | — |
+| Column picker | Tick columns in a list for SELECT/INSERT | host (UlysiSQL > Pick columns for *: checkbox list replaces `*` or `alias.*`) | — |
 | INSERT/EXEC parameter fill | Expands column list / parameters for INSERT and EXEC | host (Tab after `INSERT INTO t` / `EXEC p`; generated columns skipped; procedures from the connection or the script) | — |
 | Snippet shortcut + Tab | `ssf` Tab → `SELECT * FROM` | host (also listed in the popup; Tab expands with the list open) | — |
 | Wildcard expansion with Tab | `*` Tab → column list | host | — |
@@ -27,7 +27,7 @@ AI features (assistant panel, fix, optimize, completion, MCP server) use a provi
 
 ## 2. Formatting (Ctrl+K Ctrl+Y)
 
-| Feature | Querywright |
+| Feature | UlysiSQL |
 |---|---|
 | Format document / selection | done + verified in SSMS |
 | Style editor, shared styles | host (13 options, dialog with live preview, shared XML settings file) |
@@ -40,14 +40,14 @@ AI features (assistant panel, fix, optimize, completion, MCP server) use a provi
 
 ## 3. Snippets
 
-Popular SQL Prompt shortcuts (community list) that Querywright should seed:
+Popular SQL Prompt shortcuts (community list) that UlysiSQL should seed:
 `ssf sst ss0 st100 scf sd smf ii df ij lj rj fj cj j loj roj foj gb ob be bt ctr rt tc cte ct ctt cv cp csf ctf citf at ata atd ac ap af dt dp dv dfn di inn lk isns isnn rnum cw ifs today trim sph spt w2`.
 Placeholders used by those: `$CURSOR$`, `$SELECTEDTEXT$`, `$PASTE$`, `$DATE$`, `$TIME$`, `$USER$`, `$SERVER$`, `$DBNAME$`.
-Querywright: 56 seeded (the list above) plus Select / Create procedure; all listed placeholders supported.
+UlysiSQL: 56 seeded (the list above) plus Select / Create procedure; all listed placeholders supported.
 
 ## 4. Refactoring
 
-| Refactor | Querywright |
+| Refactor | UlysiSQL |
 |---|---|
 | Rename local variable / alias | host (variable and alias, with preview) |
 | Smart rename object (updates dependents) | host (sp_rename + ALTER for dependent modules, opened in a new window; never executed) |
@@ -62,7 +62,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 
 ## 5. Results grid
 
-| Action | Querywright |
+| Action | UlysiSQL |
 |---|---|
 | Copy as IN clause | host (distinct values, numbers bare, NULL dropped) |
 | Script as INSERT (temp table + values) | host (`#Results` with reported column types, 1000-row batches, new window, never executed) |
@@ -72,7 +72,7 @@ Querywright: 56 seeded (the list above) plus Select / Create procedure; all list
 | Script as UPDATE / MERGE | host (keyed on the first column; target is the query's first table; MERGE updates and inserts, never deletes; rowversion skipped; opens in a new window, never executed) |
 | Script as CREATE TABLE | host (grid's column types; NOT NULL where no row is NULL; opens in a new window, never executed) |
 
-In the results grid's right-click menu and the Querywright menu. SSMS has no public grid API, so the
+In the results grid's right-click menu and the UlysiSQL menu. SSMS has no public grid API, so the
 host reflects over the focused `GridControl` and its `IGridStorage` (the approach used by
 SSMSDataAnalyzer and SQLExtended). Values are the grid's display text: floats are rounded and very
 long text may be truncated, exactly as SSMS shows them. One selected cell (or none) means the whole
@@ -81,7 +81,7 @@ internals, the commands report that and do nothing.
 
 ## 6. Code analysis (as-you-type squiggles + Error List)
 
-Querywright rules today: SW001–SW073, mapped in analysis-rules.md, with inline `-- querywright-disable`
+UlysiSQL rules today: SW001–SW073, mapped in analysis-rules.md, with inline `-- ulysisql-disable`
 suppression. Remaining syntax-only candidates:
 
 | SQL Prompt | Meaning |
@@ -96,15 +96,15 @@ Squiggles while typing: host (700 ms after typing pauses). Auto-fixes: host (fix
 Command names, rule IDs and option names were read from the SQL Prompt 11.5.5 installer by static inspection.
 On October 11, 2026 the suggestion code of the installed SQL Prompt 11.5.5.27669 was also decompiled and read
 (matching, ranking, list triggers, commit keys, option defaults), and its name matcher was loaded in a local test
-harness to compare results with Querywright's on 2,000,000 generated inputs (no differences). The harness and the
-decompiled sources are not in this repository; the code here was written for Querywright, and no SQL Prompt code,
+harness to compare results with UlysiSQL's on 2,000,000 generated inputs (no differences). The harness and the
+decompiled sources are not in this repository; the code here was written for UlysiSQL, and no SQL Prompt code,
 icons or text blocks were copied in. Redgate's licence terms may restrict decompilation; anyone redistributing this
 work should check them. Status: done = covered by the core checks; host = wired into the SSMS menu and compiled,
 not yet run in SSMS.
 
-| SQL Prompt feature | Querywright |
+| SQL Prompt feature | UlysiSQL |
 |---|---|
-| Execute current batch | done (batch at the caret) + host (Querywright > Execute current batch) |
+| Execute current batch | done (batch at the caret) + host (UlysiSQL > Execute current batch) |
 | Execute to cursor | done (script start through the statement at the caret) + host |
 | Unformat | done (one line per batch, strings, names and `--` comments kept) + host |
 | Add commas / add quotes and commas | done + host (selection, or the whole window) |
@@ -112,7 +112,7 @@ not yet run in SSMS.
 | sp_executesql to plain SQL | done (literal statement and parameter list only) + host |
 | Inline EXEC | done (single-batch body without RETURN; return-value capture rejected) + host (definition read from the connected database, read-only) |
 | INSERT to UPDATE | done (single-row VALUES with a column list; placeholder `WHERE 1 = 0`) + host |
-| Formatting disabled regions | done: `-- querywright:format off` ... `-- querywright:format on`, between statements |
+| Formatting disabled regions | done: `-- ulysisql:format off` ... `-- ulysisql:format on` (or `querywright:`), between statements |
 | Code analysis rules | 73 rules (SW048–SW073 added), 13 with fixes |
 | Comment / uncomment selection | core only; SSMS already has Ctrl+K, Ctrl+C / Ctrl+U |
 | Suggestion matching, ranking, aliases, join suggestions, commit keys | see section 1 and features.md "Suggestion matching and ranking". Matching, group order (exact name, promoted, others, snippets), list triggers, commit keys and the alias and column-order defaults follow the decompiled 11.5.5.27669 behaviour. Known differences: ordinal instead of culture-aware comparison, keywords first in a general context, usage as a tie-break only, a soft selection while a new alias may be typed |

@@ -254,7 +254,7 @@ namespace Querywright.Core
 
         /// <summary>
         /// SQL Prompt's "Split table": a reviewable script that moves columns into a new table keyed (and foreign-keyed)
-        /// by the original primary key, copies the data, then drops the moved columns. Querywright never runs it.
+        /// by the original primary key, copies the data, then drops the moved columns. UlysiSQL never runs it.
         /// </summary>
         public static string SplitTableScript(SchemaTable table, IReadOnlyList<string> key, IReadOnlyList<string> moved, string newSchema, string newName, string newline = "\r\n")
         {
@@ -281,7 +281,7 @@ namespace Querywright.Core
             var script = new StringBuilder();
             script.Append("-- Split ").Append(table.Schema).Append('.').Append(table.Name).Append(": move ").Append(string.Join(", ", moved))
                 .Append(" to ").Append(newSchema).Append('.').Append(newName).Append(". Review, then run it yourself.").Append(newline);
-            script.Append("-- Querywright does not execute this script. Moved columns are created NULL; review nullability, defaults, indexes,").Append(newline);
+            script.Append("-- UlysiSQL does not execute this script. Moved columns are created NULL; review nullability, defaults, indexes,").Append(newline);
             script.Append("-- constraints and triggers on them, and update code that reads them (views, procedures, applications).").Append(newline);
             script.Append("SET XACT_ABORT ON;").Append(newline).Append("BEGIN TRANSACTION;").Append(newline).Append(newline);
             script.Append("CREATE TABLE ").Append(newFull).Append(newline).Append('(').Append(newline);
@@ -305,7 +305,7 @@ namespace Querywright.Core
             var rows = items.Select(i => (Object: Line(i.Schema) + "." + Line(i.Name), Problem: Line(i.Problem)))
                 .Distinct().OrderBy(i => i.Object, StringComparer.OrdinalIgnoreCase).ThenBy(i => i.Problem, StringComparer.Ordinal).ToList();
             var report = new StringBuilder();
-            report.Append("-- Querywright: invalid objects in ").Append(Line(database ?? "(default database)")).Append(" (").Append(rows.Count)
+            report.Append("-- UlysiSQL: invalid objects in ").Append(Line(database ?? "(default database)")).Append(" (").Append(rows.Count)
                 .Append(rows.Count == 1 ? " issue" : " issues").Append("). Read-only check; nothing was altered.").Append(newline);
             if (rows.Count == 0) report.Append("-- No invalid objects found.").Append(newline);
             foreach (var row in rows) report.Append("-- ").Append(row.Object).Append(": ").Append(row.Problem).Append(newline);
@@ -314,7 +314,7 @@ namespace Querywright.Core
 
         /// <summary>
         /// A reviewable script that renames an object with sp_rename and alters dependent modules to the new name.
-        /// Querywright never runs it; dependents that do not parse are listed for manual review.
+        /// UlysiSQL never runs it; dependents that do not parse are listed for manual review.
         /// </summary>
         public static string RenameObjectScript(string schema, string oldName, string newName,
             IReadOnlyList<(string Schema, string Name, string Definition)>? dependents, string newline = "\r\n")
@@ -327,7 +327,7 @@ namespace Querywright.Core
             string Bracket(string text) => "[" + text.Replace("]", "]]") + "]";
             var script = new StringBuilder();
             script.Append("-- Rename ").Append(schema).Append('.').Append(oldName).Append(" to ").Append(newName).Append(". Review, then run it yourself.").Append(newline);
-            script.Append("-- Querywright does not execute this script. Check dynamic SQL and other databases separately.").Append(newline);
+            script.Append("-- UlysiSQL does not execute this script. Check dynamic SQL and other databases separately.").Append(newline);
             script.Append("EXEC sys.sp_rename ").Append(Literal(Bracket(schema) + "." + Bracket(oldName))).Append(", ").Append(Literal(newName)).Append(';').Append(newline);
             script.Append("GO").Append(newline);
             var names = StringComparer.OrdinalIgnoreCase;
@@ -372,7 +372,7 @@ namespace Querywright.Core
             var lines = body.Split('\n');
             bool endsWithGo = Regex.IsMatch(lines[lines.Length - 1], @"^\s*GO\s*(\d+\s*)?$", RegexOptions.IgnoreCase);
             var builder = new StringBuilder();
-            builder.Append("-- Querywright: script for ").Append(databases.Count).Append(databases.Count == 1 ? " database" : " databases")
+            builder.Append("-- UlysiSQL: script for ").Append(databases.Count).Append(databases.Count == 1 ? " database" : " databases")
                 .Append(". Review, then execute. Nothing has been run.").Append(newline);
             if (stopOnError)
                 builder.Append("-- Stop on first error needs SQLCMD mode (Query > SQLCMD Mode).").Append(newline).Append(":on error exit").Append(newline);
@@ -398,8 +398,12 @@ namespace Querywright.Core
         public static string UnwrapDynamicSql(string sql)
         {
             var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql ?? ""), out _);
-            var literal = tokens.FirstOrDefault(t => t.TokenType == TSqlTokenType.AsciiStringLiteral || t.TokenType == TSqlTokenType.UnicodeStringLiteral);
-            if (literal == null) throw new InvalidOperationException("Select a dynamic SQL string, such as DECLARE @sql nvarchar(max) = N'...'.");
+            int at = tokens.ToList().FindIndex(t => t.TokenType == TSqlTokenType.AsciiStringLiteral || t.TokenType == TSqlTokenType.UnicodeStringLiteral);
+            if (at < 0) throw new InvalidOperationException("Select a dynamic SQL string, such as DECLARE @sql nvarchar(max) = N'...'.");
+            var literal = tokens[at];
+            // Unwrapping only the first piece of N'...' + @name + N'...' would silently drop the rest.
+            var next = tokens.Skip(at + 1).FirstOrDefault(t => t.TokenType != TSqlTokenType.WhiteSpace && t.TokenType != TSqlTokenType.SingleLineComment && t.TokenType != TSqlTokenType.MultilineComment);
+            if (next?.TokenType == TSqlTokenType.Plus) throw new InvalidOperationException("This dynamic SQL is joined from several pieces with +; unwrap works on a single string.");
             string text = literal.Text;
             int open = text.IndexOf('\'');
             if (text.Length < open + 2 || text[text.Length - 1] != '\'') throw new InvalidOperationException("The dynamic SQL string is not closed with a quote.");

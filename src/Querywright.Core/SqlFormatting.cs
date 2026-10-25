@@ -50,7 +50,7 @@ namespace Querywright.Core
             cancellation.ThrowIfCancellationRequested();
             var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql), out var errors);
             if (errors.Count > 0) throw new FormatException("Cannot tokenize SQL for formatting.");
-            // Lines from "-- querywright:format off" through "-- querywright:format on" stay as written.
+            // Lines from "-- ulysisql:format off" through "-- ulysisql:format on" stay as written (or the querywright: spelling).
             // ponytail: the markers must sit between statements; each formatted part has to parse on its own.
             var output = new StringBuilder();
             int offset = 0, kept = -1;
@@ -78,7 +78,7 @@ namespace Querywright.Core
             return output.ToString();
         }
 
-        private static readonly Regex RegionMarker = new Regex(@"^--\s*querywright:format\s+(off|on)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private static readonly Regex RegionMarker = new Regex(@"^--\s*(?:ulysisql|querywright):format\s+(off|on)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         // Formats the part of the script between two offsets; tokens and their offsets belong to the whole script.
         private static string FormatBatches(string sql, IList<TSqlParserToken> tokens, int from, int to, FormattingStyle? style, CancellationToken cancellation)

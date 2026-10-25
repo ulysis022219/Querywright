@@ -24,7 +24,7 @@ namespace Querywright.Ssms
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideAutoLoad(VSConstants.UICONTEXT.ShellInitialized_string, PackageAutoLoadFlags.BackgroundLoad)]
-    [ProvideOptionPage(typeof(WorkbenchOptions), "Querywright", "General", 0, 0, true)]
+    [ProvideOptionPage(typeof(WorkbenchOptions), "UlysiSQL", "General", 0, 0, true)]
     [Guid("a13c1b0c-af94-4f53-8d06-edf816e39450")]
     public sealed partial class WorkbenchPackage : AsyncPackage
     {
@@ -141,7 +141,7 @@ namespace Querywright.Ssms
             catch (Exception error) when (live != null && !(error is OutOfMemoryException)) { offline = null; }
             var tables = Merge(live, offline);
             if (tables == null)
-                throw new InvalidOperationException("Connect the query window to a database, or set an offline schema SQL file under Tools > Options > Querywright.");
+                throw new InvalidOperationException("Connect the query window to a database, or set an offline schema SQL file under Tools > Options > UlysiSQL.");
             return tables;
         }
 
@@ -189,8 +189,10 @@ namespace Querywright.Ssms
             if (textManager == null) throw new InvalidOperationException("SSMS text services unavailable.");
             options = (WorkbenchOptions)GetDialogPage(typeof(WorkbenchOptions));
             Diagnostics.Enabled = options.VerboseDiagnostics;
+            Theme.HookHost();
+            Theme.Configure(options.Theme, options.Accent);
             Diagnostics.Write("Package", nameof(InitializeAsync), "start");
-            errorList = new ErrorListProvider(this) { ProviderName = "Querywright", ProviderGuid = new Guid("c493165c-47d9-43d7-b28b-d2d7144d45ac") };
+            errorList = new ErrorListProvider(this) { ProviderName = "UlysiSQL", ProviderGuid = new Guid("c493165c-47d9-43d7-b28b-d2d7144d45ac") };
             GridTotals.Start(() => options?.GridTotals != false, text => (GetService(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText(text));
             void Add(int id, Func<Task> handler) => commands.AddCommand(new MenuCommand((sender, args) => { _ = JoinableTaskFactory.RunAsync(() => InvokeMenuCommandAsync(id, handler)); },
                 new CommandID(new Guid("b48a692b-82fb-47cf-bfc9-bdf13483d6c7"), id)));
@@ -262,7 +264,7 @@ namespace Querywright.Ssms
             InitializeAi(Add);
             ServerColorMenu.Start();
             PriorityCommands.Start(this);
-            Diagnostics.TryLogInformation("Querywright", "Package initialized");
+            Diagnostics.TryLogInformation("UlysiSQL", "Package initialized");
             Diagnostics.Write("Package", nameof(InitializeAsync), "success");
             _ = JoinableTaskFactory.RunAsync(() => SelfTest.RunAsync(this));
             if (options.CheckForUpdates && Environment.GetEnvironmentVariable("QUERYWRIGHT_SELFTEST") == null)
@@ -385,12 +387,17 @@ namespace Querywright.Ssms
                         if (connection == null) return false;
                         _ = JoinableTaskFactory.RunAsync(async () =>
                         {
-                            var loaded = await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(20));
-                            await JoinableTaskFactory.SwitchToMainThreadAsync();
-                            if (loaded == null || view.IsClosed || view.TextSnapshot != snapshot) return;
-                            try { edit = SqlCompletion.ExpandWildcard(snapshot.GetText(), caret - 1, loaded); }
-                            catch (Exception error) when (error is FormatException || error is InvalidOperationException) { return; }
-                            ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
+                            // Fire-and-forget: a failure here would otherwise vanish as an unobserved task.
+                            try
+                            {
+                                var loaded = await LiveMetadata.GetAsync(connection, TimeSpan.FromSeconds(20));
+                                await JoinableTaskFactory.SwitchToMainThreadAsync();
+                                if (loaded == null || view.IsClosed || view.TextSnapshot != snapshot) return;
+                                try { edit = SqlCompletion.ExpandWildcard(snapshot.GetText(), caret - 1, loaded); }
+                                catch (Exception error) when (error is FormatException || error is InvalidOperationException) { return; }
+                                ReplaceText(view, new SnapshotSpan(snapshot, edit.Start, edit.Length), edit.Text, edit.Text.Length, 0, 0, "Expand wildcard");
+                            }
+                            catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
                         });
                         return true;
                     }
@@ -408,7 +415,7 @@ namespace Querywright.Ssms
                 try { template = SnippetFiles.Read(Path.Combine(options.SnippetFolder, shortcut + ".sql")); }
                 catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is DecoderFallbackException)
                 {
-                    (GetService(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: snippet " + shortcut + " could not be read. " + error.Message);
+                    (GetService(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("UlysiSQL: snippet " + shortcut + " could not be read. " + error.Message);
                     return false;
                 }
                 var expansion = Snippets.Expand(template, SnippetContext(template, ""), DateTimeOffset.Now);
@@ -453,6 +460,7 @@ namespace Querywright.Ssms
                 // One tab per object: F12 again switches to it while it is open, and does nothing while it is still loading.
                 // ponytail: "Orders" and "dbo.Orders" share a key only when the schema is dbo.
                 string key = connection.Key + "\0" + (target.Schema ?? "dbo") + "." + target.Name;
+                PruneScriptTabs();
                 if (scriptTabs.TryGetValue(key, out var tab))
                 {
                     if (tab.View == null) { SelfTest.Note += " loading"; return true; }
@@ -476,11 +484,17 @@ namespace Querywright.Ssms
             IWpfTextView view;
             try { view = GetSqlView(); } catch (InvalidOperationException) { return; }
             TryGoToDefinition(view);
-            Diagnostics.TryLogInformation("Querywright", "F12 (Querywright command): " + SelfTest.Note);
+            Diagnostics.TryLogInformation("UlysiSQL", "F12 (UlysiSQL command): " + SelfTest.Note);
         });
 
         /// <summary>SQL Prompt's F12: a table opens as CREATE TABLE, a procedure/view/function/trigger as ALTER, in a new query. Never executed.</summary>
         private readonly Dictionary<string, (IWpfTextView View, IVsWindowFrame Frame)> scriptTabs = new Dictionary<string, (IWpfTextView, IVsWindowFrame)>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Drops closed tabs, which would otherwise keep their views alive for the rest of the session.</summary>
+        private void PruneScriptTabs()
+        {
+            foreach (var closed in scriptTabs.Where(t => t.Value.View?.IsClosed == true).Select(t => t.Key).ToList()) scriptTabs.Remove(closed);
+        }
 
         private async Task ScriptObjectAsync(ActiveConnection connection, string schema, string name, string key, int line = 0)
         {
@@ -698,7 +712,7 @@ namespace Querywright.Ssms
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 ShowTasks(view, snapshot, items.Select(i => (i.Kind + (i.Target.Length == 0 ? "" : " " + i.Target), i.Offset, i.Length, category)));
                 var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-                status?.SetText($"Querywright: {items.Count} {what}.");
+                status?.SetText($"UlysiSQL: {items.Count} {what}.");
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
@@ -745,14 +759,14 @@ namespace Querywright.Ssms
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
             if (options?.LiveMetadata == false)
             {
-                status?.SetText("Querywright: Read live metadata is off (Tools > Options > Querywright); the offline schema file is re-read whenever it changes.");
+                status?.SetText("UlysiSQL: Read live metadata is off (Tools > Options > UlysiSQL); the offline schema file is re-read whenever it changes.");
                 return;
             }
             var connection = LiveMetadata.Capture();
             if (connection == null)
             {
-                status?.SetText(LiveMetadata.CaptureNames() == null ? "Querywright: no live connection; the offline schema file is re-read whenever it changes."
-                    : "Querywright: live metadata can't use this window's connection (" + LiveMetadata.CaptureProblem + ").");
+                status?.SetText(LiveMetadata.CaptureNames() == null ? "UlysiSQL: no live connection; the offline schema file is re-read whenever it changes."
+                    : "UlysiSQL: live metadata can't use this window's connection (" + LiveMetadata.CaptureProblem + ").");
                 return;
             }
             var load = LiveMetadata.LoadAsync(connection);
@@ -760,7 +774,7 @@ namespace Querywright.Ssms
             while (!load.IsCompleted && status != null)
             {
                 var (percent, step) = LiveMetadata.Progress;
-                string text = $"Querywright: refreshing metadata {percent}% ({step})...";
+                string text = $"UlysiSQL: refreshing metadata {percent}% ({step})...";
                 status.Progress(ref cookie, 1, text, (uint)percent, 100);
                 status.SetText(text);
                 await Task.WhenAny(load, Task.Delay(250));
@@ -770,8 +784,8 @@ namespace Querywright.Ssms
             var tables = await load;
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var problem = LiveMetadata.LastProblem;
-            status?.SetText(tables == null ? "Querywright: metadata refresh failed (" + problem + "); the last good metadata stays in use. See the SSMS activity log."
-                : "Querywright: metadata refreshed (" + tables.Count + " tables and views, "
+            status?.SetText(tables == null ? "UlysiSQL: metadata refresh failed (" + problem + "); the last good metadata stays in use. See the SSMS activity log."
+                : "UlysiSQL: metadata refreshed (" + tables.Count + " tables and views, "
                     + (LiveMetadata.Procedures(connection)?.Count(p => !p.IsFunction) ?? 0) + " procedures)" + (problem.Length == 0 ? "." : "; " + problem + "."));
         }
 
@@ -853,7 +867,7 @@ namespace Querywright.Ssms
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             if (databases.Count == 0) throw new InvalidOperationException("No other database on this server to compare with.");
             // ponytail: same server only; another server would need its own credentials.
-            var prompt = new PromptDialog("Querywright: compare " + full, "_Compare with database:", databases[0], databases);
+            var prompt = new PromptDialog("UlysiSQL: compare " + full, "_Compare with database:", databases[0], databases);
             if (!await ShowDialogAsync(prompt)) return;
             string other = prompt.Value;
             var (left, right) = await Task.Run(() => (LiveMetadata.Details(connection, schema, name), LiveMetadata.Details(connection.WithDatabase(other), schema, name)));
@@ -863,14 +877,14 @@ namespace Querywright.Ssms
             string a = ScriptOf(left, schema, name), b = ScriptOf(right, schema, name);
             if (ObjectScript.SameScript(a, b))
             {
-                VsShellUtilities.ShowMessageBox(this, full + " is identical in " + connection.Database + " and " + other + ".", "Querywright",
+                VsShellUtilities.ShowMessageBox(this, full + " is identical in " + connection.Database + " and " + other + ".", "UlysiSQL",
                     OLEMSGICON.OLEMSGICON_INFO, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
                 return;
             }
             var diff = await GetServiceAsync(typeof(SVsDifferenceService)) as IVsDifferenceService;
             if (diff == null) throw new InvalidOperationException(full + " differs between " + connection.Database + " and " + other + " (diff window unavailable).");
             // The diff window deletes both files when it closes (the Temporary flags).
-            string folder = Path.Combine(Path.GetTempPath(), "Querywright");
+            string folder = Path.Combine(Path.GetTempPath(), "UlysiSQL");
             Directory.CreateDirectory(folder);
             string stamp = Guid.NewGuid().ToString("N");
             string leftFile = Path.Combine(folder, "Compare-" + stamp + "-a.sql"), rightFile = Path.Combine(folder, "Compare-" + stamp + "-b.sql");
@@ -937,7 +951,7 @@ namespace Querywright.Ssms
                 string line = Updates.ErrorLine(UpdateCheck.InstalledVersion(), command, cause.GetType());
                 int answer = VsShellUtilities.ShowMessageBox(this,
                     cause.Message + "\r\n\r\n" + line + "\r\n\r\nOpen a GitHub issue with this line? Only the line above is sent; the error message, your query and connection are not.",
-                    "Querywright error", OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND);
+                    "UlysiSQL error", OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND);
                 if (answer == (int)VSConstants.MessageBoxResult.IDYES)
                     try { System.Diagnostics.Process.Start(Updates.IssueUrl(line)); } catch (System.ComponentModel.Win32Exception) { }
             }
@@ -1013,7 +1027,7 @@ namespace Querywright.Ssms
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
             if (connection == null) throw new InvalidOperationException("Connect the query window to the database that holds the object.");
             string schema = target.Schema ?? "dbo";
-            var prompt = new PromptDialog("Querywright: rename " + schema + "." + target.Name, "_New name (the script opens in a new window; nothing runs):", target.Name);
+            var prompt = new PromptDialog("UlysiSQL: rename " + schema + "." + target.Name, "_New name (the script opens in a new window; nothing runs):", target.Name);
             if (!await ShowDialogAsync(prompt)) return;
             string newName = prompt.Value;
             var dependents = await Task.Run(() => LiveMetadata.Dependents(connection, schema, target.Name));
@@ -1044,9 +1058,9 @@ namespace Querywright.Ssms
             if (key.Count == 0) throw new InvalidOperationException(schema + "." + target.Name + " has no primary key; add one before splitting it.");
             var candidates = table.Columns.Where(c => !key.Contains(c, names)).ToList();
             if (candidates.Count == 0) throw new InvalidOperationException("Every column is part of the primary key; nothing to move.");
-            var picker = new ColumnPickerDialog(candidates, false) { Title = "Querywright: columns to move out of " + target.Name };
+            var picker = new ColumnPickerDialog(candidates, false) { Title = "UlysiSQL: columns to move out of " + target.Name };
             if (!await ShowDialogAsync(picker) || picker.Selected.Count == 0) return;
-            var prompt = new PromptDialog("Querywright: split " + schema + "." + target.Name, "_New table (schema.name; the script opens in a new window, nothing runs):", schema + "." + target.Name + "Details");
+            var prompt = new PromptDialog("UlysiSQL: split " + schema + "." + target.Name, "_New table (schema.name; the script opens in a new window, nothing runs):", schema + "." + target.Name + "Details");
             if (!await ShowDialogAsync(prompt)) return;
             string full = prompt.Value.Trim();
             int dot = full.IndexOf('.');
@@ -1062,11 +1076,11 @@ namespace Querywright.Ssms
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
             if (connection == null) throw new InvalidOperationException("Connect the query window to the database to check.");
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-            status?.SetText("Querywright: checking modules for invalid references...");
+            status?.SetText("UlysiSQL: checking modules for invalid references...");
             var items = await Task.Run(() => LiveMetadata.InvalidObjects(connection));
             await OpenInNewQueryAsync(SqlRefactoring.InvalidObjectsReport(connection.Database, items), "Invalid objects");
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            status?.SetText("Querywright: " + items.Count + " invalid object issue(s) found.");
+            status?.SetText("UlysiSQL: " + items.Count + " invalid object issue(s) found.");
         });
 
         private Task ScriptForDatabasesAsync() => RunCommandAsync(async () =>
@@ -1075,7 +1089,7 @@ namespace Querywright.Ssms
             string sql = QueryTextOrNull();
             if (string.IsNullOrWhiteSpace(sql)) throw new InvalidOperationException("Open a query window with the script to run in each database.");
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
-            if (connection == null) throw new InvalidOperationException("Connect the query window to the server whose databases you want, and turn on Read live metadata under Tools > Options > Querywright.");
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server whose databases you want, and turn on Read live metadata under Tools > Options > UlysiSQL.");
             var databases = await Task.Run(() => LiveMetadata.Databases(connection));
             bool hasUse = await Task.Run(() => SqlRefactoring.ContainsUse(sql));
             var previous = new HashSet<string>((options.MultiDatabaseSelection ?? "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
@@ -1162,7 +1176,7 @@ namespace Querywright.Ssms
             if (string.IsNullOrWhiteSpace(sql)) throw new InvalidOperationException("Open a query window with the script to run in each database.");
             if (DatabaseTools.HasGo(sql)) throw new InvalidOperationException("Remove the GO separators first; the script runs as one batch in each database.");
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
-            if (connection == null) throw new InvalidOperationException("Connect the query window to the server whose databases you want, and turn on Read live metadata under Tools > Options > Querywright.");
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server whose databases you want, and turn on Read live metadata under Tools > Options > UlysiSQL.");
             var databases = await Task.Run(() => LiveMetadata.Databases(connection));
             var previous = new HashSet<string>((options.MultiDatabaseSelection ?? "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
             var picker = new DatabasePickerDialog(connection.Server, databases, previous, await Task.Run(() => SqlRefactoring.ContainsUse(sql)), "run in multiple databases");
@@ -1174,11 +1188,11 @@ namespace Querywright.Ssms
             if (risky.Count > 0 && VsShellUtilities.ShowMessageBox(this,
                     (production.Count > 0 ? "PRODUCTION (" + connection.Server + "/" + string.Join(", ", production.Take(3)) + (production.Count > 3 ? ", ..." : "") + "): " : "")
                     + "This script changes schema or can change or remove every row (" + string.Join(", ", risky.Take(3)) + ") and will run in " + picker.Selected.Count + " databases. Run it?",
-                    "Querywright", OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) != (int)VSConstants.MessageBoxResult.IDYES) return;
+                    "UlysiSQL", OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) != (int)VSConstants.MessageBoxResult.IDYES) return;
             var errors = new List<string>();
             var table = await Task.Run(() => DatabaseTools.Run(connection, picker.Selected, sql, null, true, errors));
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            DatabaseTools.Show("Querywright: results from " + picker.Selected.Count + " databases", table, errors);
+            DatabaseTools.Show("UlysiSQL: results from " + picker.Selected.Count + " databases", table, errors);
         });
 
         /// <summary>Finds tables, views, procedures, functions, triggers and columns whose name contains the text, across the ticked databases.</summary>
@@ -1186,14 +1200,14 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
-            if (connection == null) throw new InvalidOperationException("Connect the query window to the server to search, and turn on Read live metadata under Tools > Options > Querywright.");
-            string text = DatabaseTools.Ask("Querywright: find in all databases", "Object or column name contains:");
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server to search, and turn on Read live metadata under Tools > Options > UlysiSQL.");
+            string text = DatabaseTools.Ask("UlysiSQL: find in all databases", "Object or column name contains:");
             if (text == null) return;
             var databases = await Task.Run(() => LiveMetadata.Databases(connection));
             var errors = new List<string>();
             var table = await Task.Run(() => DatabaseTools.Search(connection, databases, text, errors));
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            DatabaseTools.Show("Querywright: \"" + text + "\" in " + databases.Count + " databases", table, errors);
+            DatabaseTools.Show("UlysiSQL: \"" + text + "\" in " + databases.Count + " databases", table, errors);
         });
 
         /// <summary>Procedures, views, functions and triggers in the current database whose code contains the text. Explicit command only;
@@ -1202,7 +1216,7 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var connection = options?.LiveMetadata != false ? LiveMetadata.Capture() : null;
-            if (connection == null) throw new InvalidOperationException("Connect the query window to the server to search, and turn on Read live metadata under Tools > Options > Querywright.");
+            if (connection == null) throw new InvalidOperationException("Connect the query window to the server to search, and turn on Read live metadata under Tools > Options > UlysiSQL.");
             string initial = null;
             try
             {
@@ -1214,14 +1228,15 @@ namespace Querywright.Ssms
                     : System.Text.RegularExpressions.Regex.Matches(line.GetText(), @"[\w@#$]+").Cast<System.Text.RegularExpressions.Match>().FirstOrDefault(m => m.Index <= column && column <= m.Index + m.Length)?.Value;
             }
             catch (InvalidOperationException) { }
-            string text = DatabaseTools.Ask("Querywright: find in database code", "Code contains (a table or view name finds its usages):", initial);
+            string text = DatabaseTools.Ask("UlysiSQL: find in database code", "Code contains (a table or view name finds its usages):", initial);
             if (text == null) return;
             var errors = new List<string>();
             var table = await Task.Run(() => DatabaseTools.SearchCode(connection, text, errors));
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            DatabaseTools.Show("Querywright: \"" + text + "\" in " + (connection.Database ?? "database") + " code", table, errors, row =>
+            DatabaseTools.Show("UlysiSQL: \"" + text + "\" in " + (connection.Database ?? "database") + " code", table, errors, row =>
             {
                 string key = connection.Key + "\0" + row["Schema"] + "." + row["Object"];
+                PruneScriptTabs();
                 scriptTabs[key] = default;
                 _ = JoinableTaskFactory.RunAsync(() => ScriptObjectAsync(connection, (string)row["Schema"], (string)row["Object"], key, row["Line"] as int? ?? 0));
             });
@@ -1235,7 +1250,7 @@ namespace Querywright.Ssms
                 throw new InvalidOperationException("Select the statements to encapsulate.");
             var span = view.Selection.StreamSelectionSpan.SnapshotSpan;
             string sql = span.Snapshot.GetText();
-            var prompt = new PromptDialog("Querywright: encapsulate as stored procedure", "_Procedure name (schema.name):", "dbo.usp_NewProcedure");
+            var prompt = new PromptDialog("UlysiSQL: encapsulate as stored procedure", "_Procedure name (schema.name):", "dbo.usp_NewProcedure");
             if (!await ShowDialogAsync(prompt)) return;
             string full = prompt.Value.Trim();
             int dot = full.IndexOf('.');
@@ -1276,7 +1291,7 @@ namespace Querywright.Ssms
             if (result.Fixed > 0)
                 ReplaceText(view, new SnapshotSpan(snapshot, 0, snapshot.Length), result.Text, Math.Min(view.Caret.Position.BufferPosition.Position, result.Text.Length), 0, 0, "Fix all issues");
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-            status?.SetText($"Querywright: fixed {result.Fixed} issues.");
+            status?.SetText($"UlysiSQL: fixed {result.Fixed} issues.");
         });
 
         /// <summary>
@@ -1323,7 +1338,7 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-            status?.SetText("Querywright: " + message + (cells.Truncated ? " Stopped at the cell limit; select fewer cells for the rest." : ""));
+            status?.SetText("UlysiSQL: " + message + (cells.Truncated ? " Stopped at the cell limit; select fewer cells for the rest." : ""));
         }
 
         private Task CopyAsInAsync() => RunCommandAsync(async () =>
@@ -1374,7 +1389,7 @@ namespace Querywright.Ssms
             string baseName = ResultGrid.FileName(QueryTextOrNull(), DateTime.Now);
             string path = await Task.Run(() =>
             {
-                string folder = Path.Combine(Path.GetTempPath(), "Querywright", "Results");
+                string folder = Path.Combine(Path.GetTempPath(), "UlysiSQL", "Results");
                 Directory.CreateDirectory(folder);
                 foreach (var old in new DirectoryInfo(folder).GetFiles("*.xlsx").Where(f => f.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-1)))
                     try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
@@ -1393,7 +1408,7 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var cells = ReadFocusedGrid(valuesOnly: false);
-            var dialog = new Microsoft.Win32.SaveFileDialog { Title = "Querywright: save results as CSV", Filter = "CSV (comma delimited)|*.csv|All files|*.*", FileName = ResultGrid.FileName(QueryTextOrNull(), DateTime.Now) + ".csv", OverwritePrompt = true };
+            var dialog = new Microsoft.Win32.SaveFileDialog { Title = "UlysiSQL: save results as CSV", Filter = "CSV (comma delimited)|*.csv|All files|*.*", FileName = ResultGrid.FileName(QueryTextOrNull(), DateTime.Now) + ".csv", OverwritePrompt = true };
             if (dialog.ShowDialog() != true) return;
             string file = dialog.FileName;
             char separator = CsvSeparator(options?.CsvDelimiter);
@@ -1410,7 +1425,7 @@ namespace Querywright.Ssms
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             string path = options.SettingsFile;
             bool created = string.IsNullOrWhiteSpace(path);
-            if (created) path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "settings.xml");
+            if (created) path = Path.Combine(Product.DataFolder, "settings.xml");
             var settings = File.Exists(path) ? await Task.Run(() => WorkbenchSettings.Load(path)) : new WorkbenchSettings();
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             using (var dialog = new FormattingStyleDialog(settings, path))
@@ -1421,7 +1436,7 @@ namespace Querywright.Ssms
             await Task.Run(() => settings.Save(path));
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             if (created) { options.SettingsFile = path; options.SaveSettingsToStorage(); }
-            (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("Querywright: formatting style and rules saved to " + path);
+            (await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar)?.SetText("UlysiSQL: formatting style and rules saved to " + path);
         });
 
         /// <summary>Formats every .sql file under a folder after a preview count and confirmation. Never touches a database.</summary>
@@ -1429,7 +1444,7 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             string folder;
-            using (var picker = new System.Windows.Forms.FolderBrowserDialog { Description = "Querywright: format all .sql files in this folder and its subfolders", ShowNewFolderButton = false })
+            using (var picker = new System.Windows.Forms.FolderBrowserDialog { Description = "UlysiSQL: format all .sql files in this folder and its subfolders", ShowNewFolderButton = false })
             {
                 if (picker.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
                 folder = picker.SelectedPath;
@@ -1437,7 +1452,7 @@ namespace Querywright.Ssms
             var style = (await ReadSettingsAsync()).Formatting;
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            status?.SetText("Querywright: checking .sql files...");
+            status?.SetText("UlysiSQL: checking .sql files...");
             var files = await Task.Run(() => SqlFiles(folder));
             var preview = await Task.Run(() => SqlFormatting.FormatFiles(files, style, write: false));
             await JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -1447,13 +1462,13 @@ namespace Querywright.Ssms
             {
                 string question = $"Format {changes} of {files.Count} .sql file(s) in place?\n\n{files.Count - changes - failed} already formatted, {failed} cannot be formatted (left untouched).\n" +
                     "Files keep their encoding and line endings. There is no undo; use source control or a copy.";
-                if (VsShellUtilities.ShowMessageBox(this, question, "Querywright", OLEMSGICON.OLEMSGICON_QUERY, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) != 6) return; // 6 = IDYES
-                status?.SetText("Querywright: formatting " + changes + " file(s)...");
+                if (VsShellUtilities.ShowMessageBox(this, question, "UlysiSQL", OLEMSGICON.OLEMSGICON_QUERY, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) != 6) return; // 6 = IDYES
+                status?.SetText("UlysiSQL: formatting " + changes + " file(s)...");
                 var targets = preview.Where(r => r.Status == SqlFormatting.FileStatus.Changed).Select(r => r.Path).ToList();
                 var written = await Task.Run(() => SqlFormatting.FormatFiles(targets, style, write: true));
                 results = preview.Where(r => r.Status != SqlFormatting.FileStatus.Changed).Concat(written).OrderBy(r => r.Path, StringComparer.OrdinalIgnoreCase).ToList();
             }
-            var report = new StringBuilder($"-- Querywright bulk format: {folder}\r\n");
+            var report = new StringBuilder($"-- UlysiSQL bulk format: {folder}\r\n");
             foreach (var group in results.GroupBy(r => r.Status).OrderByDescending(g => g.Key))
             {
                 report.Append($"--\r\n-- {group.Key} ({group.Count()})\r\n");
@@ -1462,7 +1477,7 @@ namespace Querywright.Ssms
             if (files.Count == 0) report.Append("-- No .sql files found.\r\n");
             await OpenInNewQueryAsync(report.ToString(), "Bulk format report");
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            status?.SetText($"Querywright: formatted {results.Count(r => r.Status == SqlFormatting.FileStatus.Changed)} file(s); {results.Count(r => r.Status == SqlFormatting.FileStatus.Failed)} failed.");
+            status?.SetText($"UlysiSQL: formatted {results.Count(r => r.Status == SqlFormatting.FileStatus.Changed)} file(s); {results.Count(r => r.Status == SqlFormatting.FileStatus.Failed)} failed.");
         });
 
         /// <summary>*.sql files under a folder; skips hidden, system and link folders (.git, junction loops) and unreadable ones.</summary>
@@ -1571,9 +1586,9 @@ namespace Querywright.Ssms
 
         internal WorkbenchOptions Options => options;
 
-        /// <summary>For File > Save: the focused SQL view, else the active document's SQL view when focus is in its results.
-        /// Null when the document being saved is not SQL, so another tab is never formatted.</summary>
-        internal IWpfTextView SavedSqlView()
+        /// <summary>For File > Save and Query.Execute: the focused SQL view, else the active document's SQL view when focus is in its results.
+        /// Null when the active document is not SQL, so another tab is never formatted or checked.</summary>
+        internal IWpfTextView DocumentSqlView()
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             try { return GetSqlView(); }
@@ -1585,6 +1600,15 @@ namespace Querywright.Ssms
                 return null;
             return view.TextBuffer.Properties.TryGetProperty(typeof(ITextDocument), out ITextDocument document)
                 && string.Equals(document.FilePath, moniker as string, StringComparison.OrdinalIgnoreCase) ? view : null;
+        }
+
+        /// <summary>The active SQL view, or null where <see cref="GetSqlView"/> would throw.</summary>
+        internal IWpfTextView TryGetSqlView(bool mustHaveFocus = true)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (textManager == null || components == null || ErrorHandler.Failed(textManager.GetActiveView(mustHaveFocus ? 1 : 0, null, out var adapter)) || adapter == null) return null;
+            var view = components.GetService<IVsEditorAdaptersFactoryService>().GetWpfTextView(adapter);
+            return view == null || view.IsClosed || !EditorListener.IsSql(view.TextBuffer.ContentType) ? null : view;
         }
 
         internal IWpfTextView GetSqlView(bool mustHaveFocus = true)
@@ -1644,7 +1668,7 @@ namespace Querywright.Ssms
                 }
                 errorList.Show();
                 var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-                status?.SetText($"Querywright: {result.Diagnostics.Count} diagnostics.");
+                status?.SetText($"UlysiSQL: {result.Diagnostics.Count} diagnostics.");
             }
             catch (OperationCanceledException) { }
             catch (Exception error) when (!(error is OutOfMemoryException))
@@ -1676,7 +1700,7 @@ namespace Querywright.Ssms
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             SelfTest.Note += " warning"; // not the message: F12 logs Note, and messages can hold object names
-            VsShellUtilities.ShowMessageBox(this, message, "Querywright",
+            VsShellUtilities.ShowMessageBox(this, message, "UlysiSQL",
                 OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }
 
@@ -1732,7 +1756,7 @@ namespace Querywright.Ssms
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException ||
                 error is ArgumentException || error is FormatException || error is InvalidOperationException || error is COMException)
             {
-                VsShellUtilities.ShowMessageBox(this, error.Message, "Querywright snippet insertion",
+                VsShellUtilities.ShowMessageBox(this, error.Message, "UlysiSQL snippet insertion",
                     OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
             }
         }

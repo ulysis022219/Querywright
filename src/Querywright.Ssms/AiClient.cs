@@ -18,7 +18,7 @@ namespace Querywright.Ssms
 {
     public enum AiApiFormat { OpenAiCompatible, Anthropic }
 
-    /// <summary>Tools > Options > Querywright > AI. The provider is whatever the base URL points at.</summary>
+    /// <summary>Tools > Options > UlysiSQL > AI. The provider is whatever the base URL points at.</summary>
     public sealed class AiOptions : DialogPage
     {
         private const string Saved = "(saved)";
@@ -49,7 +49,7 @@ namespace Querywright.Ssms
         public string ExtraRequestJson { get; set; } = "";
 
         /// <summary>Never holds the key: reads back a placeholder, so the options store only ever sees "(saved)". The key itself
-        /// is encrypted for the Windows account (DPAPI) in %LocalAppData%\Querywright\ai-key.bin.</summary>
+        /// is encrypted for the Windows account (DPAPI) in %LocalAppData%\UlysiSQL\ai-key.bin.</summary>
         [Category("Provider")]
         [DisplayName("API key")]
         [Description("Paste the provider's API key and press OK. Stored encrypted for your Windows account, outside the SSMS settings. Clear the box to remove it. Leave empty for a local server that needs none.")]
@@ -72,7 +72,7 @@ namespace Querywright.Ssms
 
         [Category("MCP server")]
         [DisplayName("Run MCP server")]
-        [Description("Lets MCP clients (Claude Code, Claude Desktop, Cursor, VS Code) read the active query window, browse the connected database, format, analyze and execute SQL. Listens on this computer only and requires the token from Querywright > AI > Copy MCP client configuration.")]
+        [Description("Lets MCP clients (Claude Code, Claude Desktop, Cursor, VS Code) read the active query window, browse the connected database, format, analyze and execute SQL. Listens on this computer only and requires the token from UlysiSQL > AI > Copy MCP client configuration.")]
         public bool McpServer { get; set; }
 
         [Category("MCP server")]
@@ -86,7 +86,7 @@ namespace Querywright.Ssms
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is InvalidOperationException)
             {
                 e.ApplyBehavior = ApplyKind.CancelNoNavigate;
-                VsShellUtilities.ShowMessageBox(WorkbenchPackage.Instance, "Could not save model choice: " + error.Message, "Querywright AI", Microsoft.VisualStudio.Shell.Interop.OLEMSGICON.OLEMSGICON_WARNING,
+                VsShellUtilities.ShowMessageBox(WorkbenchPackage.Instance, "Could not save model choice: " + error.Message, "UlysiSQL AI", Microsoft.VisualStudio.Shell.Interop.OLEMSGICON.OLEMSGICON_WARNING,
                     Microsoft.VisualStudio.Shell.Interop.OLEMSGBUTTON.OLEMSGBUTTON_OK, Microsoft.VisualStudio.Shell.Interop.OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
                 return;
             }
@@ -97,7 +97,7 @@ namespace Querywright.Ssms
 
     internal static class AiKey
     {
-        private static readonly string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright");
+        private static readonly string Folder = Product.DataFolder;
         private static readonly string File = Path.Combine(Folder, "ai-key.bin");
         private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Querywright AI provider key");
 
@@ -146,7 +146,7 @@ namespace Querywright.Ssms
                 throw new InvalidOperationException("Use a provider base URL without credentials, query parameters or fragments.");
             string key = AiKey.Read();
             if (key.Length == 0 && !uri.IsLoopback)
-                throw new InvalidOperationException("Enter your AI provider API key under Tools > Options > Querywright > AI.");
+                throw new InvalidOperationException("Enter your AI provider API key under Tools > Options > UlysiSQL > AI.");
             return key;
         }
 

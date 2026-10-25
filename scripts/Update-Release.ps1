@@ -3,7 +3,7 @@ function Get-QuerywrightReleaseAsset {
     param($Release, [string]$Tag)
     if ($Tag -cnotmatch '\Av[0-9]+\.[0-9]+\.[0-9]+\z' -or
         $Release.tag_name -cne $Tag -or $Release.draft -ne $false -or $Release.prerelease -ne $false) {
-        throw 'Expected a published stable Querywright release matching the requested version.'
+        throw 'Expected a published stable UlysiSQL release matching the requested version.'
     }
     $name = "QueryWright_$Tag.zip"
     $assets = @($Release.assets | Where-Object { $_.name -ceq $name })
@@ -46,7 +46,7 @@ function Save-QuerywrightArchive {
     $handler = [Net.Http.HttpClientHandler]::new()
     $handler.AllowAutoRedirect = $false
     $client = [Net.Http.HttpClient]::new($handler)
-    $client.DefaultRequestHeaders.UserAgent.ParseAdd('Querywright-update')
+    $client.DefaultRequestHeaders.UserAgent.ParseAdd('UlysiSQL-update')
     $timeout = [Threading.CancellationTokenSource]::new([TimeSpan]::FromMinutes(5))
     try {
         for ($redirects = 0; $redirects -le 5; $redirects++) {

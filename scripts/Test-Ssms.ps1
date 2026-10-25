@@ -185,7 +185,10 @@ if ($live) {
     $text = Session 'wildcard' "SELECT *`r`nFROM dbo.People;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|home|right:8|tab|wait:3000'
     Expect '* + Tab from live metadata' $text { param($t) $t -match 'FullName' -and $t -notmatch '\*' }
     # The schema cache holds names and types only: no row data, no connection strings.
-    $cache = Get-ChildItem "$env:LOCALAPPDATA\Querywright\SchemaCache" -Filter *.txt -ErrorAction SilentlyContinue
+    # Same choice as Product.DataFolder: installs from before the rename keep %LOCALAPPDATA%\Querywright.
+    $data = Join-Path $env:LOCALAPPDATA 'UlysiSQL'
+    if (-not (Test-Path -LiteralPath $data) -and (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Querywright'))) { $data = Join-Path $env:LOCALAPPDATA 'Querywright' }
+    $cache = Get-ChildItem (Join-Path $data 'SchemaCache') -Filter *.txt -ErrorAction SilentlyContinue
     $cached = ($cache | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
     $results['schema cache on disk'] = if ($cache -and $cached -match 'FullName' -and $cached -match 'GetPeople' -and $cached -notmatch 'Ann|Neil|Integrated|Password|localdb' -and ($cache.BaseName -match '^[0-9a-f]{64}$')) { 'PASS' } else { "FAIL: [$($cache.Name)] $cached" }
     $text = Session 'columns' "SELECT  FROM dbo.People p;" @('-S', $server, '-d', 'QwTest', '-C') 'ready|home|right:7|type:p.Ful|wait:3000|tab|wait:1000'
@@ -217,9 +220,9 @@ if ($live) {
 
 foreach ($log in Get-ChildItem $Out -Filter 'ActivityLog-*.xml') {
     [xml]$activity = Get-Content $log.FullName
-    $activity.activity.entry | Where-Object { ($_.description + $_.source + $_.path) -match 'Querywright|a13c1b0c' } |
+    $activity.activity.entry | Where-Object { ($_.description + $_.source + $_.path) -match 'Querywright|UlysiSQL|a13c1b0c' } |
         ForEach-Object { "$($log.BaseName): $($_.type) $($_.source): $($_.description)" }
-    $ours = $activity.activity.entry | Where-Object { $_.type -eq 'Error' -and ($_.description + $_.source + $_.path) -match 'Querywright|a13c1b0c' }
+    $ours = $activity.activity.entry | Where-Object { $_.type -eq 'Error' -and ($_.description + $_.source + $_.path) -match 'Querywright|UlysiSQL|a13c1b0c' }
     $results["package errors ($($log.BaseName))"] = if ($ours) { 'FAIL: ' + (($ours | ForEach-Object description) -join ' | ') } else { 'PASS' }
 }
 $results.GetEnumerator() | ForEach-Object { Write-Output ("{0}: {1}" -f $_.Key, $_.Value) }

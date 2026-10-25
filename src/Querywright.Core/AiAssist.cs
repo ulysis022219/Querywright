@@ -104,7 +104,7 @@ namespace Querywright.Core
         {
             string url = (baseUrl ?? "").Trim().TrimEnd('/');
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http"))
-                throw new InvalidOperationException("Set the AI provider base URL under Tools > Options > Querywright > AI (for example https://api.deepseek.com).");
+                throw new InvalidOperationException("Set the AI provider base URL under Tools > Options > UlysiSQL > AI (for example https://api.deepseek.com).");
             if (anthropic) return url.EndsWith("/messages", StringComparison.OrdinalIgnoreCase) ? url : url + (url.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? "/messages" : "/v1/messages");
             return url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase) ? url : url + "/chat/completions";
         }
@@ -112,7 +112,7 @@ namespace Querywright.Core
         public static string RequestBody(string model, IReadOnlyList<AiMessage> messages, bool anthropic, int? maxTokens = null, double? temperature = 0.1, bool stream = false,
             AiReasoningLevel reasoning = AiReasoningLevel.Off, string? extraRequestJson = null, string? baseUrl = null)
         {
-            if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Set the AI model name under Tools > Options > Querywright > AI.");
+            if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("Set the AI model name under Tools > Options > UlysiSQL > AI.");
             int tokenLimit = maxTokens ?? 4096;
             if (tokenLimit <= 0) throw new ArgumentOutOfRangeException(nameof(maxTokens));
             if (temperature.HasValue && (double.IsNaN(temperature.Value) || double.IsInfinity(temperature.Value) || temperature.Value < 0 || temperature.Value > 2))
@@ -285,10 +285,12 @@ namespace Querywright.Core
         public static IReadOnlyList<string> SqlChanges(string sql)
         {
             var parser = new TSql170Parser(true);
-            var script = parser.Parse(new StringReader(sql), out var errors);
+            var script = parser.ParseSafe(sql, out var errors);
             var changes = new List<string>();
-            var words = new HashSet<string>(new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "DROP", "ALTER", "CREATE", "EXEC", "EXECUTE", "GRANT", "REVOKE", "DENY" }, StringComparer.OrdinalIgnoreCase);
-            foreach (var token in script.ScriptTokenStream ?? Array.Empty<TSqlParserToken>())
+            var words = new HashSet<string>(new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "DROP", "ALTER", "CREATE", "EXEC", "EXECUTE", "GRANT", "REVOKE", "DENY",
+                "BACKUP", "RESTORE", "DBCC", "KILL", "SHUTDOWN", "RECONFIGURE", "WRITETEXT", "UPDATETEXT" }, StringComparer.OrdinalIgnoreCase);
+            // SQL too deep to parse still gets the keyword scan: the lexer is iterative.
+            foreach (var token in script.ScriptTokenStream ?? parser.GetTokenStream(new StringReader(sql), out _))
             {
                 if (token.TokenType == TSqlTokenType.EndOfFile || token.TokenType == TSqlTokenType.Identifier || token.TokenType == TSqlTokenType.QuotedIdentifier) continue;
                 string word = token.Text.ToUpperInvariant();
@@ -297,6 +299,8 @@ namespace Querywright.Core
             }
             var execution = new ExecutionWarning(); script.Accept(execution);
             if (execution.Executes && !changes.Contains("EXEC") && !changes.Contains("EXECUTE")) changes.Add("EXEC");
+            // ENABLE and DISABLE are not reserved words, so the token scan cannot see them.
+            if (execution.Triggers != null && !changes.Contains(execution.Triggers)) changes.Add(execution.Triggers);
             if (errors.Count > 0) changes.Add("Unrecognized SQL (parse errors; effects unknown)");
             return changes;
         }
@@ -304,7 +308,9 @@ namespace Querywright.Core
         private sealed class ExecutionWarning : TSqlFragmentVisitor
         {
             internal bool Executes;
+            internal string? Triggers;
             public override void ExplicitVisit(ExecuteStatement node) { Executes = true; }
+            public override void ExplicitVisit(EnableDisableTriggerStatement node) { Triggers = node.TriggerEnforcement == TriggerEnforcement.Enable ? "ENABLE TRIGGER" : "DISABLE TRIGGER"; }
         }
 
         private static string Key(SchemaTable table) => table.Schema + "." + table.Name;

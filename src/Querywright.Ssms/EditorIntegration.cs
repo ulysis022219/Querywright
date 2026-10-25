@@ -52,7 +52,7 @@ namespace Querywright.Ssms
             var view = Adapters.GetWpfTextView(adapter);
             if (view == null) return;
             var type = view.TextBuffer.ContentType;
-            Diagnostics.TryLogInformation("Querywright",
+            Diagnostics.TryLogInformation("UlysiSQL",
                 "Editor opened: content type " + type.TypeName + " (" + string.Join(",", type.BaseTypes.Select(b => b.TypeName)) + ")");
             if (!IsSql(type)) return;
             WorkbenchPackage.EnsureLoaded();
@@ -91,8 +91,10 @@ namespace Querywright.Ssms
                 try { SaveHistory(false); }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { EditorCommandFilter.Swallowed(error); }
             };
-            view.TextBuffer.Changed += (s, e) => { history.Stop(); history.Start(); };
-            view.Closed += (s, e) => { history.Stop(); SaveHistory(false); };
+            EventHandler<TextContentChangedEventArgs> restart = (s, e) => { history.Stop(); history.Start(); };
+            view.TextBuffer.Changed += restart;
+            // The buffer can outlive the view; a later edit must not restart the timer of a closed one.
+            view.Closed += (s, e) => { view.TextBuffer.Changed -= restart; history.Stop(); SaveHistory(false); };
             var filter = new EditorCommandFilter(view, Completion, QuickInfo);
             if (ErrorHandler.Succeeded(adapter.AddCommandFilter(filter, out var next))) filter.Next = next;
             SelfTest.Adapter = adapter;
@@ -227,8 +229,11 @@ namespace Querywright.Ssms
         {
             var session = completion.GetSession(view);
             if (session == null || session.IsDismissed) return true;
-            string typed = session.ApplicableToSpan.GetText(view.TextBuffer.CurrentSnapshot);
-            var selected = Computed(session)?.SelectedItem;
+            return Matches(Computed(session)?.SelectedItem, session.ApplicableToSpan.GetText(view.TextBuffer.CurrentSnapshot));
+        }
+
+        private static bool Matches(VsCompletionItem? selected, string typed)
+        {
             if (typed.Length == 0 || selected == null) return typed.Length == 0;
             var options = WorkbenchPackage.Instance?.Options;
             return options?.SmartMatching != false ? SqlCompletion.Match(selected.FilterText, typed, options?.CamelHumps != false) != MatchKind.None
@@ -245,7 +250,8 @@ namespace Querywright.Ssms
             var computed = Computed(session);
             if (computed == null) return false;
             string word = session.ApplicableToSpan.GetText(view.TextBuffer.CurrentSnapshot);
-            return computed.SelectedItem != null && !computed.UsesSoftSelection && word.Length > 0 && SelectionMatches() &&
+            // The list already in hand: SelectionMatches would wait on the session a second time.
+            return computed.SelectedItem != null && !computed.UsesSoftSelection && word.Length > 0 && Matches(computed.SelectedItem, word) &&
                 !CompletionRules.KeepsTyping(computed.SelectedItem.FilterText, word, typed);
         }
 
@@ -319,7 +325,7 @@ namespace Querywright.Ssms
         }
 
         internal static void Swallowed(Exception error) =>
-            Diagnostics.TryLogWarning("Querywright", "Editor command failed: " + error.GetType().Name + " at " + error.TargetSite?.DeclaringType?.FullName + "." + error.TargetSite?.Name);
+            Diagnostics.TryLogWarning("UlysiSQL", "Editor command failed: " + error.GetType().Name + " at " + error.TargetSite?.DeclaringType?.FullName + "." + error.TargetSite?.Name);
 
         public int QueryStatus(ref Guid group, uint count, OLECMD[] commands, IntPtr text)
         {
@@ -544,7 +550,8 @@ namespace Querywright.Ssms
                 session.Dismiss();
                 return Task.FromResult<FilteredCompletionModel>(null!);
             }
-            var shown = matches.Select(m => new CompletionItemWithHighlight(m.Item,
+            // Bold letters only where anyone looks: each costs a second match, and a list of thousands is refiltered per keystroke.
+            var shown = matches.Select((m, row) => new CompletionItemWithHighlight(m.Item, row >= 200 ? ImmutableArray<Span>.Empty :
                 SqlCompletion.Highlights(m.Item.DisplayText, typed, camel).Select(i => new Span(i, 1)).ToImmutableArray())).ToImmutableArray();
             // Any typed word firmly selects the best match; nothing typed, or a word that may be a new alias, stays soft.
             bool soft = typed.Length == 0 || session.TextView.Properties.TryGetProperty(SoftKey, out bool alias) && alias && matches[0].Kind != MatchKind.Exact;
@@ -562,7 +569,7 @@ namespace Querywright.Ssms
             textView.Properties.GetOrCreateSingletonProperty(() => new CompletionCommitManager(EditorListener.IsSql(textView.TextBuffer.ContentType)));
     }
 
-    /// <summary>Optional commit keys (space, dot, comma, parentheses, ], semicolon) for Querywright's own items. Tab and Enter are the editor's.</summary>
+    /// <summary>Optional commit keys (space, dot, comma, parentheses, ], semicolon) for UlysiSQL's own items. Tab and Enter are the editor's.</summary>
     internal sealed class CompletionCommitManager : IAsyncCompletionCommitManager
     {
         private readonly bool sql;

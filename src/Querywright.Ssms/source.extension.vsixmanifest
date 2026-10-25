@@ -3,7 +3,7 @@
   <Metadata>
     <!-- Identity Id keeps the pre-rename value so installs upgrade in place. -->
     <Identity Id="SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450" Version="1.0.0" Language="en-US" Publisher="Querywright contributors" />
-    <DisplayName>Querywright (development prototype)</DisplayName>
+    <DisplayName>UlysiSQL (development prototype)</DisplayName>
     <Description xml:space="preserve">Independent SQL productivity prototype: snippets, formatting, analysis, offline completion popup, Tab snippet shortcuts, F12 navigation, wildcard expansion, semicolons and local-variable rename.</Description>
   </Metadata>
   <Installation>

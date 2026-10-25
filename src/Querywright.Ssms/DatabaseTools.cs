@@ -97,7 +97,7 @@ ELSE
                     }
                     if (addDatabase)
                     {
-                        var added = table.Columns.Add(table.Columns.Contains(DatabaseColumn) ? "Querywright_" + DatabaseColumn : DatabaseColumn, typeof(string));
+                        var added = table.Columns.Add(table.Columns.Contains(DatabaseColumn) ? "UlysiSQL_" + DatabaseColumn : DatabaseColumn, typeof(string));
                         added.SetOrdinal(0);
                         foreach (DataRow row in table.Rows) row[0] = database;
                     }

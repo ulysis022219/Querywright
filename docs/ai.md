@@ -1,11 +1,11 @@
 # AI assistant and MCP server
 
-Querywright's AI features work with the provider you choose. DeepSeek is the default; any service that speaks the
+UlysiSQL's AI features work with the provider you choose. DeepSeek is the default; any service that speaks the
 OpenAI chat-completions format or the Anthropic messages format works.
 
 ## Setup
 
-Tools > Options > Querywright > AI (also Querywright > AI options...).
+Tools > Options > UlysiSQL > AI (also UlysiSQL > AI options...).
 
 | Setting | Default | Notes |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ Tools > Options > Querywright > AI (also Querywright > AI options...).
 | Model | `deepseek-chat` | The provider's model name. |
 | Reasoning | Off | Request Low, Medium or High effort from the panel. Off omits fields; it does not override provider defaults. |
 | Extra request JSON | empty | Provider-specific request object; messages, model, stream and credentials cannot be replaced. `{"temperature":null}` omits temperature. Reasoning fields apply only while reasoning is selected. |
-| API key | (none) | Type it once; it is encrypted for your Windows account (DPAPI) in `%LocalAppData%\Querywright\ai-key.bin` and never shown again. |
+| API key | (none) | Type it once; it is encrypted for your Windows account (DPAPI) in `%LocalAppData%\UlysiSQL\ai-key.bin` and never shown again. |
 | Schema tables sent | 30 | Table definitions sent as context. 0 sends none. |
 | Ask before running AI SQL | on | Confirmation box before the panel's Run button or the MCP `execute_sql` tool runs anything. |
 | Run MCP server / port | off / 8765 | See below. |
@@ -31,7 +31,7 @@ schema or prompt is sent. Opening the panel alone makes no provider request.
 
 | Command | What it does |
 | --- | --- |
-| AI assistant (Alt+Z) | Dockable chat transcript: write a query, change the selection, explain, fix, optimize, ask follow-ups. Up in an empty prompt recalls the last prompt. Recent prompts are kept in `%LocalAppData%\Querywright\ai-prompts.json`. |
+| AI assistant (Alt+Z) | Dockable chat transcript: write a query, change the selection, explain, fix, optimize, ask follow-ups. Up in an empty prompt recalls the last prompt. Recent prompts are kept in `%LocalAppData%\UlysiSQL\ai-prompts.json`. |
 | AI: explain SQL | Explains the selection or script. |
 | AI: fix errors | Compiles each GO batch with `SET NOEXEC ON` (nothing runs) and asks for a corrected script. |
 | AI: optimize query | Reads the estimated plan with `SET SHOWPLAN_XML ON` (nothing runs) and asks for a faster rewrite. |
@@ -84,7 +84,7 @@ errors only (a missing table or a runtime error is not found by `NOEXEC`).
 The editable model picker loads `/models` from the configured OpenAI-compatible endpoint, or `/v1/models` for
 Anthropic, including paginated Anthropic lists. Lists are cached per format/base URL for the session; Refresh
 models reloads them. If discovery fails, type an identifier. Last ten choices and selected model per base URL
-persist in `%LocalAppData%\Querywright\ai-models.json`; provider URL keys are hashes. Model choice and requested
+persist in `%LocalAppData%\UlysiSQL\ai-models.json`; provider URL keys are hashes. Model choice and requested
 reasoning are saved back to Tools > Options. Neither file stores the API key or reasoning text.
 
 Off sends no reasoning/thinking/effort/budget fields, including nested Extra request JSON. Providers may still
@@ -158,10 +158,10 @@ theme dictionaries, not a claim of hands-on host validation. Hands-on panel chec
 ## MCP server
 
 Lets an external agent (Claude Code, Claude Desktop, Cursor, any MCP client) work with the SSMS window you have open.
-Turn on "Run MCP server", then Querywright > Copy MCP configuration and paste into the client's configuration:
+Turn on "Run MCP server", then UlysiSQL > Copy MCP configuration and paste into the client's configuration:
 
 ```json
-{"mcpServers":{"querywright":{"type":"http","url":"http://localhost:8765/mcp","headers":{"Authorization":"Bearer <token>"}}}}
+{"mcpServers":{"ulysisql":{"type":"http","url":"http://localhost:8765/mcp","headers":{"Authorization":"Bearer <token>"}}}}
 ```
 
 Tools:
@@ -173,9 +173,9 @@ Tools:
 | `list_tables`, `list_views`, `list_stored_procedures` | Names, optional `filter` |
 | `list_table_details`, `list_view_details`, `list_stored_procedure_details` | Script of one object (`name` as schema.name) |
 | `list_related_objects` | Foreign keys both ways and objects that use it |
-| `format_tsql` | Formatted text in your Querywright style |
+| `format_tsql` | Formatted text in your UlysiSQL style |
 | `list_tsql_execution_errors` | Compile errors (`NOEXEC`) |
-| `list_tsql_code_analysis_issues`, `fix_code_analysis_issues` | Querywright analysis findings; script with automatic fixes applied |
+| `list_tsql_code_analysis_issues`, `fix_code_analysis_issues` | UlysiSQL analysis findings; script with automatic fixes applied |
 | `get_query_execution_plan` | Estimated plan XML |
 | `execute_sql` | **Really executes** the SQL on the query window's connection and login; returns result sets (200 rows each unless `max_rows`), messages and rows affected |
 
@@ -186,7 +186,7 @@ Tools that take `sql` use the active query window's script when it is omitted. N
 `execute_sql` runs whatever the agent sends, with your login's permissions, and nothing is rolled back.
 
 - The server listens on the loopback interface only and is off until you turn it on.
-- Every request needs the bearer token (`%LocalAppData%\Querywright\mcp-token.txt`). Delete that file and restart SSMS to revoke it. Anyone holding the token can run SQL through your open window, so keep the configuration out of shared files.
+- Every request needs the bearer token (`%LocalAppData%\UlysiSQL\mcp-token.txt`). Delete that file and restart SSMS to revoke it. Anyone holding the token can run SQL through your open window, so keep the configuration out of shared files.
 - Requests carrying a non-loopback `Origin` (a web page in your browser) are refused.
 - "Ask before running AI SQL" shows each `execute_sql` script, with server and database, for a Yes/No before it runs. Turning it off lets the agent run SQL unattended; do that only against a database you can afford to lose.
 - Result rows returned by `execute_sql` go to the agent and from there to whatever model the agent uses.

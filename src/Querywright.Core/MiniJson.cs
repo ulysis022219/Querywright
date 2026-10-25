@@ -54,6 +54,18 @@ namespace Querywright.Core
                     }
                     text.Append('}');
                     break;
+                // Dictionary<string, string> and the like, which would otherwise come out as an array of pairs.
+                case System.Collections.IDictionary other:
+                    text.Append('{');
+                    bool head = true;
+                    foreach (System.Collections.DictionaryEntry pair in other)
+                    {
+                        if (!head) text.Append(',');
+                        head = false;
+                        Quote(text, Convert.ToString(pair.Key, CultureInfo.InvariantCulture) ?? ""); text.Append(':'); Write(text, pair.Value, depth + 1);
+                    }
+                    text.Append('}');
+                    break;
                 case System.Collections.IEnumerable list:
                     text.Append('[');
                     bool start = true;
@@ -66,7 +78,12 @@ namespace Querywright.Core
                     text.Append(']');
                     break;
                 case double d when double.IsNaN(d) || double.IsInfinity(d): text.Append("null"); break;
-                case IFormattable number: text.Append(number.ToString(value is double || value is float ? "R" : null, CultureInfo.InvariantCulture)); break;
+                case float f when float.IsNaN(f) || float.IsInfinity(f): text.Append("null"); break;
+                case double _: case float _: text.Append(((IFormattable)value).ToString("R", CultureInfo.InvariantCulture)); break;
+                case int _: case long _: case short _: case byte _: case sbyte _: case uint _: case ulong _: case ushort _: case decimal _:
+                    text.Append(((IFormattable)value).ToString(null, CultureInfo.InvariantCulture)); break;
+                // Dates, GUIDs and enums are formattable too, but bare they are not JSON.
+                case IFormattable other: Quote(text, other.ToString(null, CultureInfo.InvariantCulture)); break;
                 default: Quote(text, value.ToString() ?? ""); break;
             }
         }

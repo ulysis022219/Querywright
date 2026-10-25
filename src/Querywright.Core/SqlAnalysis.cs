@@ -25,6 +25,13 @@ namespace Querywright.Core
             TSqlTokenType.Update, TSqlTokenType.Delete, TSqlTokenType.Merge, TSqlTokenType.Declare, TSqlTokenType.Set, TSqlTokenType.If, TSqlTokenType.While,
             TSqlTokenType.Exec, TSqlTokenType.Execute, TSqlTokenType.Create, TSqlTokenType.Alter, TSqlTokenType.Drop, TSqlTokenType.Print, TSqlTokenType.Return };
         private static readonly HashSet<string> NotBlocks = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TRAN", "TRANSACTION", "DISTRIBUTED", "DIALOG", "CONVERSATION" };
+        /// <summary>Statements that end a run of bare IF/WHILE bodies; a condition holds none of these outside parentheses.</summary>
+        private static readonly HashSet<TSqlTokenType> BodyStarts = new HashSet<TSqlTokenType>(StatementStarts.Where(t => t != TSqlTokenType.If && t != TSqlTokenType.While))
+        {
+            TSqlTokenType.Select, TSqlTokenType.Begin, TSqlTokenType.With, TSqlTokenType.Raiserror, TSqlTokenType.GoTo, TSqlTokenType.Break, TSqlTokenType.Continue,
+            TSqlTokenType.WaitFor, TSqlTokenType.Truncate, TSqlTokenType.Commit, TSqlTokenType.Rollback, TSqlTokenType.Save, TSqlTokenType.Fetch, TSqlTokenType.Open,
+            TSqlTokenType.Close, TSqlTokenType.Deallocate, TSqlTokenType.Use, TSqlTokenType.Grant, TSqlTokenType.Revoke, TSqlTokenType.Deny,
+        };
 
         internal static TSqlFragment ParseSafe(this TSqlParser parser, string sql, out IList<ParseError> errors)
         {
@@ -37,20 +44,32 @@ namespace Querywright.Core
         }
 
         /// <summary>
-        /// Counts open parentheses, CASE and BEGIN blocks per batch, operator chains per statement, plus ELSE IF chains (each nests the next IF,
-        /// but costs less stack than a parenthesis, hence the quarter weight). Lexing is iterative, so this is safe on any input.
+        /// Counts open parentheses, CASE and BEGIN blocks per batch, operator chains per statement, runs of prefix operators (NOT, ~, unary + and -),
+        /// plus ELSE IF chains and bare IF/WHILE bodies that hold another IF or WHILE (each nests the next statement, but costs less stack than a
+        /// parenthesis, hence the quarter weight). Lexing is iterative, so this is safe on any input.
         /// </summary>
         internal static bool TooDeep(string sql)
         {
             var tokens = new TSql170Parser(true).GetTokenStream(new StringReader(sql), out _);
-            int depth = 0, elseIf = 0, chain = 0;
+            int depth = 0, elseIf = 0, chain = 0, prefix = 0, bodies = 0, bodiesDepth = 0;
             TSqlParserToken? previous = null;
             foreach (var token in tokens)
             {
                 switch (token.TokenType)
                 {
                     case TSqlTokenType.WhiteSpace: case TSqlTokenType.SingleLineComment: case TSqlTokenType.MultilineComment: continue;
-                    case TSqlTokenType.Go: depth = 0; elseIf = 0; chain = 0; break;
+                }
+                if (token.TokenType == TSqlTokenType.If || token.TokenType == TSqlTokenType.While)
+                {
+                    if (bodies > 0 && depth == bodiesDepth) bodies++;
+                    else { bodies = 1; bodiesDepth = depth; }
+                }
+                else if (depth == bodiesDepth && BodyStarts.Contains(token.TokenType)) bodies = 0;
+                prefix = token.TokenType == TSqlTokenType.Not || token.TokenType == TSqlTokenType.Tilde
+                    || token.TokenType == TSqlTokenType.Plus || token.TokenType == TSqlTokenType.Minus ? prefix + 1 : 0;
+                switch (token.TokenType)
+                {
+                    case TSqlTokenType.Go: depth = 0; elseIf = 0; chain = 0; bodies = 0; break;
                     case TSqlTokenType.LeftParenthesis: case TSqlTokenType.Case: case TSqlTokenType.Begin: depth++; break;
                     case TSqlTokenType.RightParenthesis: case TSqlTokenType.End: if (depth > 0) depth--; break;
                     case TSqlTokenType.If: if (previous?.TokenType == TSqlTokenType.Else) elseIf++; break;
@@ -61,7 +80,7 @@ namespace Querywright.Core
                 }
                 if (Operators.Contains(token.TokenType)) chain++;
                 else if (StatementStarts.Contains(token.TokenType)) chain = 0;
-                if (depth + elseIf / 4 > MaxDepth || chain > MaxChain) return true;
+                if (depth + prefix + (elseIf + bodies) / 4 > MaxDepth || chain > MaxChain) return true;
                 previous = token;
             }
             return false;
@@ -191,10 +210,21 @@ namespace Querywright.Core
         {
             if (sql == null) throw new ArgumentNullException(nameof(sql));
             if (diagnostic == null) throw new ArgumentNullException(nameof(diagnostic));
-            if (sql.Length > 1_000_000 || diagnostic.Offset < 0 || diagnostic.Offset + diagnostic.Length > sql.Length) return null;
-            var parser = new TSql170Parser(true);
-            var script = parser.ParseSafe(sql, out var errors);
-            if (errors.Count > 0) return null;
+            if (!InRange(sql, diagnostic)) return null;
+            var script = new TSql170Parser(true).ParseSafe(sql, out var errors);
+            return errors.Count > 0 ? null : FixParsed(sql, script, diagnostic, tables, defaultSchema, out _);
+        }
+
+        private static bool InRange(string sql, SqlDiagnostic diagnostic) =>
+            sql.Length <= 1_000_000 && diagnostic.Offset >= 0 && diagnostic.Offset + diagnostic.Length <= sql.Length;
+
+        /// <summary><see cref="Fix"/> on text already parsed without errors. <paramref name="fixedScript"/> is the parse of the fixed
+        /// text, which FixAll hands to the next fix instead of parsing the same text again.</summary>
+        private static TextEdit? FixParsed(string sql, TSqlFragment script, SqlDiagnostic diagnostic, IReadOnlyList<SchemaTable>? tables, string defaultSchema,
+            out TSqlFragment? fixedScript)
+        {
+            fixedScript = null;
+            if (!InRange(sql, diagnostic)) return null;
             var nodes = new Spans(diagnostic.Offset, diagnostic.Length);
             script.Accept(nodes);
             string span = sql.Substring(diagnostic.Offset, diagnostic.Length);
@@ -281,8 +311,10 @@ namespace Querywright.Core
                     break;
             }
             if (edit == null) return null;
-            parser.ParseSafe(Apply(sql, edit), out var after);
-            return after.Count == 0 ? edit : null;
+            var parsed = new TSql170Parser(true).ParseSafe(Apply(sql, edit), out var after);
+            if (after.Count > 0) return null;
+            fixedScript = parsed;
+            return edit;
         }
 
         /// <summary>Applies every available fix, re-analyzing between rounds; returns the new text and how many fixes were applied.</summary>
@@ -295,16 +327,20 @@ namespace Querywright.Core
                 var result = Analyze(sql, default, settings);
                 if (!result.Parsed) break;
                 int applied = 0, limit = int.MaxValue;
+                // One parse per applied fix: each fix validates its result by parsing it, and that parse is what the next fix reads.
+                TSqlFragment? script = null;
                 // Back to front so earlier offsets stay valid; overlapping fixes wait for the next round.
                 foreach (var diagnostic in result.Diagnostics.Where(d => FixableRules.Contains(d.Rule)).OrderByDescending(d => d.Offset))
                 {
                     if (diagnostic.Offset + diagnostic.Length > limit) continue;
-                    var edit = Fix(sql, diagnostic, tables, defaultSchema);
-                    if (edit == null || edit.Start + edit.Length > limit) continue;
-                    string next = Apply(sql, edit);
-                    new TSql170Parser(true).ParseSafe(next, out var errors);
-                    if (errors.Count > 0) continue;
-                    sql = next; limit = edit.Start; applied++;
+                    if (script == null)
+                    {
+                        script = new TSql170Parser(true).ParseSafe(sql, out var errors);
+                        if (errors.Count > 0) break;
+                    }
+                    var edit = FixParsed(sql, script, diagnostic, tables, defaultSchema, out var fixedScript);
+                    if (edit == null || fixedScript == null || edit.Start + edit.Length > limit) continue;
+                    sql = Apply(sql, edit); script = fixedScript; limit = edit.Start; applied++;
                 }
                 if (applied == 0) break;
                 count += applied;
@@ -390,11 +426,12 @@ namespace Querywright.Core
             }
         }
 
-        // Inline directives in comments: querywright-disable [IDs], querywright-enable [IDs], querywright-disable-next-line [IDs].
-        // No IDs means every rule. Only rule diagnostics pass through here; parse errors return earlier.
+        // Inline directives in comments: ulysisql-disable [IDs], ulysisql-enable [IDs], ulysisql-disable-next-line [IDs].
+        // The querywright- prefix from before the rename works the same. No IDs means every rule.
+        // Only rule diagnostics pass through here; parse errors return earlier.
         private sealed class Suppression
         {
-            private static readonly Regex Directive = new Regex(@"^(?:--|/\*)\s*querywright-(disable-next-line|disable|enable)(?![\w-])(.*?)(?:\*/)?$",
+            private static readonly Regex Directive = new Regex(@"^(?:--|/\*)\s*(?:ulysisql|querywright)-(disable-next-line|disable|enable)(?![\w-])(.*?)(?:\*/)?$",
                 RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
             private readonly List<(int Offset, bool Enable, string[] Rules)> toggles = new List<(int, bool, string[])>();
             private readonly List<(int Line, string[] Rules)> nextLines = new List<(int, string[])>();

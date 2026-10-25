@@ -1,11 +1,16 @@
 # Run after dotnet build src/Querywright.Ssms, with Windows PowerShell -STA.
 # Offscreen WPF checks: no SSMS install, database connection, or user-history changes.
-param([string]$Out, [ValidateSet(100, 125, 150, 200)][int]$Scale = 100)
+param([string]$Out, [ValidateSet(100, 125, 150, 200)][int]$Scale = 100,
+    [ValidateSet('FollowSsms', 'Light', 'Dark', 'Midnight', 'WarmLight')][string]$Theme = 'FollowSsms',
+    [ValidateSet('FollowSsms', 'Blue', 'Teal', 'Violet', 'Rose', 'Amber', 'Green', 'Graphite')][string]$Accent = 'FollowSsms')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 $bin = Join-Path $PSScriptRoot '../src/Querywright.Ssms/bin/Debug/net472'
 $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Ssms.dll'))
 [void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Core.dll'))
+$assembly.GetType('Querywright.Ssms.Theme', $true).GetMethod('Configure', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @(
+    [Enum]::Parse($assembly.GetType('Querywright.Ssms.UiTheme', $true), $Theme), [Enum]::Parse($assembly.GetType('Querywright.Ssms.UiAccent', $true), $Accent)))
+$suffix = if ($Theme -eq 'FollowSsms' -and $Accent -eq 'FollowSsms') { "$Scale" } else { "$Theme-$Accent-$Scale" }
 function Dialog($name, [object[]]$arguments) {
     [Activator]::CreateInstance($assembly.GetType("Querywright.Ssms.$name", $true), [Reflection.BindingFlags]'Instance,NonPublic', $null, $arguments, $null)
 }
@@ -21,10 +26,13 @@ function Layout($window, $name) {
     $root.LayoutTransform = [Windows.Media.ScaleTransform]::new($factor, $factor)
     $size = [Windows.Size]::new(($window.MinWidth - 32) * $factor, ($window.MinHeight - 48) * $factor)
     $root.Measure($size); $root.Arrange([Windows.Rect]::new($size)); $root.UpdateLayout()
+    # Margins sit outside the scale transform; button positions are in the root's scaled space.
+    $limitW = ($size.Width - $root.Margin.Left - $root.Margin.Right) / $factor
+    $limitH = ($size.Height - $root.Margin.Top - $root.Margin.Bottom) / $factor
     foreach ($button in (Nodes $root | Where-Object { $_ -is [Windows.Controls.Button] })) {
         $point = $button.TranslatePoint([Windows.Point]::new(0, 0), $root)
         Check ($button.ActualHeight -ge 32) "$name button too short: $($button.Content)"
-        Check ($point.X -ge -1 -and $point.Y -ge -1 -and $point.X + $button.ActualWidth -le $size.Width / $factor + 1 -and $point.Y + $button.ActualHeight -le $size.Height / $factor + 1) "$name button clipped: $($button.Content)"
+        Check ($point.X -ge -1 -and $point.Y -ge -1 -and $point.X + $button.ActualWidth -le $limitW + 1 -and $point.Y + $button.ActualHeight -le $limitH + 1) "$name button clipped: $($button.Content)"
     }
     if ($Out) {
         [void][IO.Directory]::CreateDirectory($Out)
@@ -36,7 +44,7 @@ function Layout($window, $name) {
         $bitmap.Render($root)
         $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
         $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
-        $stream = [IO.File]::Create((Join-Path $Out "$name-$Scale.png"))
+        $stream = [IO.File]::Create((Join-Path $Out "$name-$suffix.png"))
         try { $encoder.Save($stream) } finally { $stream.Dispose() }
     }
 }
@@ -83,7 +91,7 @@ try {
     Check ($list.Items.Count -eq 2 -and $insert.IsEnabled) 'Clearing search must restore suggestions'
     Layout $picker 'suggestions'
 } finally { $picker.Close() }
-$prompt = Dialog 'PromptDialog' @('Querywright: name', '_Name:', '', $null)
+$prompt = Dialog 'PromptDialog' @('UlysiSQL: name', '_Name:', '', $null)
 try {
     $ok = Nodes $prompt.Content | Where-Object { $_ -is [Windows.Controls.Button] -and $_.IsDefault }
     $ok.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
@@ -115,7 +123,7 @@ try {
     Check ($actions.Count -eq 4 -and @($actions | Where-Object IsEnabled).Count -eq 0) 'Empty history must disable tab actions'
     Layout $history 'history-empty'
 } finally { $history.Close() }
-$folder = Join-Path ([IO.Path]::GetTempPath()) ('Querywright-dialogs-' + [Guid]::NewGuid().ToString('N'))
+$folder = Join-Path ([IO.Path]::GetTempPath()) ('UlysiSQL-dialogs-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($folder)
 try {
     [IO.File]::WriteAllText((Join-Path $folder 'customer.sql'), "SELECT Customer_Id, Name`r`nFROM dbo.Customer;")
@@ -166,4 +174,4 @@ try {
     $apply.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
     Check ($applied.GetValue($replace)) 'Apply must record acceptance before closing modeless replacement controls'
 } finally { $replace.Close() }
-Write-Host "Dialog checks passed at $Scale%: filtering, hidden selections, validation, history rows, AI replacement, empty actions, scaled button layouts."
+Write-Host "Dialog checks passed at $Scale% ($Theme, $Accent): filtering, hidden selections, validation, history rows, AI replacement, empty actions, scaled button layouts."

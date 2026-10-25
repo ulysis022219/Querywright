@@ -19,7 +19,7 @@ namespace Querywright.Ssms
 
         [Category("Completion")]
         [DisplayName("Cache schema on disk")]
-        [Description("Keep table, column, procedure and parameter names, types and foreign keys in %LOCALAPPDATA%\\Querywright\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes. Turning this off deletes the cached files.")]
+        [Description("Keep table, column, procedure and parameter names, types and foreign keys in %LOCALAPPDATA%\\UlysiSQL\\SchemaCache so suggestions work at once after a restart while the live load refreshes them. Never stores credentials, query text or data; file names are hashes. Turning this off deletes the cached files.")]
         public bool CacheSchemaOnDisk { get; set; } = true;
 
         [Category("Completion")]
@@ -207,7 +207,7 @@ namespace Querywright.Ssms
 
         [Category("Editor")]
         [DisplayName("Color BEGIN/END pairs")]
-        [Description("Give each BEGIN/END, CASE/END and TRY/CATCH pair a color by nesting level. Colors are under Fonts and Colors, \"Querywright BEGIN/END level\". The pair at the caret is always highlighted; Ctrl+] jumps to its partner.")]
+        [Description("Give each BEGIN/END, CASE/END and TRY/CATCH pair a color by nesting level. Colors are under Fonts and Colors, \"UlysiSQL BEGIN/END level\". The pair at the caret is always highlighted; Ctrl+] jumps to its partner.")]
         public bool ColorBlocks { get; set; } = true;
 
         [Category("Editor")]
@@ -232,7 +232,7 @@ namespace Querywright.Ssms
 
         [Category("Tab history")]
         [DisplayName("Keep tab history")]
-        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\Querywright\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab, 200 tabs and 256 MB in all kept (favorites aside), so any version can be reopened. PASSWORD and SECRET literals, password variables and the arguments of password procedures (sp_addlogin, sp_password, sp_addlinkedsrvlogin and similar) are saved as ***. Turn off to save nothing.")]
+        [Description("Save query text of SQL windows to %LOCALAPPDATA%\\UlysiSQL\\TabHistory (local only): a timestamped version after each edit and on execute, newest 100 per tab, 200 tabs and 256 MB in all kept (favorites aside), so any version can be reopened. PASSWORD and SECRET literals, password variables and the arguments of password procedures (sp_addlogin, sp_password, sp_addlinkedsrvlogin and similar) are saved as ***. Turn off to save nothing.")]
         public bool TabHistory { get; set; } = true;
 
         [Category("Shared settings")]
@@ -330,21 +330,31 @@ namespace Querywright.Ssms
         [Description("Show or hide this item in the results grid right-click menu.")]
         public bool ShowScriptAsCreateTable { get; set; } = true;
 
+        [Category("Appearance")]
+        [DisplayName("Theme")]
+        [Description("Colors for UlysiSQL dialogs and the AI panel. Follow SSMS matches the current SSMS color theme; the other palettes apply to UlysiSQL windows only. High contrast always uses system colors.")]
+        public UiTheme Theme { get; set; } = UiTheme.FollowSsms;
+
+        [Category("Appearance")]
+        [DisplayName("Accent color")]
+        [Description("Color for primary buttons, selected chips, focus rings and SQL keywords in the AI panel. Follow SSMS uses the SSMS link color.")]
+        public UiAccent Accent { get; set; } = UiAccent.FollowSsms;
+
         [Category("Updates")]
         [DisplayName("Check for updates")]
-        [Description("Once a day, ask github.com for the latest Querywright release and show a notice when it is newer. Sends no query text, connection or user data.")]
+        [Description("Once a day, ask github.com for the latest UlysiSQL release and show a notice when it is newer. Sends no query text, connection or user data.")]
         public bool CheckForUpdates { get; set; } = true;
 
         [Category("Diagnostics")]
         [DisplayName("Verbose diagnostics")]
-        [Description("Keep bounded Querywright process events and AI request summaries in memory for export, including query, prompt, answer and result text. Known API keys and credential patterns are redacted, but exports can contain sensitive database data: review before sharing. Off by default; turning off clears the session log.")]
+        [Description("Keep bounded UlysiSQL process events and AI request summaries in memory for export, including query, prompt, answer and result text. Known API keys and credential patterns are redacted, but exports can contain sensitive database data: review before sharing. Off by default; turning off clears the session log.")]
         public bool VerboseDiagnostics { get; set; }
 
         [Category("Snippets")]
         [DisplayName("Snippet folder")]
         [Description("Folder of editable .sql templates; ssf.sql expands when you type ssf and press Tab. Use a shared folder for team snippets. New files are picked up within 30 seconds.")]
         public string SnippetFolder { get; set; } = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "Snippets");
+            Product.DataFolder, "Snippets");
 
         /// <summary>Databases ticked last time in Script for multiple databases, one per line.</summary>
         [Browsable(false)]
@@ -356,6 +366,7 @@ namespace Querywright.Ssms
             if (e.ApplyBehavior == ApplyKind.Apply)
             {
                 Diagnostics.Enabled = VerboseDiagnostics;
+                Querywright.Ssms.Theme.Configure(Theme, Accent);
                 if (!CacheSchemaOnDisk) Querywright.Ssms.LiveMetadata.ClearDiskCache();
             }
         }

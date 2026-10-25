@@ -147,7 +147,7 @@ namespace Querywright.Core
             var names = ColumnNames(headers);
             var reported = Reported(types, names.Count);
             var builder = new StringBuilder();
-            builder.Append("-- Querywright: results scripted as INSERT. Values are the grid's display text (floats rounded, long text may be truncated).").Append(newline);
+            builder.Append("-- UlysiSQL: results scripted as INSERT. Values are the grid's display text (floats rounded, long text may be truncated).").Append(newline);
             builder.Append("DROP TABLE IF EXISTS #Results;").Append(newline);
             builder.Append("CREATE TABLE #Results").Append(newline).Append("(").Append(newline);
             for (int c = 0; c < names.Count; c++)
@@ -197,7 +197,7 @@ namespace Querywright.Core
             CheckShape(headers, rows);
             var names = ColumnNames(headers);
             var reported = Reported(types, names.Count);
-            var builder = new StringBuilder("-- Querywright: table shaped like the results. NOT NULL where the rows had no NULL. Review, then execute. Nothing has been run.").Append(newline);
+            var builder = new StringBuilder("-- UlysiSQL: table shaped like the results. NOT NULL where the rows had no NULL. Review, then execute. Nothing has been run.").Append(newline);
             builder.Append("CREATE TABLE ").Append(table).Append(newline).Append("(").Append(newline);
             for (int c = 0; c < names.Count; c++)
                 builder.Append("    ").Append(Bracket(names[c])).Append(' ').Append(ColumnType(reported[c], rows.Select(r => r[c])))
@@ -214,7 +214,7 @@ namespace Querywright.Core
             var kinds = Enumerable.Range(0, names.Count).Select(c => ColumnKind(BaseType(reported[c]), rows, c)).ToList();
             var set = Enumerable.Range(1, names.Count - 1).Where(c => !IsRowVersion(kinds[c])).ToList();
             if (set.Count == 0) throw new InvalidOperationException("Select a key column followed by at least one column to update.");
-            var builder = new StringBuilder("-- Querywright: results scripted as UPDATE, keyed on the first column ").Append(Bracket(names[0]))
+            var builder = new StringBuilder("-- UlysiSQL: results scripted as UPDATE, keyed on the first column ").Append(Bracket(names[0]))
                 .Append(". Review, then execute. Nothing has been run.").Append(newline);
             foreach (var row in rows)
             {
@@ -235,7 +235,7 @@ namespace Querywright.Core
             var kinds = Enumerable.Range(0, names.Count).Select(c => ColumnKind(BaseType(reported[c]), rows, c)).ToList();
             var used = Enumerable.Range(0, names.Count).Where(c => c == 0 || !IsRowVersion(kinds[c])).ToList();
             string key = Bracket(names[0]);
-            var builder = new StringBuilder("-- Querywright: results scripted as MERGE, keyed on the first column ").Append(key)
+            var builder = new StringBuilder("-- UlysiSQL: results scripted as MERGE, keyed on the first column ").Append(key)
                 .Append(". Matching rows are updated, others inserted, nothing deleted. Review, then execute. Nothing has been run.").Append(newline);
             builder.Append("MERGE INTO ").Append(table).Append(" AS target").Append(newline).Append("USING (VALUES");
             for (int r = 0; r < rows.Count; r++)

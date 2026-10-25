@@ -10,7 +10,7 @@ namespace Querywright.Core
         public static string ErrorLine(string? version, string command, Type error)
         {
             if (command.EndsWith("Async", StringComparison.Ordinal)) command = command.Substring(0, command.Length - 5);
-            return "Querywright " + (string.IsNullOrEmpty(version) ? "unknown" : version) + " \u00B7 " + command + " \u00B7 " + error.Name;
+            return "UlysiSQL " + (string.IsNullOrEmpty(version) ? "unknown" : version) + " \u00B7 " + command + " \u00B7 " + error.Name;
         }
 
         /// <summary>New-issue link with the bug-report form's error field pre-filled.</summary>

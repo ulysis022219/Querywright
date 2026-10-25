@@ -22,8 +22,9 @@ namespace Querywright.Ssms
         internal SecureString Password;
         /// <summary>Microsoft Entra: fetches SSMS's token for the window on each open; the token is never logged or kept.</summary>
         internal Func<string> AccessToken;
-        // One credential per window, shared by copies: SqlClient keys its pool by credential reference, so a new one per open would never reuse.
-        private SqlCredential credential;
+        // One credential per SSMS password, shared by every capture and copy (see LiveMetadata.Capture): SqlClient keys its pool
+        // by credential reference, so a new one per open would never reuse.
+        internal SqlCredential Credential;
         internal string Key => Server + "\0" + Database + "\0" + (Integrated ? "" : User);
 
         /// <summary>Traffic stays on this machine (LocalDB, shared memory, local pipe), so TLS adds nothing.</summary>
@@ -66,13 +67,13 @@ namespace Querywright.Ssms
             {
                 DataSource = Server, InitialCatalog = Database ?? "", IntegratedSecurity = Integrated,
                 Encrypt = Encrypt, TrustServerCertificate = TrustServerCertificate, ConnectTimeout = 10,
-                ApplicationName = "Querywright metadata", Pooling = true
+                ApplicationName = "UlysiSQL metadata", Pooling = true
             };
             // Password travels only as a read-only SecureString, never through the connection string. Pooling skips the
             // login and TLS handshake on refresh, hover and F12; the pool is keyed by server, database, login and token.
             if (AccessToken != null) return new SqlConnection(builder.ConnectionString) { AccessToken = AccessToken() };
             return Integrated ? new SqlConnection(builder.ConnectionString)
-                : new SqlConnection(builder.ConnectionString, credential ?? (credential = new SqlCredential(User, Password)));
+                : new SqlConnection(builder.ConnectionString, Credential ?? (Credential = new SqlCredential(User, Password)));
         }
     }
 
@@ -552,7 +553,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     defaults != null && defaults.TryGetValue(c.DefaultId, out var value) && value != null ? c.Note + " DEFAULT " + value : c.Note)),
                     keys.Select(k => (k.Id, (string)k.Schema, (string)k.Table, (string)k.Column, (string)k.RefSchema, (string)k.RefTable, (string)k.RefColumn)));
                 var built = Assemble(null);
-                if (built.Skipped > 0) Diagnostics.TryLogWarning("Querywright", "Live metadata skipped " + built.Skipped + " objects with unusable names");
+                if (built.Skipped > 0) Diagnostics.TryLogWarning("UlysiSQL", "Live metadata skipped " + built.Skipped + " objects with unusable names");
                 // ponytail: has_default_value is only set for CLR procedures; T-SQL defaults come from script procedures or show as values.
                 if (databases != null) databaseCache[connection.Key] = databases;
                 if (parameters != null)
@@ -562,7 +563,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                     procedureCache[connection.Key] = Build(false).Concat(Build(true).Select(f => new SchemaProcedure(f.Schema, f.Name, f.Parameters.ToArray(), isFunction: true))).ToArray();
                 }
                 LastProblem = problems.Count == 0 ? "" : "partial: " + string.Join(", ", problems);
-                Diagnostics.TryLogInformation("Querywright", "Live metadata loaded: " + built.Tables.Length + " tables"
+                Diagnostics.TryLogInformation("UlysiSQL", "Live metadata loaded: " + built.Tables.Length + " tables"
                     + (capped ? " (column cap reached)" : "") + (problems.Count == 0 ? "" : " (" + LastProblem + ")"));
                 stale.TryRemove(connection.Key, out _);
                 var saved = procedureCache.TryGetValue(connection.Key, out var known) ? known : null;
@@ -586,7 +587,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                         }
                     }
                     // ponytail: defaults are cosmetic; a failure keeps the plain notes and only the type is logged.
-                    catch (Exception error) when (IsRecoverable(error)) { Diagnostics.TryLogWarning("Querywright", "Live metadata defaults unavailable: " + Describe(error)); }
+                    catch (Exception error) when (IsRecoverable(error)) { Diagnostics.TryLogWarning("UlysiSQL", "Live metadata defaults unavailable: " + Describe(error)); }
                     if (path == null) return;
                     // A unique temp file keeps two overlapping saves of one connection from interleaving; the last one to finish wins whole.
                     {
@@ -612,19 +613,19 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             {
                 // Type and SQL error number only: messages can echo server or login names.
                 LastProblem = Describe(error);
-                Diagnostics.TryLogWarning("Querywright", "Live metadata unavailable: " + LastProblem);
+                Diagnostics.TryLogWarning("UlysiSQL", "Live metadata unavailable: " + LastProblem);
                 return null;
             }
         }
 
         /// <summary>Schema cache file for a connection, named by a hash so no server, database or login appears on disk; null when the option is off.</summary>
-        private static string DiskCacheFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "SchemaCache");
+        private static string DiskCacheFolder => Path.Combine(Product.DataFolder, "SchemaCache");
 
         /// <summary>Removes every cached schema file; called when "Cache schema on disk" is turned off.</summary>
         internal static void ClearDiskCache()
         {
             try { if (Directory.Exists(DiskCacheFolder)) Directory.Delete(DiskCacheFolder, true); }
-            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { Diagnostics.TryLogWarning("Querywright", "Schema cache not cleared: " + error.GetType().Name); }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { Diagnostics.TryLogWarning("UlysiSQL", "Schema cache not cleared: " + error.GetType().Name); }
         }
 
         private static string DiskCachePath(ActiveConnection connection)
@@ -666,6 +667,10 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
             }
         }
 
+        // Keyed weakly by SSMS's own SecureString, so a credential lives exactly as long as the window's password does.
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SecureString, SqlCredential> credentials =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<SecureString, SqlCredential>();
+
         /// <summary>Connection of the active query window via SSMS's ServiceCache (no public API). Null when not connected.</summary>
         internal static ActiveConnection Capture()
         {
@@ -688,8 +693,19 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
                 if (string.IsNullOrEmpty(connection.Server)) return null;
                 if (authentication == 1)
                 {
-                    // Copy SSMS's SecureString; never dispose it, SSMS owns it.
-                    if (Property(info, type, "InMemoryPassword") is SecureString secure) connection.Password = secure.Copy();
+                    // Copy SSMS's SecureString once per password; never dispose it, SSMS owns it. Captures run on every keystroke,
+                    // and a fresh credential each time would give each refresh, hover and F12 its own pool and a new login.
+                    if (Property(info, type, "InMemoryPassword") is SecureString secure)
+                    {
+                        var shared = connection.User == null ? null : credentials.GetValue(secure, s =>
+                        {
+                            var copy = s.Copy();
+                            copy.MakeReadOnly();
+                            return new SqlCredential(connection.User, copy);
+                        });
+                        if (shared != null && shared.UserId == connection.User) { connection.Password = shared.Password; connection.Credential = shared; }
+                        else connection.Password = secure.Copy();
+                    }
                     else if (Property(info, type, "Password") is string plain)
                     {
                         connection.Password = new SecureString();
@@ -766,7 +782,7 @@ WHERE d.referencing_class = 1 AND d.referenced_class = 1 AND d.referenced_id IS 
         private static void LogOnce(string message)
         {
             lock (logged) if (!logged.Add(message)) return;
-            Diagnostics.TryLogInformation("Querywright", message);
+            Diagnostics.TryLogInformation("UlysiSQL", message);
         }
 
         /// <summary>Public, non-public or explicit-interface property; SSMS types vary between releases.</summary>

@@ -110,7 +110,7 @@ This block is explanatory text, not executable SQL.
         [IO.File]::Delete($temporaryFile); [IO.File]::Delete($temporaryFile + '.tmp')
     }
     $prompt = $type.GetField('prompt', $flags).GetValue($panel)
-    $type.GetField('context', $flags).GetValue($panel).Text = 'DEV-SQL · Sales | Schema: 2 tables (fixture)'
+    $type.GetField('context', $flags).GetValue($panel).Text = ('DEV-SQL {0} Sales | Schema: 2 tables (fixture)' -f [char]0x00B7)
     Check ($prompt.MinLines -eq 2 -and $prompt.MaxLines -eq 6 -and $prompt.AcceptsReturn) 'Composer must grow to six lines'
     Check (@($nodes | Where-Object { $_.GetType().FullName -eq 'System.Windows.Controls.Primitives.ToggleButton' }).Count -eq 5) 'Five quick-action chips required'
     $colors = [Microsoft.VisualStudio.PlatformUI.EnvironmentColors]
@@ -125,6 +125,8 @@ This block is explanatory text, not executable SQL.
         $panel.Resources[$colors::ComboBoxBackgroundBrushKey] = [Windows.Media.BrushConverter]::new().ConvertFromString($surface)
         $panel.Resources[$colors::ToolWindowBorderBrushKey] = [Windows.Media.BrushConverter]::new().ConvertFromString($border)
         $panel.Resources[$colors::PanelHyperlinkBrushKey] = [Windows.Media.BrushConverter]::new().ConvertFromString($(if ($theme -eq 'dark') { '#8AB4F8' } else { '#245AA8' }))
+        # SSMS raises a theme change after swapping colors; the panel then recomputes its derived accent and muted colors.
+        [void]$type.GetMethod('Retheme', $flags).Invoke($panel, @())
         foreach ($scale in 100, 125, 150, 200) {
             $factor = $scale / 100.0
             $panel.LayoutTransform = [Windows.Media.ScaleTransform]::new($factor, $factor)

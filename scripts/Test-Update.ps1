@@ -60,7 +60,7 @@ try {
     $script:checks++
 } finally { $inputStream.Dispose(); $outputStream.Dispose() }
 
-$temp = Join-Path ([IO.Path]::GetTempPath()) ('Querywright-update-test-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('UlysiSQL-update-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 function New-TestZip([string]$Path, $Entries) {
     $zip = [IO.Compression.ZipFile]::Open($Path, [IO.Compression.ZipArchiveMode]::Create)
@@ -76,7 +76,7 @@ try {
     $manifest = [IO.File]::ReadAllText("$PSScriptRoot/../src/Querywright.Ssms/source.extension.vsixmanifest").Replace('Version="1.0.0"', 'Version="1.2.3.45"')
     $entries = @{ 'extension.vsixmanifest' = $manifest }
     foreach ($name in @('Querywright.Ssms.dll', 'Querywright.Ssms.pkgdef', 'Querywright.Core.dll',
-        'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt',
+        'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt', 'THIRD-PARTY-LICENSES/FluentUISystemIcons.txt',
         'Updater/Update-Querywright.ps1', 'Updater/Update-Release.ps1', 'Updater/Install-Development.ps1', 'Updater/Test-Package.ps1')) {
         $entries[$name] = 'fixture'
     }

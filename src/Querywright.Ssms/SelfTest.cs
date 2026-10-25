@@ -50,7 +50,7 @@ namespace Querywright.Ssms
                     {
                         case "wait": await Task.Delay(int.Parse(arg)); await package.JoinableTaskFactory.SwitchToMainThreadAsync(); break;
                         case "dialogs":
-                            var dialog = new PromptDialog("Querywright: theme check", "_Name:", "Example_Query");
+                            var dialog = new PromptDialog("UlysiSQL: theme check", "_Name:", "Example_Query");
                             try
                             {
                                 if (!(dialog.TryFindResource(VsResourceKeys.ThemedDialogDefaultStylesKey) is System.Windows.ResourceDictionary))
@@ -149,7 +149,7 @@ namespace Querywright.Ssms
                         case "save": // File > Save through the shell's routing, as Ctrl+S is
                             Exec(await DispatcherAsync(package), VSConstants.GUID_VSStandardCommandSet97, (uint)VSConstants.VSStd97CmdID.SaveProjectItem);
                             break;
-                        case "prompt": // the next Querywright warning is answered with its Cancel button; its text is appended
+                        case "prompt": // the next UlysiSQL warning is answered with its Cancel button; its text is appended
                             var answered = view;
                             _ = package.JoinableTaskFactory.RunAsync(async () =>
                             {
@@ -157,7 +157,7 @@ namespace Querywright.Ssms
                                 {
                                     await Task.Delay(500);
                                     await package.JoinableTaskFactory.SwitchToMainThreadAsync();
-                                    var form = System.Windows.Forms.Application.OpenForms.Cast<System.Windows.Forms.Form>().FirstOrDefault(f => f.Text.StartsWith("Querywright"));
+                                    var form = System.Windows.Forms.Application.OpenForms.Cast<System.Windows.Forms.Form>().FirstOrDefault(f => f.Text.StartsWith("UlysiSQL"));
                                     if (form == null) continue;
                                     string shown = string.Join(" ", Descendants(form).OfType<System.Windows.Forms.Label>().Select(l => l.Text));
                                     form.DialogResult = System.Windows.Forms.DialogResult.Cancel;

@@ -12,9 +12,9 @@ using Querywright.Core;
 
 namespace Querywright.Ssms
 {
-    // AI assistant and MCP server. The provider is the user's choice (Tools > Options > Querywright > AI); nothing is sent
+    // AI assistant and MCP server. The provider is the user's choice (Tools > Options > UlysiSQL > AI); nothing is sent
     // until an AI command is used, and then the script text, the prompt and matching table definitions go to that provider.
-    [ProvideOptionPage(typeof(AiOptions), "Querywright", "AI", 0, 0, true)]
+    [ProvideOptionPage(typeof(AiOptions), "UlysiSQL", "AI", 0, 0, true)]
     [ProvideToolWindow(typeof(AiToolWindow), Style = VsDockStyle.Tabbed, Orientation = ToolWindowOrientation.Right, Window = "{EEFA5220-E298-11D0-8F78-00A0C9110057}")] // docks with Properties
     public sealed partial class WorkbenchPackage
     {
@@ -45,11 +45,11 @@ namespace Querywright.Ssms
             try { mcp = new McpHost(this, aiOptions.McpPort); }
             catch (Exception error) when (error is System.Net.HttpListenerException || error is ArgumentException || error is InvalidOperationException)
             {
-                Diagnostics.TryLogWarning("Querywright", "MCP server not started: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("UlysiSQL", "MCP server not started: " + error.GetType().Name);
                 _ = JoinableTaskFactory.RunAsync(async () =>
                 {
                     await JoinableTaskFactory.SwitchToMainThreadAsync();
-                    ShowWarning("The Querywright MCP server could not listen on port " + aiOptions.McpPort + " (" + error.Message.Trim() + "). Pick another port under Tools > Options > Querywright > AI.");
+                    ShowWarning("The UlysiSQL MCP server could not listen on port " + aiOptions.McpPort + " (" + error.Message.Trim() + "). Pick another port under Tools > Options > UlysiSQL > AI.");
                 });
             }
         }
@@ -60,7 +60,7 @@ namespace Querywright.Ssms
         {
             await JoinableTaskFactory.SwitchToMainThreadAsync();
             var window = FindToolWindow(typeof(AiToolWindow), 0, true) as AiToolWindow;
-            if (!(window?.Frame is IVsWindowFrame frame)) throw new InvalidOperationException("Could not create the Querywright AI window.");
+            if (!(window?.Frame is IVsWindowFrame frame)) throw new InvalidOperationException("Could not create the UlysiSQL AI window.");
             ErrorHandler.ThrowOnFailure(frame.Show());
             if (start != null) window.Panel.Start(start.Value);
             else window.Panel.FocusPrompt();
@@ -70,9 +70,9 @@ namespace Querywright.Ssms
         internal string AiEditorText(bool selectionOnly = false, bool wholeScript = false)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            IWpfTextView view;
-            try { view = GetSqlView(mustHaveFocus: false); }
-            catch (Exception error) when (error is InvalidOperationException || error is System.Runtime.InteropServices.COMException) { return ""; }
+            // The AI panel asks every second; outside a query window this must not throw and catch.
+            var view = TryGetSqlView(mustHaveFocus: false);
+            if (view == null) return "";
             if (!wholeScript && !view.Selection.IsEmpty) return string.Concat(view.Selection.SelectedSpans.Select(s => s.GetText()));
             return selectionOnly ? "" : view.TextSnapshot.GetText();
         }
@@ -106,14 +106,26 @@ namespace Querywright.Ssms
 
         internal static string AiScript(LiveMetadata.ObjectDetails details, string schema, string name) => ScriptOf(details, details.Schema ?? schema, name);
 
+        // The AI panel refreshes the preview every second; while nothing it reads has changed, it skips the text copy and table scoring.
+        private Tuple<object, (string Where, string Scope, int Tables)> aiPreview;
+
         internal (string Where, string Scope, int Tables) AiContextPreview(string instruction, bool wholeScript, bool includeSchema)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             var names = LiveMetadata.CaptureNames();
+            var tables = includeSchema ? CurrentTables() : null;
+            var view = TryGetSqlView(mustHaveFocus: false);
+            // Snapshots and table lists are immutable and replaced on change, so reference equality is enough.
+            object key = (view?.TextSnapshot, view == null || view.Selection.IsEmpty ? "" : string.Join(",", view.Selection.SelectedSpans.Select(s => s.Span)),
+                instruction, wholeScript, tables, aiOptions.MaxSchemaTables, names);
+            var last = aiPreview;
+            if (last != null && last.Item1.Equals(key)) return last.Item2;
             string sql = AiEditorText(wholeScript: wholeScript);
-            AiAssist.SchemaContext(includeSchema ? CurrentTables() : null, instruction + "\n" + sql, out int count, aiOptions.MaxSchemaTables);
-            return (names == null ? "No connection" : names.Value.Server + " · " + names.Value.Database,
+            AiAssist.SchemaContext(tables, instruction + "\n" + sql, out int count, aiOptions.MaxSchemaTables);
+            var preview = (names == null ? "No connection" : names.Value.Server + " · " + names.Value.Database,
                 !wholeScript && AiEditorText(true).Length > 0 ? "Selection (" + (sql.Count(c => c == '\n') + 1) + " lines)" : "Whole script", count);
+            aiPreview = Tuple.Create(key, preview);
+            return preview;
         }
 
         /// <summary>One AI request for the panel. A Chat task continues <paramref name="conversation"/> when it has one; any other
@@ -192,7 +204,7 @@ namespace Querywright.Ssms
                 await JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (diff == null || shell == null) throw new InvalidOperationException("SSMS comparison window service unavailable.");
                 ErrorHandler.ThrowOnFailure(shell.GetDialogOwnerHwnd(out var owner));
-                string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Querywright"), stamp = Guid.NewGuid().ToString("N");
+                string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "UlysiSQL"), stamp = Guid.NewGuid().ToString("N");
                 string leftFile = System.IO.Path.Combine(folder, "AI-" + stamp + "-current.sql"), rightFile = System.IO.Path.Combine(folder, "AI-" + stamp + "-replacement.sql");
                 IVsWindowFrame frame = null;
                 IVsWindowFrame2 events = null;
@@ -204,7 +216,7 @@ namespace Querywright.Ssms
                 {
                     System.IO.Directory.CreateDirectory(folder);
                     System.IO.File.WriteAllText(leftFile, span.GetText()); System.IO.File.WriteAllText(rightFile, sql);
-                    frame = diff.OpenComparisonWindow2(leftFile, rightFile, "Querywright: AI replacement", null,
+                    frame = diff.OpenComparisonWindow2(leftFile, rightFile, "UlysiSQL: AI replacement", null,
                         "Current text", "AI replacement", null, null,
                         (uint)(__VSDIFFSERVICEOPTIONS.VSDIFFOPT_LeftFileIsTemporary | __VSDIFFSERVICEOPTIONS.VSDIFFOPT_RightFileIsTemporary));
                     if (frame == null || !(frame is IVsWindowFrame2)) throw new InvalidOperationException("Could not open the AI comparison window.");
@@ -272,7 +284,7 @@ namespace Querywright.Ssms
             var names = LiveMetadata.CaptureNames();
             string where = names == null ? "" : "\r\n\r\nServer: " + names.Value.Server + "\r\nDatabase: " + names.Value.Database;
             string shown = sql.Length > 1500 ? sql.Substring(0, 1500) + "\r\n... (" + (sql.Length - 1500) + " more characters)" : sql;
-            return VsShellUtilities.ShowMessageBox(this, question + where + "\r\n\r\n" + shown, "Querywright AI",
+            return VsShellUtilities.ShowMessageBox(this, question + where + "\r\n\r\n" + shown, "UlysiSQL AI",
                 OLEMSGICON.OLEMSGICON_QUERY, OLEMSGBUTTON.OLEMSGBUTTON_YESNO, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_SECOND) == (int)VSConstants.MessageBoxResult.IDYES;
         }
 
@@ -286,16 +298,16 @@ namespace Querywright.Ssms
             string sql = snapshot.GetText();
             var ai = aiOptions;
             var status = await GetServiceAsync(typeof(SVsStatusbar)) as IVsStatusbar;
-            status?.SetText("Querywright: asking " + ai.Model + " to complete...");
+            status?.SetText("UlysiSQL: asking " + ai.Model + " to complete...");
             string schema = ai.MaxSchemaTables > 0 ? AiAssist.SchemaContext(CurrentTables(), sql, ai.MaxSchemaTables) : null;
             var messages = AiAssist.Messages(AiTask.Complete, null, AiAssist.CompletionWindow(sql, caret), schema);
             string text = AiAssist.CompletionText(await AiClient.AskAsync(ai.ApiFormat, ai.BaseUrl, ai.Model, messages, DisposalToken, 700));
             await JoinableTaskFactory.SwitchToMainThreadAsync();
-            if (text.Trim().Length == 0) { status?.SetText("Querywright: the AI had nothing to add here."); return; }
+            if (text.Trim().Length == 0) { status?.SetText("UlysiSQL: the AI had nothing to add here."); return; }
             text = text.Replace("\r\n", "\n").Replace("\n", NewlineOf(sql));
             // ReplaceText refuses when the script changed while the provider was answering.
             ReplaceText(view, new SnapshotSpan(snapshot, caret, 0), text, text.Length, 0, 0, "AI complete");
-            status?.SetText("Querywright: AI completion inserted. Ctrl+Z removes it.");
+            status?.SetText("UlysiSQL: AI completion inserted. Ctrl+Z removes it.");
         });
 
         private Task CopyMcpConfigurationAsync() => RunCommandAsync(async () =>
@@ -307,12 +319,12 @@ namespace Querywright.Ssms
                 ["type"] = "http", ["url"] = url,
                 ["headers"] = new Dictionary<string, object> { ["Authorization"] = "Bearer " + McpHost.Token() }
             };
-            System.Windows.Clipboard.SetText(MiniJson.Write(new Dictionary<string, object> { ["mcpServers"] = new Dictionary<string, object> { ["querywright"] = server } }));
+            System.Windows.Clipboard.SetText(MiniJson.Write(new Dictionary<string, object> { ["mcpServers"] = new Dictionary<string, object> { ["ulysisql"] = server } }));
             VsShellUtilities.ShowMessageBox(this,
                 "Copied the MCP client configuration (server URL " + url + " and its access token) to the clipboard. Paste it into your MCP client's configuration file."
-                + (mcp == null ? "\r\n\r\nThe server is not running: turn on \"Run MCP server\" under Tools > Options > Querywright > AI." : "")
+                + (mcp == null ? "\r\n\r\nThe server is not running: turn on \"Run MCP server\" under Tools > Options > UlysiSQL > AI." : "")
                 + "\r\n\r\nAnyone holding the token can read and run SQL through your open query window while SSMS runs, so keep it out of shared files.",
-                "Querywright MCP", OLEMSGICON.OLEMSGICON_INFO, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+                "UlysiSQL MCP", OLEMSGICON.OLEMSGICON_INFO, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         });
     }
 }

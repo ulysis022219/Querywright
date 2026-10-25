@@ -37,7 +37,7 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                Diagnostics.TryLogWarning("Querywright", "Execute warning unavailable: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("UlysiSQL", "Execute warning unavailable: " + error.GetType().Name);
             }
             try
             {
@@ -48,7 +48,7 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                Diagnostics.TryLogWarning("Querywright", "Priority commands unavailable: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("UlysiSQL", "Priority commands unavailable: " + error.GetType().Name);
             }
         }
 
@@ -69,7 +69,7 @@ namespace Querywright.Ssms
                 {
                     var standard = commandList.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, commandList, new object[] { "Edit.GoToDefinition", -1 });
                     // ponytail: the full scan touches every command, so it runs only when the usual binding is missing.
-                    if (OnF12(standard)) { Diagnostics.TryLogInformation("Querywright", "F12 bound to: Edit.GoToDefinition"); return; }
+                    if (OnF12(standard)) { Diagnostics.TryLogInformation("UlysiSQL", "F12 bound to: Edit.GoToDefinition"); return; }
                 }
                 catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 // ponytail: Count/Item(i) rather than foreach; the COM enumerator can throw part way on some SSMS builds.
@@ -84,11 +84,11 @@ namespace Querywright.Ssms
                     }
                     catch (Exception error) when (!(error is OutOfMemoryException)) { }
                 }
-                Diagnostics.TryLogInformation("Querywright", "F12 bound to: " + string.Join(", ", F12Commands.Select(c => c.Name)));
+                Diagnostics.TryLogInformation("UlysiSQL", "F12 bound to: " + string.Join(", ", F12Commands.Select(c => c.Name)));
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                Diagnostics.TryLogWarning("Querywright", "F12 binding lookup failed: " + ((error as System.Reflection.TargetInvocationException)?.InnerException ?? error).GetType().Name);
+                Diagnostics.TryLogWarning("UlysiSQL", "F12 binding lookup failed: " + ((error as System.Reflection.TargetInvocationException)?.InnerException ?? error).GetType().Name);
             }
         }
 
@@ -99,15 +99,11 @@ namespace Querywright.Ssms
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             // Keep F12 enabled in SQL editors even when SSMS's language service disables Go To Definition.
-            if (cCmds == 1 && package.Options?.GoToDefinition != false && IsDefinition(pguidCmdGroup, prgCmds[0].cmdID))
+            // Status queries run on every idle tick, so outside SQL editors this must not throw and catch.
+            if (cCmds == 1 && package.Options?.GoToDefinition != false && IsDefinition(pguidCmdGroup, prgCmds[0].cmdID) && package.TryGetSqlView() != null)
             {
-                try
-                {
-                    package.GetSqlView();
-                    prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
-                    return VSConstants.S_OK;
-                }
-                catch (Exception error) when (!(error is OutOfMemoryException)) { }
+                prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
+                return VSConstants.S_OK;
             }
             return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
         }
@@ -124,7 +120,7 @@ namespace Querywright.Ssms
                 {
                     bool handled = package.TryGoToDefinition(package.GetSqlView());
                     // No query text: just which path F12 took, so a user's ActivityLog shows why nothing opened.
-                    Diagnostics.TryLogInformation("Querywright", "F12 (" + pguidCmdGroup + ":" + nCmdID + "): " + SelfTest.Note);
+                    Diagnostics.TryLogInformation("UlysiSQL", "F12 (" + pguidCmdGroup + ":" + nCmdID + "): " + SelfTest.Note);
                     return handled ? VSConstants.S_OK : (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
                 }
                 catch (InvalidOperationException) { SelfTest.Note = "f12 no view"; return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED; }
@@ -143,7 +139,7 @@ namespace Querywright.Ssms
                 && (nCmdID == (uint)VSConstants.VSStd97CmdID.SaveProjectItem || nCmdID == (uint)VSConstants.VSStd97CmdID.SaveSolution))
             {
                 System.Collections.Generic.IEnumerable<Microsoft.VisualStudio.Text.Editor.IWpfTextView> views;
-                try { views = nCmdID == (uint)VSConstants.VSStd97CmdID.SaveSolution ? EditorListener.UnsavedViews() : new[] { package.SavedSqlView() }.Where(v => v != null); }
+                try { views = nCmdID == (uint)VSConstants.VSStd97CmdID.SaveSolution ? EditorListener.UnsavedViews() : new[] { package.DocumentSqlView() }.Where(v => v != null); }
                 catch (InvalidOperationException) { return pass; }
                 foreach (var view in views)
                 {
@@ -156,7 +152,9 @@ namespace Querywright.Ssms
             if (pguidCmdGroup != group || nCmdID != id) return pass;
             try
             {
-                var view = package.GetSqlView();
+                // Execute also runs from the results pane and the toolbar, where the editor has no focus; the check must still see the query.
+                var view = package.DocumentSqlView();
+                if (view == null) return pass;
                 var options = package.Options;
                 var connection = options == null || string.IsNullOrWhiteSpace(options.ProductionServers) ? null : LiveMetadata.CaptureNames();
                 bool production = connection != null && ColorRules.Matches(options.ProductionServers, connection.Value.Server, connection.Value.Database);
@@ -196,7 +194,7 @@ namespace Querywright.Ssms
         {
             using (var form = new Form
             {
-                Text = "Querywright: execution warning", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterScreen,
+                Text = "UlysiSQL: execution warning", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterScreen,
                 MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12),
                 Font = System.Drawing.SystemFonts.MessageBoxFont, AutoScaleMode = AutoScaleMode.Dpi,
             })

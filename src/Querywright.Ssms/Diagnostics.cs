@@ -197,7 +197,7 @@ namespace Querywright.Ssms
         internal static string FormatDisplay(string json)
         {
             object root = MiniJson.Parse(ValidateImport(json));
-            var text = new StringBuilder("Querywright diagnostics\r\n");
+            var text = new StringBuilder("UlysiSQL diagnostics\r\n");
             foreach (var field in (Dictionary<string, object>)MiniJson.Get(root, "session")) text.Append(field.Key).Append(": ").Append(field.Value).AppendLine();
             text.AppendLine().AppendLine("Process events");
             foreach (var item in (List<object>)MiniJson.Get(root, "events"))

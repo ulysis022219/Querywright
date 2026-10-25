@@ -20,13 +20,13 @@ namespace Querywright.Ssms
 
         internal DatabasePickerDialog(string server, IReadOnlyList<string> databases, ISet<string> previous, bool scriptHasUse, string purpose = null)
         {
-            Title = purpose == null ? "Querywright: script for multiple databases" : "Querywright: " + purpose;
+            Title = purpose == null ? "UlysiSQL: script for multiple databases" : "UlysiSQL: " + purpose;
             DialogParts.Style(this);
             Width = 640; Height = 720; MinWidth = 480; MinHeight = 640;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
             root.Children.Add(DialogParts.Header(purpose == null ? "Script across databases" : purpose,
-                purpose == null ? "Build one script for your selected databases. Nothing runs until you execute it." : "Choose databases carefully. This operation runs on the server with your login."));
+                purpose == null ? "Build one script for your selected databases. Nothing runs until you execute it." : "Choose databases carefully. This operation runs on the server with your login.", Icons.Database));
 
             var top = new StackPanel();
             top.Children.Add(new TextBlock { Text = "Server: " + server, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = server, FontWeight = FontWeights.SemiBold });
@@ -49,11 +49,11 @@ namespace Querywright.Ssms
                 bottom.Children.Add(printName);
             }
             var selection = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
-            var all = new Button { Content = "Select _all shown", MinWidth = 90, Margin = new Thickness(0, 4, 4, 4) };
-            var none = new Button { Content = "Select _none shown", MinWidth = 90, Margin = new Thickness(4) };
+            var all = DialogParts.Iconize(new Button { Content = "Select _all shown", MinWidth = 90, Margin = new Thickness(0, 4, 4, 4) });
+            var none = DialogParts.Iconize(new Button { Content = "Select _none shown", MinWidth = 90, Margin = new Thickness(4) });
             selection.Children.Add(all); selection.Children.Add(none); top.Children.Add(selection);
             var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
-            var ok = new Button { Content = purpose == null ? "_Open script" : "_Run", MinWidth = 90, Margin = new Thickness(4), IsDefault = true };
+            var ok = DialogParts.Iconize(new Button { Content = purpose == null ? "_Open script" : "_Run", MinWidth = 90, Margin = new Thickness(4), IsDefault = true });
             ok.ToolTip = purpose == null ? "Open the generated script in a new query window." : "Run against every selected database, including selections hidden by filters.";
             var cancel = new Button { Content = "_Cancel", MinWidth = 90, Margin = new Thickness(4), IsCancel = true };
             buttons.Children.Add(ok); buttons.Children.Add(cancel);

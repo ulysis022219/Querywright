@@ -20,12 +20,12 @@ namespace Querywright.Ssms
 
         internal DiagnosticsDialog()
         {
-            Title = "Querywright: diagnostic logs";
+            Title = "UlysiSQL: diagnostic logs";
             DialogParts.Style(this);
             Width = 900; Height = 650; MinWidth = 460; MinHeight = 320;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
-            root.Children.Add(DialogParts.Header("Diagnostic logs", "Enable Verbose diagnostics under Tools > Options > Querywright > General, reproduce the problem, then export. Queries and results may contain sensitive data. Review before sharing."));
+            root.Children.Add(DialogParts.Header("Diagnostic logs", "Enable Verbose diagnostics under Tools > Options > UlysiSQL > General, reproduce the problem, then export. Queries and results may contain sensitive data. Review before sharing.", Icons.Logs));
             var bottom = new StackPanel(); bottom.Children.Add(status);
             bottom.Children.Add(DialogParts.Footer(DialogParts.Buttons(this,
                 ("_Refresh", false, false, Refresh), ("_Import logs", false, false, Import), ("_Export logs", false, false, Export), ("_Close", false, true, Close))));
@@ -44,7 +44,7 @@ namespace Querywright.Ssms
 
         private void Import()
         {
-            var picker = new OpenFileDialog { Title = "Import Querywright diagnostic logs", Filter = "Querywright diagnostic logs (*.json)|*.json", CheckFileExists = true };
+            var picker = new OpenFileDialog { Title = "Import UlysiSQL diagnostic logs", Filter = "UlysiSQL diagnostic logs (*.json)|*.json", CheckFileExists = true };
             if (picker.ShowDialog(this) != true) return;
             try
             {
@@ -64,8 +64,8 @@ namespace Querywright.Ssms
         private void Export()
         {
             if (!imported) Refresh();
-            var picker = new SaveFileDialog { Title = "Export Querywright diagnostic logs", Filter = "Querywright diagnostic logs (*.json)|*.json", DefaultExt = ".json",
-                FileName = "Querywright-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".json", OverwritePrompt = true };
+            var picker = new SaveFileDialog { Title = "Export UlysiSQL diagnostic logs", Filter = "UlysiSQL diagnostic logs (*.json)|*.json", DefaultExt = ".json",
+                FileName = "UlysiSQL-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".json", OverwritePrompt = true };
             if (picker.ShowDialog(this) != true) return;
             try { File.WriteAllText(picker.FileName, snapshot, new UTF8Encoding(false)); status.Text = "Logs exported. Review sensitive query and result data before sharing."; }
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException)

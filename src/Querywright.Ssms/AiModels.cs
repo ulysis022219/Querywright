@@ -11,7 +11,7 @@ namespace Querywright.Ssms
     /// <summary>Model choices only; URL keys are hashes, never API keys or conversation text.</summary>
     internal static class AiModels
     {
-        private static readonly string FilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "ai-models.json");
+        private static readonly string FilePath = Path.Combine(Product.DataFolder, "ai-models.json");
         private static Dictionary<string, object> saved;
         internal static string Key(string baseUrl)
         {

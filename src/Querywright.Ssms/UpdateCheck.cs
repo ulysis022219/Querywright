@@ -27,7 +27,7 @@ namespace Querywright.Ssms
         {
             try
             {
-                string stamp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "update-check.txt");
+                string stamp = Path.Combine(Product.DataFolder, "update-check.txt");
                 if (!manual && File.Exists(stamp) && DateTime.UtcNow - File.GetLastWriteTimeUtc(stamp) < TimeSpan.FromDays(1)) return;
                 Directory.CreateDirectory(Path.GetDirectoryName(stamp));
                 File.WriteAllText(stamp, "");
@@ -36,7 +36,7 @@ namespace Querywright.Ssms
                 string json;
                 using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) })
                 {
-                    client.DefaultRequestHeaders.UserAgent.ParseAdd("Querywright-update-check");
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd("UlysiSQL-update-check");
                     json = await client.GetStringAsync("https://api.github.com/repos/ulysis022219/Querywright/releases/latest").ConfigureAwait(false);
                 }
                 string tag = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"(v[0-9.]+)\"").Groups[1].Value;
@@ -51,7 +51,7 @@ namespace Querywright.Ssms
                 var factory = await package.GetServiceAsync(typeof(SVsInfoBarUIFactory)) as IVsInfoBarUIFactory;
                 if (shell == null || factory == null
                     || shell.GetProperty((int)__VSSPROPID7.VSSPROPID_MainWindowInfoBarHost, out object host) != 0 || !(host is IVsInfoBarHost bar)) return;
-                var model = new InfoBarModel("Querywright " + tag + " is available (installed " + installed + "). Install the update, then save your work and close SSMS when prompted.",
+                var model = new InfoBarModel("UlysiSQL " + tag + " is available (installed " + installed + "). Install the update, then save your work and close SSMS when prompted.",
                     new[] { new InfoBarHyperlink("Install update"), new InfoBarHyperlink("Release notes") }, KnownMonikers.StatusInformation);
                 var element = factory.CreateInfoBar(model);
                 element.Advise(new UpdateCheck { tag = tag, package = package }, out _);
@@ -59,7 +59,7 @@ namespace Querywright.Ssms
             }
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
-                Diagnostics.TryLogWarning("Querywright", "Update check skipped: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("UlysiSQL", "Update check skipped: " + error.GetType().Name);
                 if (manual) await ShowAsync(package, "Could not check for updates: " + error.Message, OLEMSGICON.OLEMSGICON_WARNING);
             }
         }
@@ -67,7 +67,7 @@ namespace Querywright.Ssms
         private static async Task ShowAsync(WorkbenchPackage package, string message, OLEMSGICON icon)
         {
             await package.JoinableTaskFactory.SwitchToMainThreadAsync();
-            VsShellUtilities.ShowMessageBox(package, message, "Querywright update", icon, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+            VsShellUtilities.ShowMessageBox(package, message, "UlysiSQL update", icon, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
         }
 
         public void OnActionItemClicked(IVsInfoBarUIElement element, IVsInfoBarActionItem item)
@@ -86,7 +86,7 @@ namespace Querywright.Ssms
 
                 // Stage our installed helper scripts outside the extension directory: VSIXInstaller replaces it.
                 string source = Path.Combine(Path.GetDirectoryName(typeof(UpdateCheck).Assembly.Location), "Updater");
-                string updates = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "Updates");
+                string updates = Path.Combine(Product.DataFolder, "Updates");
                 // Earlier updates' staged scripts; a day old means their updater finished long ago.
                 if (Directory.Exists(updates))
                     foreach (var old in new DirectoryInfo(updates).GetDirectories().Where(d => d.CreationTimeUtc < DateTime.UtcNow.AddDays(-1)))
@@ -107,7 +107,7 @@ namespace Querywright.Ssms
             catch (Exception error) when (!(error is OutOfMemoryException))
             {
                 VsShellUtilities.ShowMessageBox(package, "Could not start the update: " + error.Message
-                    + "\r\nYou can retry or open Release notes for the manual installer.", "Querywright update",
+                    + "\r\nYou can retry or open Release notes for the manual installer.", "UlysiSQL update",
                     OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
             }
         }

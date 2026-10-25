@@ -15,26 +15,26 @@ namespace Querywright.Ssms
 
         internal CompletionPicker(IReadOnlyList<CompletionItem> items)
         {
-            Title = "Querywright: offline schema suggestions";
+            Title = "UlysiSQL: offline schema suggestions";
             DialogParts.Style(this);
             Width = 560; Height = 480; MinWidth = 400; MinHeight = 380;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var panel = new DockPanel { Margin = new Thickness(12) };
-            panel.Children.Add(DialogParts.Header("Schema suggestions", "Find a table or column in your configured schema snapshot."));
+            panel.Children.Add(DialogParts.Header("Schema suggestions", "Find a table or column in your configured schema snapshot.", Icons.Search));
             var top = new StackPanel();
             var search = new TextBox { Margin = new Thickness(0, 4, 0, 8) };
             top.Children.Add(new Label { Content = "_Search schema suggestions:", Target = search });
             top.Children.Add(search);
             DockPanel.SetDock(top, Dock.Top); panel.Children.Add(top);
             var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
-            var accept = new Button { Content = "_Insert", IsDefault = true, MinWidth = 80, Margin = new Thickness(4) };
+            var accept = DialogParts.Iconize(new Button { Content = "_Insert", IsDefault = true, MinWidth = 80, Margin = new Thickness(4) });
             accept.ToolTip = "Insert the selected suggestion (Enter).";
             var cancel = new Button { Content = "_Cancel", IsCancel = true, MinWidth = 80, Margin = new Thickness(4) };
             accept.Click += (sender, args) => { if (Selected != null) DialogResult = true; };
             buttons.Children.Add(accept); buttons.Children.Add(cancel);
             panel.Children.Add(DialogParts.Footer(buttons));
             list = new ListBox { ItemsSource = items, DisplayMemberPath = "Name", SelectedIndex = 0 };
-            var empty = new TextBlock { Text = items.Count == 0 ? "No schema suggestions. Configure a schema snapshot in Querywright options." : "No matches. Try a shorter table or column name.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, IsHitTestVisible = false };
+            var empty = new TextBlock { Text = items.Count == 0 ? "No schema suggestions. Configure a schema snapshot in UlysiSQL options." : "No matches. Try a shorter table or column name.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, IsHitTestVisible = false };
             void Filter()
             {
                 var matches = items.Where(item => item.Name.IndexOf(search.Text.Trim(), StringComparison.OrdinalIgnoreCase) >= 0).ToList();

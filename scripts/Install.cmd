@@ -1,6 +1,6 @@
 <# :
 @echo off
-rem Double-click to install Querywright into SSMS 22. Uninstall.cmd removes it.
+rem Double-click to install UlysiSQL into SSMS 22. Uninstall.cmd removes it.
 rem The release build appends scripts/Install-Development.ps1 below, so this one file is the whole installer.
 if not exist "%~dp0Querywright.Ssms.vsix" (
   echo Querywright.Ssms.vsix is not next to this file. You ran it from inside the zip.

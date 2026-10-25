@@ -62,6 +62,7 @@ namespace Querywright.Core
             catch (FormatException) { return Error(null, -32700, "Parse error"); }
             if (message is List<object?> batch)
             {
+                if (batch.Count == 0) return Error(null, -32600, "Invalid request");
                 var answers = batch.Select(One).Where(a => a != null).ToList();
                 return answers.Count == 0 ? null : MiniJson.Write(answers);
             }
@@ -103,7 +104,8 @@ namespace Querywright.Core
                     break;
                 case "tools/call":
                     string? toolName = MiniJson.Text(parameters, "name");
-                    if (toolName == null || !tools.TryGetValue(toolName, out var tool)) return notification ? null : Failure(id, -32602, "Unknown tool: " + toolName);
+                    if (toolName == null) return notification ? null : Failure(id, -32602, "Missing tool name");
+                    if (!tools.TryGetValue(toolName, out var tool)) return notification ? null : Failure(id, -32602, "Unknown tool: " + toolName);
                     var arguments = MiniJson.Get(parameters, "arguments") as Dictionary<string, object?> ?? new Dictionary<string, object?>();
                     string? missing = tool.Arguments.Select(a => a.Name).FirstOrDefault(a => !a.Contains("?") && !arguments.ContainsKey(a.TrimEnd('#')));
                     string text; bool failed = false;
@@ -128,7 +130,8 @@ namespace Querywright.Core
         public static string? Argument(IReadOnlyDictionary<string, object?> arguments, string name) =>
             arguments.TryGetValue(name, out var value) ? value as string ?? (value == null ? null : MiniJson.Write(value)) : null;
 
+        /// <summary>Integer argument, or the fallback when absent or out of range (an unchecked cast of 1e12 or NaN gives int.MinValue).</summary>
         public static int Argument(IReadOnlyDictionary<string, object?> arguments, string name, int fallback) =>
-            arguments.TryGetValue(name, out var value) && value is double number ? (int)number : fallback;
+            arguments.TryGetValue(name, out var value) && value is double number && number >= int.MinValue && number <= int.MaxValue ? (int)number : fallback;
     }
 }

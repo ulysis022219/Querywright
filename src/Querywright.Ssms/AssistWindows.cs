@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Automation;
@@ -21,49 +22,76 @@ namespace Querywright.Ssms
             window.UseLayoutRounding = true;
             window.FontFamily = SystemFonts.MessageFontFamily;
             window.FontSize = Math.Max(13, SystemFonts.MessageFontSize);
-            window.SetResourceReference(Control.BackgroundProperty, SystemColors.ControlBrushKey);
-            window.SetResourceReference(Control.ForegroundProperty, SystemColors.ControlTextBrushKey);
-            if (Application.Current != null) HostTheme(window);
-            void ControlStyle(Type type, params Setter[] setters)
+            // Inside SSMS the host keys resolve only when SSMS provides them; fall back to system colors otherwise.
+            var keys = Application.Current != null && HostColors(window) ? ThemeKeys.Host : ThemeKeys.Standalone;
+            window.SetResourceReference(Control.BackgroundProperty, keys.Back);
+            window.SetResourceReference(Control.ForegroundProperty, keys.Text);
+            Restyle(window, keys);
+            EventHandler changed = (s, e) => window.Dispatcher.BeginInvoke(new Action(() => Restyle(window, keys)));
+            Theme.Changed += changed;
+            window.Closed += (s, e) => Theme.Changed -= changed;
+        }
+
+        /// <summary>Puts the current palette and the shared control styles into <paramref name="root"/>'s resources, replacing earlier ones.</summary>
+        internal static void Restyle(FrameworkElement root, ThemeKeys keys)
+        {
+            Theme.Apply(root, keys);
+            var types = new[] { typeof(Button), typeof(ToggleButton), typeof(TextBox), typeof(ComboBox), typeof(ListBoxItem), typeof(CheckBox), typeof(RadioButton), typeof(TabItem), typeof(TabControl),
+                typeof(ListBox), typeof(ListView), typeof(GridViewColumnHeader), typeof(ScrollBar), typeof(Expander) };
+            foreach (var type in types) root.Resources.Remove(type);
+            void ControlStyle(Type type, params SetterBase[] setters)
             {
-                var style = new Style(type, window.TryFindResource(type) as Style);
+                var basedOn = root.TryFindResource(type) as Style;
+                var style = type == typeof(Button) || type == typeof(ToggleButton) ? Theme.ButtonStyle(type, keys, basedOn)
+                    : type == typeof(TabItem) ? Theme.TabItemStyle(keys, basedOn)
+                    : type == typeof(TabControl) ? Theme.TabControlStyle(keys, basedOn)
+                    : type == typeof(ListBoxItem) ? Theme.ListItemStyle(keys, basedOn)
+                    : type == typeof(ListBox) || type == typeof(ListView) ? Theme.ListStyle(type, keys, basedOn)
+                    : type == typeof(GridViewColumnHeader) ? Theme.ColumnHeaderStyle(keys, basedOn)
+                    : type == typeof(ScrollBar) ? Theme.ScrollBarStyle(basedOn)
+                    : type == typeof(Expander) ? Theme.ExpanderStyle(keys, basedOn)
+                    : new Style(type, basedOn);
                 foreach (var setter in setters) style.Setters.Add(setter);
-                if (type == typeof(Button))
-                {
-                    var primary = new MultiTrigger();
-                    primary.Conditions.Add(new Condition(Button.IsDefaultProperty, true));
-                    primary.Conditions.Add(new Condition(Button.IsCancelProperty, false));
-                    primary.Setters.Add(new Setter(Control.FontWeightProperty, FontWeights.SemiBold));
-                    primary.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(2)));
-                    style.Triggers.Add(primary);
-                }
-                window.Resources[type] = style;
+                root.Resources[type] = style;
             }
             ControlStyle(typeof(Button), new Setter(Control.PaddingProperty, new Thickness(14, 6, 14, 6)),
                 new Setter(FrameworkElement.MinHeightProperty, 32.0));
-            ControlStyle(typeof(TextBox), new Setter(Control.PaddingProperty, new Thickness(8, 6, 8, 6)));
-            ControlStyle(typeof(ComboBox), new Setter(Control.PaddingProperty, new Thickness(8, 5, 8, 5)));
-            ControlStyle(typeof(ListBoxItem), new Setter(Control.PaddingProperty, new Thickness(6, 5, 6, 5)),
+            ControlStyle(typeof(ToggleButton), new Setter(Control.PaddingProperty, new Thickness(12, 5, 12, 5)),
+                new Setter(FrameworkElement.MinHeightProperty, 30.0));
+            var field = new List<SetterBase> { new Setter(Control.PaddingProperty, new Thickness(8, 6, 8, 6)),
+                new Setter(TextBoxBase.SelectionBrushProperty, new DynamicResourceExtension(keys.Accent)) };
+            if (Theme.Overridden)
+                field.AddRange(new[] { new Setter(Control.BackgroundProperty, new DynamicResourceExtension(keys.Surface)),
+                    new Setter(Control.ForegroundProperty, new DynamicResourceExtension(keys.Text)),
+                    new Setter(Control.BorderBrushProperty, new DynamicResourceExtension(keys.Border)),
+                    new Setter(TextBoxBase.CaretBrushProperty, new DynamicResourceExtension(keys.Text)) });
+            ControlStyle(typeof(TextBox), field.ToArray());
+            var picker = new List<SetterBase> { new Setter(Control.PaddingProperty, new Thickness(8, 5, 8, 5)) };
+            if (Theme.Overridden) picker.Add(new EventSetter(FrameworkElement.LoadedEvent, new RoutedEventHandler((s, e) => Theme.PaintPicker((ComboBox)s, keys))));
+            ControlStyle(typeof(ComboBox), picker.ToArray());
+            ControlStyle(typeof(TabControl));
+            ControlStyle(typeof(ListBoxItem), new Setter(Control.PaddingProperty, new Thickness(8, 6, 8, 6)),
                 new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
             ControlStyle(typeof(CheckBox), new Setter(Control.PaddingProperty, new Thickness(4, 2, 4, 2)));
+            ControlStyle(typeof(RadioButton), new Setter(Control.PaddingProperty, new Thickness(4, 2, 4, 2)));
             ControlStyle(typeof(TabItem), new Setter(Control.PaddingProperty, new Thickness(14, 7, 14, 7)));
+            ControlStyle(typeof(ListBox));
+            ControlStyle(typeof(ListView));
+            ControlStyle(typeof(GridViewColumnHeader));
+            ControlStyle(typeof(ScrollBar));
+            ControlStyle(typeof(Expander));
         }
 
         // Keep standalone dialog checks independent of the SSMS-only SDK assemblies.
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static void HostTheme(Window window)
-        {
-            if (window.TryFindResource(Microsoft.VisualStudio.Shell.VsResourceKeys.ThemedDialogDefaultStylesKey) is ResourceDictionary theme)
-                window.Resources.MergedDictionaries.Add(theme);
-            if (window.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey) is Brush)
-                window.SetResourceReference(Control.BackgroundProperty, Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey);
-            if (window.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey) is Brush)
-                window.SetResourceReference(Control.ForegroundProperty, Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey);
-        }
+        private static bool HostColors(Window window)
+            => window.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey) is Brush
+                && window.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey) is Brush;
 
         internal static void Style(System.Windows.Forms.Form form)
         {
-            if (Application.Current != null) HostTheme(form);
+            // Host colors resolve only inside SSMS; standalone, a fixed palette still applies when one is chosen.
+            if (Theme.FormColors(ThemeKeys.ForWindow) is { } colors) Paint(form, colors);
         }
 
         /// <summary>Styles the form and shows it modal to the SSMS main window (screen-centered when standalone).</summary>
@@ -92,62 +120,112 @@ namespace Querywright.Ssms
             public IntPtr Handle { get; }
         }
 
-        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static void HostTheme(System.Windows.Forms.Form form)
+        private static void Paint(System.Windows.Forms.Form form,
+            (System.Drawing.Color Back, System.Drawing.Color Text, System.Drawing.Color Surface, System.Drawing.Color Border, System.Drawing.Color Accent, System.Drawing.Color OnAccent) colors)
         {
-            var background = Application.Current.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowBackgroundBrushKey) as SolidColorBrush;
-            var foreground = Application.Current.TryFindResource(Microsoft.VisualStudio.PlatformUI.EnvironmentColors.ToolWindowTextBrushKey) as SolidColorBrush;
-            if (background == null || foreground == null) return;
-            var back = System.Drawing.Color.FromArgb(background.Color.R, background.Color.G, background.Color.B);
-            var fore = System.Drawing.Color.FromArgb(foreground.Color.R, foreground.Color.G, foreground.Color.B);
+            var (back, fore, surface, border, accent, onAccent) = colors;
+            var muted = System.Drawing.Color.FromArgb((fore.R * 34 + back.R * 66) / 100, (fore.G * 34 + back.G * 66) / 100, (fore.B * 34 + back.B * 66) / 100);
             void Paint(System.Windows.Forms.Control control)
             {
                 control.BackColor = back; control.ForeColor = fore;
                 if (control is System.Windows.Forms.Button button)
                 {
+                    var primary = button == form.AcceptButton;
                     button.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-                    button.FlatAppearance.BorderColor = fore;
-                    button.FlatAppearance.BorderSize = button == form.AcceptButton ? 2 : 1;
+                    button.BackColor = primary ? accent : surface;
+                    button.ForeColor = primary ? onAccent : fore;
+                    button.FlatAppearance.BorderColor = primary ? accent : border;
+                    button.FlatAppearance.BorderSize = 1;
+                    button.FlatAppearance.MouseOverBackColor = primary ? System.Drawing.Color.FromArgb((accent.R * 85 + onAccent.R * 15) / 100, (accent.G * 85 + onAccent.G * 15) / 100, (accent.B * 85 + onAccent.B * 15) / 100)
+                        : System.Drawing.Color.FromArgb((surface.R * 80 + accent.R * 20) / 100, (surface.G * 80 + accent.G * 20) / 100, (surface.B * 80 + accent.B * 20) / 100);
                 }
+                if (control is System.Windows.Forms.TextBoxBase || control is System.Windows.Forms.ListBox || control is System.Windows.Forms.ComboBox)
+                    control.BackColor = surface;
+                if (control is System.Windows.Forms.Label label && label.Tag as string == HeaderDescription) label.ForeColor = muted;
                 if (control is System.Windows.Forms.PropertyGrid property)
                 {
-                    property.ViewBackColor = property.HelpBackColor = property.CategorySplitterColor = back;
+                    property.ViewBackColor = surface; property.HelpBackColor = back; property.CategorySplitterColor = back;
                     property.ViewForeColor = property.HelpForeColor = property.CategoryForeColor = fore;
-                    property.LineColor = System.Drawing.SystemColors.ControlDark;
+                    property.LineColor = border;
+                    property.SelectedItemWithFocusBackColor = accent; property.SelectedItemWithFocusForeColor = onAccent;
+                    property.ViewBorderColor = property.HelpBorderColor = border;
                 }
                 if (control is System.Windows.Forms.DataGridView grid)
                 {
-                    grid.BackgroundColor = back; grid.EnableHeadersVisualStyles = false;
-                    grid.DefaultCellStyle.BackColor = grid.ColumnHeadersDefaultCellStyle.BackColor = back;
+                    grid.BackgroundColor = surface; grid.EnableHeadersVisualStyles = false; grid.GridColor = border;
+                    grid.DefaultCellStyle.BackColor = surface; grid.ColumnHeadersDefaultCellStyle.BackColor = back;
                     grid.DefaultCellStyle.ForeColor = grid.ColumnHeadersDefaultCellStyle.ForeColor = fore;
-                    grid.DefaultCellStyle.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-                    grid.DefaultCellStyle.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+                    grid.DefaultCellStyle.SelectionBackColor = accent;
+                    grid.DefaultCellStyle.SelectionForeColor = onAccent;
                 }
                 foreach (System.Windows.Forms.Control child in control.Controls) Paint(child);
             }
-            // These dialogs are modal: read the active host theme each time they open.
+            // These dialogs are modal: read the active theme each time they open.
             Paint(form);
         }
 
-        internal static System.Windows.Forms.Label FormHeader(string title, string description)
-            => new System.Windows.Forms.Label { Text = title + "\r\n" + description, Dock = System.Windows.Forms.DockStyle.Top,
-                AutoSize = true, Padding = new System.Windows.Forms.Padding(0, 0, 0, 16), UseMnemonic = false };
+        private const string HeaderDescription = "Querywright.HeaderDescription";
 
-        internal static StackPanel Header(string title, string description)
+        /// <summary>Bold title over a muted description, docked to the top of a WinForms dialog.</summary>
+        internal static System.Windows.Forms.Control FormHeader(string title, string description)
         {
-            var header = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
-            header.Children.Add(new TextBlock { Text = title, FontSize = 22, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-            header.Children.Add(new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
+            var header = new System.Windows.Forms.TableLayoutPanel { Dock = System.Windows.Forms.DockStyle.Top, AutoSize = true, ColumnCount = 1,
+                Padding = new System.Windows.Forms.Padding(0, 0, 0, 12), AccessibleName = title };
+            header.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100));
+            var heading = new System.Windows.Forms.Label { Text = title, AutoSize = true, UseMnemonic = false, Margin = new System.Windows.Forms.Padding(0),
+                Font = new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont.FontFamily, System.Drawing.SystemFonts.MessageBoxFont.SizeInPoints * 1.4f, System.Drawing.FontStyle.Bold) };
+            var detail = new System.Windows.Forms.Label { Text = description, AutoSize = true, UseMnemonic = false, Tag = HeaderDescription, Margin = new System.Windows.Forms.Padding(0, 4, 0, 0) };
+            header.Controls.Add(heading, 0, 0);
+            header.Controls.Add(detail, 0, 1);
+            header.Resize += (s, e) => detail.MaximumSize = heading.MaximumSize = new System.Drawing.Size(Math.Max(100, header.ClientSize.Width - header.Padding.Horizontal), 0);
+            return header;
+        }
+
+        /// <summary>Title and muted description, with an accent icon tile when <paramref name="icon"/> is given.</summary>
+        internal static DockPanel Header(string title, string description, Geometry? icon = null)
+        {
+            var keys = ThemeKeys.ForWindow;
+            var header = new DockPanel { Margin = new Thickness(0, 0, 0, 16), LastChildFill = true };
+            if (icon != null)
+            {
+                var tile = new Border { Width = 36, Height = 36, CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 2, 12, 0),
+                    VerticalAlignment = VerticalAlignment.Top, Child = Theme.Glyph(icon, keys.Accent, 20) };
+                tile.SetResourceReference(Border.BackgroundProperty, Theme.AccentSoftKey);
+                DockPanel.SetDock(tile, Dock.Left);
+                header.Children.Add(tile);
+            }
+            var text = new StackPanel();
+            text.Children.Add(new TextBlock { Text = title, FontSize = 20, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            var detail = new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0) };
+            detail.SetResourceReference(TextBlock.ForegroundProperty, Theme.MutedKey);
+            text.Children.Add(detail);
+            header.Children.Add(text);
             DockPanel.SetDock(header, Dock.Top);
             return header;
         }
 
         internal static Border Footer(UIElement buttons)
         {
-            var footer = new Border { Child = buttons, BorderThickness = new Thickness(0, 1, 0, 0), Margin = new Thickness(0, 12, 0, 0) };
-            footer.SetResourceReference(Border.BorderBrushProperty, SystemColors.ActiveBorderBrushKey);
+            var footer = new Border { Child = buttons, BorderThickness = new Thickness(0, 1, 0, 0), Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(0, 4, 0, 0) };
+            footer.SetResourceReference(Border.BorderBrushProperty, ThemeKeys.ForWindow.Border);
             DockPanel.SetDock(footer, Dock.Bottom);
             return footer;
+        }
+
+        private static readonly Dictionary<string, Geometry> ActionIcons = new Dictionary<string, Geometry>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Open in new window"] = Icons.NewWindow, ["Add to favorites"] = Icons.Star, ["Remove from favorites"] = Icons.StarFilled,
+            ["Rename"] = Icons.Rename, ["Delete tab"] = Icons.Delete, ["Copy script"] = Icons.Copy, ["Refresh"] = Icons.Sync,
+            ["Import logs"] = Icons.Import, ["Export logs"] = Icons.Export, ["Apply"] = Icons.Checkmark, ["Preview"] = Icons.Preview,
+            ["Insert"] = Icons.Insert, ["Select all"] = Icons.SelectAll, ["Select all shown"] = Icons.SelectAll, ["Select none"] = Icons.SelectNone,
+            ["Select none shown"] = Icons.SelectNone, ["Open script"] = Icons.Open, ["Run"] = Icons.Run,
+        };
+
+        /// <summary>Adds the leading icon that matches a common action label; OK, Cancel and Close stay text only.</summary>
+        internal static T Iconize<T>(T button) where T : ButtonBase
+        {
+            if (button.Content is string label && ActionIcons.TryGetValue(label.Replace("_", "").Replace("...", "").Trim(), out var icon)) Theme.SetIcon(button, icon);
+            return button;
         }
 
         internal static TextBlock Status()
@@ -162,7 +240,7 @@ namespace Querywright.Ssms
             var panel = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
             foreach (var item in items)
             {
-                var button = new Button { Content = item.Text, MinWidth = 90, Margin = new Thickness(4), IsDefault = item.IsDefault, IsCancel = item.IsCancel };
+                var button = Iconize(new Button { Content = item.Text, MinWidth = 90, Margin = new Thickness(4), IsDefault = item.IsDefault, IsCancel = item.IsCancel });
                 if (item.Click != null) { var click = item.Click; button.Click += (s, e) => click(); }
                 panel.Children.Add(button);
             }
@@ -178,17 +256,17 @@ namespace Querywright.Ssms
 
         internal ColumnPickerDialog(IReadOnlyList<string> columns, bool checkAll = true)
         {
-            Title = "Querywright: pick columns";
+            Title = "UlysiSQL: pick columns";
             DialogParts.Style(this);
             Width = 460; Height = 540; MinWidth = 360; MinHeight = 400;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             // TextBlock content so an underscore in a column name is not read as an access key.
             var boxes = columns.Select(c => new CheckBox { Content = new TextBlock { Text = c }, IsChecked = checkAll, Margin = new Thickness(2) }).ToList();
             var root = new DockPanel { Margin = new Thickness(12) };
-            root.Children.Add(DialogParts.Header("Choose columns", "Select the columns to include in your script."));
+            root.Children.Add(DialogParts.Header("Choose columns", "Select the columns to include in your script.", Icons.Table));
             var top = new StackPanel { Orientation = Orientation.Horizontal };
-            var all = new Button { Content = "Select _all", Margin = new Thickness(0, 0, 4, 8), Padding = new Thickness(8, 2, 8, 2) };
-            var none = new Button { Content = "Select _none", Margin = new Thickness(0, 0, 4, 8), Padding = new Thickness(8, 2, 8, 2) };
+            var all = DialogParts.Iconize(new Button { Content = "Select _all", Margin = new Thickness(0, 0, 4, 8), Padding = new Thickness(10, 4, 10, 4) });
+            var none = DialogParts.Iconize(new Button { Content = "Select _none", Margin = new Thickness(0, 0, 4, 8), Padding = new Thickness(10, 4, 10, 4) });
             all.Click += (s, e) => boxes.ForEach(b => b.IsChecked = true);
             none.Click += (s, e) => boxes.ForEach(b => b.IsChecked = false);
             top.Children.Add(all); top.Children.Add(none);
@@ -222,7 +300,7 @@ namespace Querywright.Ssms
             Width = 480; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var root = new DockPanel { Margin = new Thickness(12) };
-            root.Children.Add(DialogParts.Header(title.Replace("Querywright: ", ""), choices == null ? "Enter a name to continue." : "Choose an existing name or enter a new one."));
+            root.Children.Add(DialogParts.Header(title.Replace("UlysiSQL: ", ""), choices == null ? "Enter a name to continue." : "Choose an existing name or enter a new one.", Icons.TextEdit));
             Control box = choices == null
                 ? new TextBox { Text = initial, Margin = new Thickness(0, 4, 0, 4) }
                 : new ComboBox { ItemsSource = choices, IsEditable = true, Text = initial, Margin = new Thickness(0, 4, 0, 4) };
@@ -254,7 +332,7 @@ namespace Querywright.Ssms
     internal static class TabHistory
     {
         internal static readonly string Folder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "TabHistory");
+            Product.DataFolder, "TabHistory");
         private const int MaxTabs = 200, MaxVersions = 100, MaxChars = 2 * 1024 * 1024;
         private const long MaxBytes = 256L * 1024 * 1024;
         private static long lastCap;
@@ -291,7 +369,7 @@ namespace Querywright.Ssms
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException)
             {
                 // History is best effort; never interrupt editing. Log the failure kind only, never the query text.
-                Diagnostics.TryLogWarning("Querywright", "Tab history save failed: " + error.GetType().Name);
+                Diagnostics.TryLogWarning("UlysiSQL", "Tab history save failed: " + error.GetType().Name);
             }
         }
 
@@ -387,7 +465,7 @@ namespace Querywright.Ssms
 
         internal TabHistoryDialog(string folder)
         {
-            Title = "Querywright: tab history";
+            Title = "UlysiSQL: tab history";
             DialogParts.Style(this);
             Width = 1100; Height = 760; MinWidth = 760; MinHeight = 580;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -409,7 +487,7 @@ namespace Querywright.Ssms
                 tabs.Sort((a, b) => b.Versions[0].Time.CompareTo(a.Versions[0].Time));
             }
             var layout = new DockPanel { Margin = new Thickness(12) };
-            layout.Children.Add(DialogParts.Header("Tab history", "Find a saved query, review a version, and reopen it in a new window."));
+            layout.Children.Add(DialogParts.Header("Tab history", "Find a saved query, review a version, and reopen it in a new window.", Icons.History));
             var feedback = DialogParts.Status();
             DockPanel.SetDock(feedback, Dock.Bottom); layout.Children.Add(feedback);
             var search = new TextBox { Margin = new Thickness(0, 4, 0, 8) };
@@ -527,7 +605,7 @@ namespace Querywright.Ssms
                 ("_Rename...", false, false, () =>
                 {
                     if (!(Selected() is Tab tab)) return;
-                    var prompt = new PromptDialog("Querywright: rename saved tab", "_Name:", tab.Name ?? tab.Caption) { Owner = this };
+                    var prompt = new PromptDialog("UlysiSQL: rename saved tab", "_Name:", tab.Name ?? tab.Caption) { Owner = this };
                     if (prompt.ShowDialog() != true) return;
                     string name = System.Text.RegularExpressions.Regex.Replace(prompt.Value, @"\s+", " ").Trim();
                     if (name.Length > 200) name = name.Substring(0, 200);
@@ -608,7 +686,7 @@ namespace Querywright.Ssms
                 buffer.Position = 0;
                 Settings = (Querywright.Core.WorkbenchSettings)serializer.Deserialize(buffer);
             }
-            Text = "Querywright: formatting style and rules (" + settingsPath + ")";
+            Text = "UlysiSQL: formatting style and rules (" + settingsPath + ")";
             Width = 1000; Height = 600;
             MinimumSize = new System.Drawing.Size(720, 420);
             Font = System.Drawing.SystemFonts.MessageBoxFont;
@@ -660,7 +738,7 @@ namespace Querywright.Ssms
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;
             var root = new DockPanel { Margin = new Thickness(12) };
-            root.Children.Add(DialogParts.Header(title, "Inspect the definition and " + (parameters ? "parameters" : "columns") + ". This view is read-only."));
+            root.Children.Add(DialogParts.Header(title, "Inspect the definition and " + (parameters ? "parameters" : "columns") + ". This view is read-only.", Icons.Table));
             var status = DialogParts.Status();
             DockPanel.SetDock(status, Dock.Bottom); root.Children.Add(status);
             root.Children.Add(DialogParts.Footer(DialogParts.Buttons(this,

@@ -15,11 +15,11 @@ namespace Querywright.Ssms
 {
     /// <summary>Model Context Protocol server (streamable HTTP, JSON replies) on the loopback interface, so an external AI
     /// agent can read the active query window, inspect the connected database and run SQL on the window's own login.
-    /// Every request needs the bearer token from Querywright > Copy MCP configuration.</summary>
+    /// Every request needs the bearer token from UlysiSQL > Copy MCP configuration.</summary>
     internal sealed class McpHost : IDisposable
     {
         private const int MaxBody = 4 * 1024 * 1024, MaxText = 60_000;
-        private static readonly string TokenFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Querywright", "mcp-token.txt");
+        private static readonly string TokenFile = Path.Combine(Product.DataFolder, "mcp-token.txt");
         private static string token;
 
         private readonly WorkbenchPackage package;
@@ -31,7 +31,7 @@ namespace Querywright.Ssms
             if (port < 1024 || port > 65535) throw new ArgumentException("the port must be between 1024 and 65535");
             this.package = package;
             Token();
-            protocol = new McpProtocol("querywright", typeof(McpHost).Assembly.GetName().Version.ToString(), Tools());
+            protocol = new McpProtocol("ulysisql", typeof(McpHost).Assembly.GetName().Version.ToString(), Tools());
             listener = Listen(port);
             Diagnostics.Write("mcp", "started");
             _ = Task.Run(AcceptAsync);
@@ -317,16 +317,16 @@ SELECT 'Version: ' + REPLACE(REPLACE(@@VERSION, CHAR(10), ' '), CHAR(9), ' ');";
                 Tool("list_view_details", "Definition of a view.", Script, ("name", objectName)),
                 Tool("list_stored_procedure_details", "Definition and parameters of a stored procedure or function.", Script, ("name", objectName)),
                 Tool("list_related_objects", "Foreign keys to and from a table, and the procedures, views and functions that use an object.", Related, ("name", objectName)),
-                Tool("format_tsql", "Formats T-SQL with the user's Querywright formatting style and returns it. The query window is not changed.",
+                Tool("format_tsql", "Formats T-SQL with the user's UlysiSQL formatting style and returns it. The query window is not changed.",
                     a => SqlFormatting.Format(Sql(a), package.AiSettings().Formatting), ("sql?", optionalSql)),
                 Tool("list_tsql_execution_errors", "Compile errors SQL Server reports for the script, per batch, found with SET NOEXEC ON. Nothing is run.",
                     a => Lines(AiSql.Errors(Connection(), Sql(a)), "No compile errors."), ("sql?", optionalSql)),
-                Tool("list_tsql_code_analysis_issues", "Querywright code analysis findings (rule, position, message) for the script. Needs no connection.",
+                Tool("list_tsql_code_analysis_issues", "UlysiSQL code analysis findings (rule, position, message) for the script. Needs no connection.",
                     a => Lines(SqlAnalysis.Analyze(Sql(a), default, package.AiSettings()).Diagnostics.Select(d => "Line " + d.Line + ", column " + d.Column + ": [" + d.Rule + "] " + d.Message), "No issues."),
                     ("sql?", optionalSql)),
                 Tool("get_query_execution_plan", "Estimated execution plan XML of the script (SET SHOWPLAN_XML ON). Nothing is run.",
                     a => { string plan = AiSql.Plan(Connection(), Sql(a)); return plan.Length == 0 ? "SQL Server returned no plan." : Clip(plan); }, ("sql?", optionalSql)),
-                Tool("fix_code_analysis_issues", "Applies every automatic Querywright code analysis fix to the script and returns the result. The query window is not changed.",
+                Tool("fix_code_analysis_issues", "Applies every automatic UlysiSQL code analysis fix to the script and returns the result. The query window is not changed.",
                     a =>
                     {
                         var (text, count) = SqlAnalysis.FixAll(Sql(a), Tables(required: false), "dbo", package.AiSettings());

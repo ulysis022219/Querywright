@@ -89,12 +89,14 @@ Rule IDs marked unverified could not be confirmed against the Redgate catalog; t
 Comments (`--` or `/* */`, case-insensitive) control rule diagnostics:
 
 ```sql
--- querywright-disable SW005, SW006       suppress these rules until enabled again or end of script
--- querywright-enable SW005               re-enable one rule
--- querywright-disable                    no IDs: suppress every rule
--- querywright-enable                     no IDs: re-enable every rule
--- querywright-disable-next-line SW001    suppress on the line after the comment only
+-- ulysisql-disable SW005, SW006          suppress these rules until enabled again or end of script
+-- ulysisql-enable SW005                  re-enable one rule
+-- ulysisql-disable                       no IDs: suppress every rule
+-- ulysisql-enable                        no IDs: re-enable every rule
+-- ulysisql-disable-next-line SW001       suppress on the line after the comment only
 ```
+
+Scripts written before the rename keep working: `querywright-` directives mean the same.
 
 A diagnostic is suppressed by its start position. IDs are read until the first word that is not a rule ID,
 so a trailing reason is allowed. Directives inside strings are ignored. Parse errors are never suppressed.

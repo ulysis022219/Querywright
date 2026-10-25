@@ -148,7 +148,8 @@ namespace Querywright.Core
             {
                 case "date": return now.ToString("\\'yyyy-MM-dd\\'", c);
                 case "time": return now.ToString("\\'HH:mm:ss\\'", c);
-                case "datetime": case "datetime2": case "smalldatetime": return now.ToString("\\'yyyy-MM-dd HH:mm:ss\\'", c);
+                // The T form reads the same under every SET LANGUAGE and DATEFORMAT; datetime takes the spaced form as year-day-month under dmy.
+                case "datetime": case "datetime2": case "smalldatetime": return now.ToString("\\'yyyy-MM-ddTHH:mm:ss\\'", c);
                 case "datetimeoffset": return now.ToString("\\'yyyy-MM-dd HH:mm:ss zzz\\'", c);
                 case "uniqueidentifier": return "'" + Guid.NewGuid().ToString().ToUpperInvariant() + "'";
                 default: return Placeholder(type);

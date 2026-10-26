@@ -101,14 +101,14 @@ Write-Output "SSMS $([Diagnostics.FileVersionInfo]::GetVersionInfo($ssms).Produc
 
 $results = [ordered]@{}
 function Session([string]$name, [string]$text, [string[]]$extra, [string]$steps) {
-    # One SSMS instance per scenario. The package's self-test (QUERYWRIGHT_SELFTEST) replays $steps through the SQL
+    # One SSMS instance per scenario. The package's self-test (ULYSISQL_SELFTEST) replays $steps through the SQL
     # editor's command chain, the same TYPECHAR/TAB/F12 commands a keypress sends, so window focus cannot break the run.
     $file = Join-Path $Out "$name.sql"
     $result = Join-Path $Out "$name.result.txt"
     [IO.File]::WriteAllText($file, $text)
     Remove-Item $result -ErrorAction SilentlyContinue
-    $env:QUERYWRIGHT_SELFTEST = $result
-    $env:QUERYWRIGHT_SELFTEST_STEPS = $steps
+    $env:ULYSISQL_SELFTEST = $result
+    $env:ULYSISQL_SELFTEST_STEPS = $steps
     Start-Process $ssms -ArgumentList (@("`"$file`"") + $extra + '-nosplash', '/log') | Out-Null
     try {
         for ($i = 0; $i -lt 240 -and -not (Test-Path $result); $i++) {
@@ -126,7 +126,7 @@ function Session([string]$name, [string]$text, [string[]]$extra, [string]$steps)
     } catch {
         return "error: $_"
     } finally {
-        Remove-Item Env:QUERYWRIGHT_SELFTEST, Env:QUERYWRIGHT_SELFTEST_STEPS -ErrorAction SilentlyContinue
+        Remove-Item Env:ULYSISQL_SELFTEST, Env:ULYSISQL_SELFTEST_STEPS -ErrorAction SilentlyContinue
         Get-Process SSMS -ErrorAction SilentlyContinue | Stop-Process -Force
         Get-Process SSMS -ErrorAction SilentlyContinue | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
         Get-ChildItem "$env:APPDATA\Microsoft\SSMS" -Recurse -Filter ActivityLog.xml -ErrorAction SilentlyContinue |

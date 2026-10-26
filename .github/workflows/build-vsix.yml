@@ -54,7 +54,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Core checks
-        run: dotnet run --project tests/Querywright.Checks
+        run: dotnet run --project tests/UlysiSQL.Checks
       - name: Update validation checks
         shell: powershell
         run: |
@@ -70,14 +70,14 @@ jobs:
         env:
           RELEASE: ${{ inputs.release }}
         run: |
-          $m = 'src/Querywright.Ssms/source.extension.vsixmanifest'
+          $m = 'src/UlysiSQL.Ssms/source.extension.vsixmanifest'
           $x = [IO.File]::ReadAllText($m)
           $base = if ($env:RELEASE) { $env:RELEASE.TrimStart('v') } elseif ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { [regex]::Match($x, '<Identity [^>]*Version="(\d+\.\d+\.\d+)').Groups[1].Value }
           if ($base -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3, got '$base'." }
           [IO.File]::WriteAllText($m, [regex]::Replace($x, '(<Identity [^>]*Version=")[^"]+', "`${1}$base.$env:GITHUB_RUN_NUMBER"))
           Write-Output "Version $base.$env:GITHUB_RUN_NUMBER"
       - name: Build VSIX
-        run: dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj
+        run: dotnet build src/UlysiSQL.Ssms/UlysiSQL.Ssms.csproj
       - name: AI HTTP fixture checks
         shell: powershell
         run: scripts/Test-AiClient.ps1
@@ -94,16 +94,16 @@ jobs:
       - name: Assemble installer zip
         shell: powershell
         run: |
-          $out = New-Item -ItemType Directory -Force dist/Querywright
-          Copy-Item src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix $out
+          $out = New-Item -ItemType Directory -Force dist/UlysiSQL
+          Copy-Item src/UlysiSQL.Ssms/bin/Debug/net472/UlysiSQL.Ssms.vsix $out
           # One installer file: Install.cmd's batch header runs the PowerShell installer appended to it.
           (Get-Content -Raw scripts/Install.cmd) + (Get-Content -Raw scripts/Install-Development.ps1) | Set-Content -NoNewline -Encoding ascii (Join-Path $out 'Install.cmd')
           Copy-Item scripts/Uninstall.cmd $out
-          Compress-Archive -Path "$out/*" -DestinationPath dist/Querywright-ssms22.zip -Force
+          Compress-Archive -Path "$out/*" -DestinationPath dist/UlysiSQL-ssms22.zip -Force
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: Querywright-ssms22
-          path: dist/Querywright-ssms22.zip
+          name: UlysiSQL-ssms22
+          path: dist/UlysiSQL-ssms22.zip
       - name: Publish prerelease
         if: github.ref_type == 'branch'
         # Needs Settings > Actions > Workflow permissions = read and write; the run artifact works either way.
@@ -114,7 +114,7 @@ jobs:
         run: |
           tag="dev-${GITHUB_REF_NAME//\//-}"
           gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$tag" dist/Querywright-ssms22.zip --prerelease --target "$GITHUB_SHA" \
+          gh release create "$tag" dist/UlysiSQL-ssms22.zip --prerelease --target "$GITHUB_SHA" \
             --title "UlysiSQL dev build ($GITHUB_REF_NAME)" \
             --notes "Untested development build from ${GITHUB_SHA}. Close SSMS 22, unzip and double-click Install.cmd."
       - name: SSMS 22 end-to-end
@@ -123,7 +123,7 @@ jobs:
         run: |
           Get-Process vs_SSMS -ErrorAction SilentlyContinue | Wait-Process
           scripts/Test-AiPanel.ps1 -Out e2e/ai-panel
-          scripts/Test-Ssms.ps1 -Package (Resolve-Path src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix)
+          scripts/Test-Ssms.ps1 -Package (Resolve-Path src/UlysiSQL.Ssms/bin/Debug/net472/UlysiSQL.Ssms.vsix)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.prior.outputs.e2e != 'skip'
         with:
@@ -143,7 +143,7 @@ jobs:
           fetch-depth: 0 # tags, for the commits since the previous release
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: Querywright-ssms22
+          name: UlysiSQL-ssms22
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -156,10 +156,10 @@ jobs:
             previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA^" 2>/dev/null || true)
             NOTES=$(git log --no-merges --format='- %s' ${previous:+"$previous.."}"$GITHUB_SHA")
           fi
-          printf '## What changed\n\n%s\n\n## Install or update\n\nClose SSMS 22, unzip QueryWright_%s.zip, double-click Install.cmd. To remove it, double-click Uninstall.cmd.\nOr install QueryWright_%s.vsix yourself. Free and open source (MIT).\n' "$NOTES" "$TAG" "$TAG" > notes.md
-          # Versioned names; the updater looks for QueryWright_<tag>.zip.
-          mv Querywright-ssms22.zip "QueryWright_$TAG.zip"
-          unzip -p "QueryWright_$TAG.zip" Querywright.Ssms.vsix > "QueryWright_$TAG.vsix"
-          printf '\n## SHA-256\n\n```\n%s\n```\n' "$(sha256sum "QueryWright_$TAG.zip" "QueryWright_$TAG.vsix")" >> notes.md
-          gh release create "$TAG" "QueryWright_$TAG.zip" "QueryWright_$TAG.vsix" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          printf '## What changed\n\n%s\n\n## Install or update\n\nClose SSMS 22, unzip UlysiSQL_%s.zip, double-click Install.cmd. To remove it, double-click Uninstall.cmd.\nOr install UlysiSQL_%s.vsix yourself. Free and open source (MIT).\n\nComing from Querywright 1.0.31 or earlier? Its built-in updater cannot install UlysiSQL: install this release by hand once as above. Settings, snippets, saved prompts and the AI key are kept.\n' "$NOTES" "$TAG" "$TAG" > notes.md
+          # Versioned names; the updater looks for UlysiSQL_<tag>.zip.
+          mv UlysiSQL-ssms22.zip "UlysiSQL_$TAG.zip"
+          unzip -p "UlysiSQL_$TAG.zip" UlysiSQL.Ssms.vsix > "UlysiSQL_$TAG.vsix"
+          printf '\n## SHA-256\n\n```\n%s\n```\n' "$(sha256sum "UlysiSQL_$TAG.zip" "UlysiSQL_$TAG.vsix")" >> notes.md
+          gh release create "$TAG" "UlysiSQL_$TAG.zip" "UlysiSQL_$TAG.vsix" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "UlysiSQL $TAG" --notes-file notes.md

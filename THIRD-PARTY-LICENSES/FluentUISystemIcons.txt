@@ -1,6 +1,6 @@
 Microsoft Fluent UI System Icons
 https://github.com/microsoft/fluentui-system-icons
-Used for: icon path data embedded in src/Querywright.Ssms/Icons.cs
+Used for: icon path data embedded in src/UlysiSQL.Ssms/Icons.cs
 
 MIT License
 

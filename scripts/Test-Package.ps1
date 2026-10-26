@@ -1,5 +1,5 @@
 param(
-    [string]$Path = "$PSScriptRoot/../src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix",
+    [string]$Path = "$PSScriptRoot/../src/UlysiSQL.Ssms/bin/Debug/net472/UlysiSQL.Ssms.vsix",
     [string]$ExpectedVersion
 )
 $ErrorActionPreference = 'Stop'
@@ -23,9 +23,9 @@ try {
         $expandedSize += $entry.Length
         if ($expandedSize -gt 500MB) { throw 'Package expanded size exceeds the limit.' }
     }
-    foreach ($required in @('extension.vsixmanifest', 'Querywright.Ssms.dll', 'Querywright.Ssms.pkgdef',
-        'Querywright.Core.dll', 'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt', 'THIRD-PARTY-LICENSES/FluentUISystemIcons.txt',
-        'Updater/Update-Querywright.ps1', 'Updater/Update-Release.ps1', 'Updater/Install-Development.ps1', 'Updater/Test-Package.ps1')) {
+    foreach ($required in @('extension.vsixmanifest', 'UlysiSQL.Ssms.dll', 'UlysiSQL.Ssms.pkgdef',
+        'UlysiSQL.Core.dll', 'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt', 'THIRD-PARTY-LICENSES/FluentUISystemIcons.txt',
+        'Updater/Update-UlysiSQL.ps1', 'Updater/Update-Release.ps1', 'Updater/Install-Development.ps1', 'Updater/Test-Package.ps1')) {
         if ($names -notcontains $required) { throw "Package missing $required" }
     }
     if ($names -match '(^|/)Microsoft\.VisualStudio\..*\.dll$') { throw 'Host SDK assemblies must not be bundled.' }

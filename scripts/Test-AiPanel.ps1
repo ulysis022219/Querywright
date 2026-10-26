@@ -38,10 +38,10 @@ function Snap($element, $size, $name) {
     try { $encoder.Save($file) } finally { $file.Dispose() }
 }
 try {
-    $bin = Join-Path $PSScriptRoot '../src/Querywright.Ssms/bin/Debug/net472'
-    $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Ssms.dll'))
-    [void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Core.dll'))
-    $type = $assembly.GetType('Querywright.Ssms.AiPanel', $true)
+    $bin = Join-Path $PSScriptRoot '../src/UlysiSQL.Ssms/bin/Debug/net472'
+    $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'UlysiSQL.Ssms.dll'))
+    [void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'UlysiSQL.Core.dll'))
+    $type = $assembly.GetType('UlysiSQL.Ssms.AiPanel', $true)
     $flags = [Reflection.BindingFlags]'Instance,NonPublic'
     $panel = [Activator]::CreateInstance($type, $flags, $null, @(), $null)
     $message = $type.GetMethod('Message', $flags)
@@ -103,7 +103,7 @@ This block is explanatory text, not executable SQL.
     Check ($thought.Content -is [Windows.Controls.RichTextBox] -and $thought.Content.IsReadOnly) 'Reasoning must be plain, selectable and read-only'
     Check ($thought.Content.VerticalScrollBarVisibility -eq [Windows.Controls.ScrollBarVisibility]::Auto) 'Long reasoning must remain scrollable within its height limit'
     Check (@(Nodes $thought | Where-Object { $_ -is [Windows.Controls.Button] }).Count -eq 0) 'Reasoning must never expose insert/replace/run/copy-answer actions'
-    $logType = $assembly.GetType('Querywright.Ssms.DiagnosticsDialog', $true)
+    $logType = $assembly.GetType('UlysiSQL.Ssms.DiagnosticsDialog', $true)
     $logDialog = [Activator]::CreateInstance($logType, $flags, $null, @(), $null)
     $logView = $logType.GetField('view', $flags).GetValue($logDialog)
     Check ($logView.IsReadOnly -and $logView.VerticalScrollBarVisibility -eq [Windows.Controls.ScrollBarVisibility]::Auto -and $logView.HorizontalScrollBarVisibility -eq [Windows.Controls.ScrollBarVisibility]::Auto) 'Imported diagnostic text must be read-only and scrollable'
@@ -113,7 +113,7 @@ This block is explanatory text, not executable SQL.
     Check ($logView.ActualHeight -gt 0) 'Diagnostic text must remain visible at minimum dialog size'
     $logDialog.Close()
     # Model persistence runs against a temporary file, never user settings.
-    $models = $assembly.GetType('Querywright.Ssms.AiModels', $true)
+    $models = $assembly.GetType('UlysiSQL.Ssms.AiModels', $true)
     $staticFlags = [Reflection.BindingFlags]'Static,NonPublic'
     $modelFile = $models.GetField('FilePath', $staticFlags); $modelCache = $models.GetField('saved', $staticFlags)
     $originalFile = $modelFile.GetValue($null); $originalCache = $modelCache.GetValue($null)

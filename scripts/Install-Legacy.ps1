@@ -6,7 +6,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-if (-not $Build) { $Build = Join-Path $root 'src\Querywright.Ssms.Legacy\bin\Debug\net472' }
+if (-not $Build) { $Build = Join-Path $root 'src\UlysiSQL.Ssms.Legacy\bin\Debug\net472' }
 if (-not $SsmsDirectory) {
     $SsmsDirectory = 20, 19, 18 | ForEach-Object { Join-Path ${env:ProgramFiles(x86)} "Microsoft SQL Server Management Studio $_\Common7\IDE" } |
         Where-Object { Test-Path -LiteralPath (Join-Path $_ 'Ssms.exe') } | Select-Object -First 1
@@ -18,11 +18,14 @@ $identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run from an elevated prompt: the SSMS folder is under Program Files.' }
 if (Get-Process ssms -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $ssms }) { throw 'Close SSMS after saving your work first. No processes were stopped.' }
 $extensions = Join-Path $SsmsDirectory 'Extensions'
-$target = Join-Path $extensions 'Querywright'
-if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+$target = Join-Path $extensions 'UlysiSQL'
+# Copies from before the rename have the same package GUID; never leave both installed.
+foreach ($folder in $target, (Join-Path $extensions 'Querywright')) {
+    if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force }
+}
 if (-not $Uninstall) {
-    foreach ($file in 'Querywright.Ssms.dll', 'Querywright.Ssms.pkgdef', 'extension.vsixmanifest') {
-        if (-not (Test-Path -LiteralPath (Join-Path $Build $file))) { throw "Build src\Querywright.Ssms.Legacy first: $file is missing." }
+    foreach ($file in 'UlysiSQL.Ssms.dll', 'UlysiSQL.Ssms.pkgdef', 'extension.vsixmanifest') {
+        if (-not (Test-Path -LiteralPath (Join-Path $Build $file))) { throw "Build src\UlysiSQL.Ssms.Legacy first: $file is missing." }
     }
     Copy-Item -LiteralPath $Build -Destination $target -Recurse
     Get-ChildItem -LiteralPath $target -Filter *.pdb | Remove-Item -Force

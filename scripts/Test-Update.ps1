@@ -13,49 +13,53 @@ function New-Release {
     return [pscustomobject]@{
         tag_name = 'v1.2.3'; draft = $false; prerelease = $false
         assets = @([pscustomobject]@{
-            name = 'QueryWright_v1.2.3.zip'; state = 'uploaded'; digest = 'sha256:' + ('a' * 64)
-            browser_download_url = 'https://github.com/ulysis022219/Querywright/releases/download/v1.2.3/QueryWright_v1.2.3.zip'
+            name = 'UlysiSQL_v1.2.3.zip'; state = 'uploaded'; digest = 'sha256:' + ('a' * 64)
+            browser_download_url = 'https://github.com/ulysis022219/UlysiSQL/releases/download/v1.2.3/UlysiSQL_v1.2.3.zip'
         })
     }
 }
 $release = New-Release
-$asset = Get-QuerywrightReleaseAsset $release 'v1.2.3'
-if ($asset.name -ne 'QueryWright_v1.2.3.zip') { throw 'Valid release was not selected.' }
+$asset = Get-UlysiSQLReleaseAsset $release 'v1.2.3'
+if ($asset.name -ne 'UlysiSQL_v1.2.3.zip') { throw 'Valid release was not selected.' }
 $script:checks++
+$release.assets[0].browser_download_url = 'https://github.com/ulysis022219/Querywright/releases/download/v1.2.3/UlysiSQL_v1.2.3.zip'
+if ((Get-UlysiSQLReleaseAsset $release 'v1.2.3').name -ne 'UlysiSQL_v1.2.3.zip') { throw 'Release reported under the old Querywright repository was rejected.' }
+$script:checks++
+$release = New-Release
 foreach ($tag in @('v1.2.3/other', 'v1.2.3-beta', 'v1.2', 'v1.2.4', 'V1.2.3', "v1.2.3`n", 'v1.2.3";whoami')) {
-    Reject { Get-QuerywrightReleaseAsset $release $tag } 'published stable'
+    Reject { Get-UlysiSQLReleaseAsset $release $tag } 'published stable'
 }
 $release.draft = $true
-Reject { Get-QuerywrightReleaseAsset $release 'v1.2.3' } 'published stable'
+Reject { Get-UlysiSQLReleaseAsset $release 'v1.2.3' } 'published stable'
 $release = New-Release
 $release.prerelease = $true
-Reject { Get-QuerywrightReleaseAsset $release 'v1.2.3' } 'published stable'
+Reject { Get-UlysiSQLReleaseAsset $release 'v1.2.3' } 'published stable'
 $release = New-Release
 $release.assets = @()
-Reject { Get-QuerywrightReleaseAsset $release 'v1.2.3' } 'exactly one'
+Reject { Get-UlysiSQLReleaseAsset $release 'v1.2.3' } 'exactly one'
 $release = New-Release
 $release.assets += $release.assets[0]
-Reject { Get-QuerywrightReleaseAsset $release 'v1.2.3' } 'exactly one'
+Reject { Get-UlysiSQLReleaseAsset $release 'v1.2.3' } 'exactly one'
 $release = New-Release
-$release.assets[0].browser_download_url = 'https://example.com/QueryWright_v1.2.3.zip'
-Reject { Get-QuerywrightReleaseAsset $release 'v1.2.3' } 'download location'
+$release.assets[0].browser_download_url = 'https://example.com/UlysiSQL_v1.2.3.zip'
+Reject { Get-UlysiSQLReleaseAsset $release 'v1.2.3' } 'download location'
 $release = New-Release
 $release.assets[0].digest = $null
-Reject { Get-QuerywrightReleaseAsset $release 'v1.2.3' } 'no SHA-256'
+Reject { Get-UlysiSQLReleaseAsset $release 'v1.2.3' } 'no SHA-256'
 foreach ($uri in @('http://github.com/file', 'https://github.com.attacker.example/file',
     'https://github.com@attacker.example/file', 'https://github.com:8443/file',
     'file:///tmp/release.zip', 'https://release-assets.githubusercontent.com.attacker.example/file')) {
-    Reject { Assert-QuerywrightDownloadUri ([uri]$uri) } 'Untrusted'
+    Reject { Assert-UlysiSQLDownloadUri ([uri]$uri) } 'Untrusted'
 }
-Assert-QuerywrightDownloadUri ([uri]'https://release-assets.githubusercontent.com/example?signature=value')
+Assert-UlysiSQLDownloadUri ([uri]'https://release-assets.githubusercontent.com/example?signature=value')
 $script:checks++
 $inputStream = [IO.MemoryStream]::new([byte[]](1, 2, 3, 4))
 $outputStream = [IO.MemoryStream]::new()
 try {
-    Reject { Copy-QuerywrightDownload $inputStream $outputStream ([Threading.CancellationToken]::None) 3 } 'size limit'
+    Reject { Copy-UlysiSQLDownload $inputStream $outputStream ([Threading.CancellationToken]::None) 3 } 'size limit'
     if ($outputStream.Length -ne 0) { throw 'Oversized data was written.' }
     $inputStream.Position = 0
-    Copy-QuerywrightDownload $inputStream $outputStream ([Threading.CancellationToken]::None) 4
+    Copy-UlysiSQLDownload $inputStream $outputStream ([Threading.CancellationToken]::None) 4
     if ($outputStream.Length -ne 4) { throw 'Valid download was truncated.' }
     $script:checks++
 } finally { $inputStream.Dispose(); $outputStream.Dispose() }
@@ -73,29 +77,29 @@ function New-TestZip([string]$Path, $Entries) {
 }
 try {
     $vsix = Join-Path $temp 'fixture.vsix'
-    $manifest = [IO.File]::ReadAllText("$PSScriptRoot/../src/Querywright.Ssms/source.extension.vsixmanifest").Replace('Version="1.0.0"', 'Version="1.2.3.45"')
+    $manifest = [IO.File]::ReadAllText("$PSScriptRoot/../src/UlysiSQL.Ssms/source.extension.vsixmanifest").Replace('Version="1.0.0"', 'Version="1.2.3.45"')
     $entries = @{ 'extension.vsixmanifest' = $manifest }
-    foreach ($name in @('Querywright.Ssms.dll', 'Querywright.Ssms.pkgdef', 'Querywright.Core.dll',
+    foreach ($name in @('UlysiSQL.Ssms.dll', 'UlysiSQL.Ssms.pkgdef', 'UlysiSQL.Core.dll',
         'Microsoft.SqlServer.TransactSql.ScriptDom.dll', 'LICENSE', 'THIRD-PARTY-LICENSES/ScriptDOM.txt', 'THIRD-PARTY-LICENSES/FluentUISystemIcons.txt',
-        'Updater/Update-Querywright.ps1', 'Updater/Update-Release.ps1', 'Updater/Install-Development.ps1', 'Updater/Test-Package.ps1')) {
+        'Updater/Update-UlysiSQL.ps1', 'Updater/Update-Release.ps1', 'Updater/Install-Development.ps1', 'Updater/Test-Package.ps1')) {
         $entries[$name] = 'fixture'
     }
     New-TestZip $vsix $entries
     $archive = Join-Path $temp 'release.zip'
     $zip = [IO.Compression.ZipFile]::Open($archive, [IO.Compression.ZipArchiveMode]::Create)
     try {
-        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $vsix, 'Querywright.Ssms.vsix') | Out-Null
+        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $vsix, 'UlysiSQL.Ssms.vsix') | Out-Null
         $zip.CreateEntry('../must-not-extract.ps1') | Out-Null
     } finally { $zip.Dispose() }
     $digest = 'sha256:' + (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
     $destination = Join-Path $temp 'verified.vsix'
-    Expand-QuerywrightUpdate $archive $destination $digest 'v1.2.3'
+    Expand-UlysiSQLUpdate $archive $destination $digest 'v1.2.3'
     if (-not (Test-Path -LiteralPath $destination) -or (Test-Path -LiteralPath (Join-Path (Split-Path $temp) 'must-not-extract.ps1'))) {
         throw 'Extraction failed or extracted an unexpected entry.'
     }
     $script:checks++
-    Reject { Expand-QuerywrightUpdate $archive (Join-Path $temp 'bad.vsix') ('sha256:' + ('0' * 64)) 'v1.2.3' } 'checksum'
-    Reject { Expand-QuerywrightUpdate $archive (Join-Path $temp 'wrong-version.vsix') $digest 'v1.2.4' } 'version does not match'
+    Reject { Expand-UlysiSQLUpdate $archive (Join-Path $temp 'bad.vsix') ('sha256:' + ('0' * 64)) 'v1.2.3' } 'checksum'
+    Reject { Expand-UlysiSQLUpdate $archive (Join-Path $temp 'wrong-version.vsix') $digest 'v1.2.4' } 'version does not match'
     $entries['extension.vsixmanifest'] = $manifest.Replace('SqlWorkbench.a13c1b0c-af94-4f53-8d06-edf816e39450', 'Other.Extension')
     $wrong = Join-Path $temp 'wrong-identity.vsix'
     New-TestZip $wrong $entries
@@ -125,6 +129,6 @@ try {
     $missing = Join-Path $temp 'missing.zip'
     New-TestZip $missing @{ 'other.vsix' = 'not the release package' }
     $missingDigest = 'sha256:' + (Get-FileHash -LiteralPath $missing -Algorithm SHA256).Hash
-    Reject { Expand-QuerywrightUpdate $missing (Join-Path $temp 'missing.vsix') $missingDigest 'v1.2.3' } 'Invalid release package'
+    Reject { Expand-UlysiSQLUpdate $missing (Join-Path $temp 'missing.vsix') $missingDigest 'v1.2.3' } 'Invalid release package'
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
 Write-Output "PASS: $script:checks update validation checks. No network requests or installation."

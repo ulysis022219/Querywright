@@ -1,18 +1,18 @@
-# Run after dotnet build src/Querywright.Ssms, with Windows PowerShell -STA.
+# Run after dotnet build src/UlysiSQL.Ssms, with Windows PowerShell -STA.
 # Offscreen WPF checks: no SSMS install, database connection, or user-history changes.
 param([string]$Out, [ValidateSet(100, 125, 150, 200)][int]$Scale = 100,
     [ValidateSet('FollowSsms', 'Light', 'Dark', 'Midnight', 'WarmLight')][string]$Theme = 'FollowSsms',
     [ValidateSet('FollowSsms', 'Blue', 'Teal', 'Violet', 'Rose', 'Amber', 'Green', 'Graphite')][string]$Accent = 'FollowSsms')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
-$bin = Join-Path $PSScriptRoot '../src/Querywright.Ssms/bin/Debug/net472'
-$assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Ssms.dll'))
-[void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Core.dll'))
-$assembly.GetType('Querywright.Ssms.Theme', $true).GetMethod('Configure', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @(
-    [Enum]::Parse($assembly.GetType('Querywright.Ssms.UiTheme', $true), $Theme), [Enum]::Parse($assembly.GetType('Querywright.Ssms.UiAccent', $true), $Accent)))
+$bin = Join-Path $PSScriptRoot '../src/UlysiSQL.Ssms/bin/Debug/net472'
+$assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'UlysiSQL.Ssms.dll'))
+[void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'UlysiSQL.Core.dll'))
+$assembly.GetType('UlysiSQL.Ssms.Theme', $true).GetMethod('Configure', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, @(
+    [Enum]::Parse($assembly.GetType('UlysiSQL.Ssms.UiTheme', $true), $Theme), [Enum]::Parse($assembly.GetType('UlysiSQL.Ssms.UiAccent', $true), $Accent)))
 $suffix = if ($Theme -eq 'FollowSsms' -and $Accent -eq 'FollowSsms') { "$Scale" } else { "$Theme-$Accent-$Scale" }
 function Dialog($name, [object[]]$arguments) {
-    [Activator]::CreateInstance($assembly.GetType("Querywright.Ssms.$name", $true), [Reflection.BindingFlags]'Instance,NonPublic', $null, $arguments, $null)
+    [Activator]::CreateInstance($assembly.GetType("UlysiSQL.Ssms.$name", $true), [Reflection.BindingFlags]'Instance,NonPublic', $null, $arguments, $null)
 }
 function Nodes($element) {
     if ($element -isnot [Windows.DependencyObject]) { return }
@@ -68,15 +68,15 @@ try {
     $filter.Text = ''
     Layout $db 'database-picker'
 } finally { $db.Close() }
-$items = [Collections.Generic.List[Querywright.Core.CompletionItem]]::new()
+$items = [Collections.Generic.List[UlysiSQL.Core.CompletionItem]]::new()
 $picker = Dialog 'CompletionPicker' @(,$items)
 try {
     $insert = Nodes $picker.Content | Where-Object { $_ -is [Windows.Controls.Button] -and $_.Content -eq '_Insert' }
     Check (!$insert.IsEnabled) 'Empty suggestions must disable Insert'
     Layout $picker 'suggestions-empty'
 } finally { $picker.Close() }
-$items.Add([Activator]::CreateInstance([Querywright.Core.CompletionItem], [Reflection.BindingFlags]'Instance,NonPublic', $null, @('Customer_Id', '[Customer_Id]', 'int'), $null))
-$items.Add([Activator]::CreateInstance([Querywright.Core.CompletionItem], [Reflection.BindingFlags]'Instance,NonPublic', $null, @('Orders', '[Orders]', 'table'), $null))
+$items.Add([Activator]::CreateInstance([UlysiSQL.Core.CompletionItem], [Reflection.BindingFlags]'Instance,NonPublic', $null, @('Customer_Id', '[Customer_Id]', 'int'), $null))
+$items.Add([Activator]::CreateInstance([UlysiSQL.Core.CompletionItem], [Reflection.BindingFlags]'Instance,NonPublic', $null, @('Orders', '[Orders]', 'table'), $null))
 $picker = Dialog 'CompletionPicker' @(,$items)
 try {
     $nodes = @(Nodes $picker.Content)
@@ -109,12 +109,12 @@ try {
     Check (@(Nodes $rename.Content | Where-Object { $_ -is [Windows.Controls.TextBlock] -and $_.Text -eq 'Enter a name before previewing.' }).Count -eq 1) 'Blank rename must stop before background work'
     Layout $rename 'rename'
 } finally { $rename.Close() }
-$style = Dialog 'FormattingStyleDialog' @([Querywright.Core.WorkbenchSettings]::new(), 'test-settings.xml')
+$style = Dialog 'FormattingStyleDialog' @([UlysiSQL.Core.WorkbenchSettings]::new(), 'test-settings.xml')
 try {
     $style.Size = $style.MinimumSize; $style.PerformLayout()
     Check ($style.AcceptButton.Enabled) 'Valid formatting preview must allow Save'
     Check ($style.Controls[0].TabPages[0].Controls[0] -is [Windows.Forms.SplitContainer]) 'Formatting panes should be resizable'
-    Check ($style.Controls[0].TabPages[1].Controls[0].SelectedObject -is [Querywright.Core.WorkbenchSettings]) 'Rule severities should be editable'
+    Check ($style.Controls[0].TabPages[1].Controls[0].SelectedObject -is [UlysiSQL.Core.WorkbenchSettings]) 'Rule severities should be editable'
     Check ($style.CancelButton -and $style.Controls[0].AccessibleName) 'Esc should cancel and the tabs should have a name'
 } finally { $style.Dispose() }
 $history = Dialog 'TabHistoryDialog' @([string](Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())))

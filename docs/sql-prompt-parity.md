@@ -117,7 +117,7 @@ not yet run in SSMS.
 | Comment / uncomment selection | core only; SSMS already has Ctrl+K, Ctrl+C / Ctrl+U |
 | Suggestion matching, ranking, aliases, join suggestions, commit keys | see section 1 and features.md "Suggestion matching and ranking". Matching, group order (exact name, promoted, others, snippets), list triggers, commit keys and the alias and column-order defaults follow the decompiled 11.5.5.27669 behaviour. Known differences: ordinal instead of culture-aware comparison, keywords first in a general context, usage as a tie-break only, a soft selection while a new alias may be typed |
 | Menu | command captions and group order (suggestions, formatting, refactoring, analysis) follow SQL Prompt's command names; the order inside its menu was not recovered and is inferred. Accent colours are blue |
-| SSMS versions | SSMS 22: VSIX, tested. SSMS 18 to 20: `src/Querywright.Ssms.Legacy` builds the same sources against the Visual Studio 2017 shell and `scripts/Install-Legacy.ps1` copies it into the SSMS Extensions folder; compiled only, not yet run. SSMS 21 and SSMS 17 or older: not supported |
+| SSMS versions | SSMS 22: VSIX, tested. SSMS 18 to 20: `src/UlysiSQL.Ssms.Legacy` builds the same sources against the Visual Studio 2017 shell and `scripts/Install-Legacy.ps1` copies it into the SSMS Extensions folder; compiled only, not yet run. SSMS 21 and SSMS 17 or older: not supported |
 
 Not implemented:
 

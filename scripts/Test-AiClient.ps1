@@ -12,9 +12,9 @@ $resolver = [ResolveEventHandler] {
     return $null
 }
 [AppDomain]::CurrentDomain.add_AssemblyResolve($resolver)
-$bin = Join-Path $PSScriptRoot '../src/Querywright.Ssms/bin/Debug/net472'
-$assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Ssms.dll'))
-[void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Core.dll'))
+$bin = Join-Path $PSScriptRoot '../src/UlysiSQL.Ssms/bin/Debug/net472'
+$assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'UlysiSQL.Ssms.dll'))
+[void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'UlysiSQL.Core.dll'))
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -156,16 +156,16 @@ public sealed class AiFixtureProgress : IProgress<string>
 }
 '@
 function Check($condition, $message) { if (!$condition) { throw $message } }
-$keyPath = $assembly.GetType('Querywright.Ssms.AiKey', $true).GetField('File', [Reflection.BindingFlags]'NonPublic,Static')
+$keyPath = $assembly.GetType('UlysiSQL.Ssms.AiKey', $true).GetField('File', [Reflection.BindingFlags]'NonPublic,Static')
 $originalPath = $keyPath.GetValue($null)
-$ask = $assembly.GetType('Querywright.Ssms.AiClient', $true).GetMethod('AskAsync', [Reflection.BindingFlags]'NonPublic,Static')
-$reply = $assembly.GetType('Querywright.Ssms.AiClient', $true).GetMethod('ReplyAsync', [Reflection.BindingFlags]'NonPublic,Static')
-$models = $assembly.GetType('Querywright.Ssms.AiClient', $true).GetMethod('ModelsAsync', [Reflection.BindingFlags]'NonPublic,Static')
-$diagnostics = $assembly.GetType('Querywright.Ssms.AiClient', $true).GetField('DiagnosticLog', [Reflection.BindingFlags]'NonPublic,Static').GetValue($null)
-$processLogs = $assembly.GetType('Querywright.Ssms.Diagnostics', $true)
+$ask = $assembly.GetType('UlysiSQL.Ssms.AiClient', $true).GetMethod('AskAsync', [Reflection.BindingFlags]'NonPublic,Static')
+$reply = $assembly.GetType('UlysiSQL.Ssms.AiClient', $true).GetMethod('ReplyAsync', [Reflection.BindingFlags]'NonPublic,Static')
+$models = $assembly.GetType('UlysiSQL.Ssms.AiClient', $true).GetMethod('ModelsAsync', [Reflection.BindingFlags]'NonPublic,Static')
+$diagnostics = $assembly.GetType('UlysiSQL.Ssms.AiClient', $true).GetField('DiagnosticLog', [Reflection.BindingFlags]'NonPublic,Static').GetValue($null)
+$processLogs = $assembly.GetType('UlysiSQL.Ssms.Diagnostics', $true)
 $capture = $processLogs.GetProperty('Enabled', [Reflection.BindingFlags]'NonPublic,Static')
-$messages = [Collections.Generic.List[Querywright.Core.AiMessage]]::new()
-$messages.Add([Querywright.Core.AiMessage]::new('user', 'fixture only'))
+$messages = [Collections.Generic.List[UlysiSQL.Core.AiMessage]]::new()
+$messages.Add([UlysiSQL.Core.AiMessage]::new('user', 'fixture only'))
 try {
     # Redirect only this test process's private field to a nonexistent path; never read the real saved key.
     $keyPath.SetValue($null, (Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N') + '.missing')))
@@ -174,7 +174,7 @@ try {
         $progress = [AiFixtureProgress]::new()
         $cancel = [Threading.CancellationTokenSource]::new()
         try {
-            $format = [Enum]::Parse($assembly.GetType('Querywright.Ssms.AiApiFormat'), $(if ($mode -in 'anthropic', 'redirect') { 'Anthropic' } else { 'OpenAiCompatible' }))
+            $format = [Enum]::Parse($assembly.GetType('UlysiSQL.Ssms.AiApiFormat'), $(if ($mode -in 'anthropic', 'redirect') { 'Anthropic' } else { 'OpenAiCompatible' }))
             $task = $ask.Invoke($null, @($format, $server.Url, 'fixture', $messages, $cancel.Token, 4096, $progress))
             $cancel.CancelAfter(6000)
             if ($mode -eq 'cancel') {
@@ -209,10 +209,10 @@ try {
         $cancel = [Threading.CancellationTokenSource]::new()
         try {
             $cancel.CancelAfter(6000)
-            $format = [Enum]::Parse($assembly.GetType('Querywright.Ssms.AiApiFormat'), $(if ($mode.EndsWith('anthropic')) { 'Anthropic' } else { 'OpenAiCompatible' }))
+            $format = [Enum]::Parse($assembly.GetType('UlysiSQL.Ssms.AiApiFormat'), $(if ($mode.EndsWith('anthropic')) { 'Anthropic' } else { 'OpenAiCompatible' }))
             $textProgress = $(if ($mode -in 'reasonplain', 'reasonplainanthropic') { $null } else { $progress })
             $extra = $(if ($mode -eq 'reasonfallback') { '{"provider":{"thinking":true},"reasoning":{"effort":"high"},"fixture_option":true,"temperature":null}' } else { '' })
-            $task = $reply.Invoke($null, @($format, $server.Url, 'fixture', $messages, $cancel.Token, 4096, $textProgress, [Querywright.Core.AiReasoningLevel]::High, $extra, $thoughts))
+            $task = $reply.Invoke($null, @($format, $server.Url, 'fixture', $messages, $cancel.Token, 4096, $textProgress, [UlysiSQL.Core.AiReasoningLevel]::High, $extra, $thoughts))
             if ($mode -in 'reasonauth', 'reasoncredit', 'reasonserver', 'reasonbad400') {
                 try { $task.GetAwaiter().GetResult(); throw 'Reasoning failure unexpectedly succeeded' }
                 catch { Check $task.IsFaulted "$mode must fault without retry"; Check (!$task.Exception.ToString().Contains('credential echo')) 'Provider errors must not be echoed' }
@@ -226,7 +226,7 @@ try {
                 }
                 if ($mode -eq 'reasonfallback') {
                     Check $result.ReasoningUnsupported 'Explicit rejection must report unsupported reasoning'
-                    $second = $reply.Invoke($null, @($format, $server.Url, 'fixture', $messages, $cancel.Token, 4096, $progress, [Querywright.Core.AiReasoningLevel]::High, $extra, $thoughts)).GetAwaiter().GetResult()
+                    $second = $reply.Invoke($null, @($format, $server.Url, 'fixture', $messages, $cancel.Token, 4096, $progress, [UlysiSQL.Core.AiReasoningLevel]::High, $extra, $thoughts)).GetAwaiter().GetResult()
                     Check ($second.ReasoningUnsupported -and $second.Text -eq 'SELECT 1;') 'Session suppression must remain visible'
                     $firstBody = $server.Bodies[0] | ConvertFrom-Json
                     Check ($firstBody.reasoning_effort -eq 'high') 'First request must contain requested reasoning'
@@ -247,8 +247,8 @@ try {
         $server = [AiFixture]::new($mode); $progress = [AiFixtureProgress]::new(); $thoughts = [AiFixtureProgress]::new()
         $cancel = [Threading.CancellationTokenSource]::new(); $cancel.CancelAfter(6000)
         try {
-            $format = [Enum]::Parse($assembly.GetType('Querywright.Ssms.AiApiFormat'), 'OpenAiCompatible')
-            $task = $reply.Invoke($null, @($format, $server.Url, 'fixture', $messages, $cancel.Token, 4096, $(if ($mode -eq 'reasonlength') { $progress } else { $null }), [Querywright.Core.AiReasoningLevel]::High, '', $thoughts))
+            $format = [Enum]::Parse($assembly.GetType('UlysiSQL.Ssms.AiApiFormat'), 'OpenAiCompatible')
+            $task = $reply.Invoke($null, @($format, $server.Url, 'fixture', $messages, $cancel.Token, 4096, $(if ($mode -eq 'reasonlength') { $progress } else { $null }), [UlysiSQL.Core.AiReasoningLevel]::High, '', $thoughts))
             try { $task.GetAwaiter().GetResult(); throw 'Length fixture unexpectedly succeeded' }
             catch { Check ($task.IsFaulted -and $task.Exception.ToString().Contains('token limit') -and $task.Exception.ToString().Contains('Out: 4096')) 'Reasoning-only length exhaustion must show cause and usage' }
             Check ($server.Worker.Wait(5000) -and $server.Bodies.Count -eq 1) 'Token exhaustion must not silently bill a retry'
@@ -267,7 +267,7 @@ try {
         try {
             $cancel.CancelAfter(6000)
             $anthropic = $mode -eq 'anthropicmodels'
-            $format = [Enum]::Parse($assembly.GetType('Querywright.Ssms.AiApiFormat'), $(if ($anthropic) { 'Anthropic' } else { 'OpenAiCompatible' }))
+            $format = [Enum]::Parse($assembly.GetType('UlysiSQL.Ssms.AiApiFormat'), $(if ($anthropic) { 'Anthropic' } else { 'OpenAiCompatible' }))
             $first = $models.Invoke($null, @($format, $server.Url, $cancel.Token, $false)).GetAwaiter().GetResult()
             Check (($first -join ',') -eq $(if ($anthropic) { 'alpha,beta,zeta' } else { 'alpha,zeta' })) "$mode must merge, deduplicate and sort discovery results"
             $cached = $models.Invoke($null, @($format, $server.Url, $cancel.Token, $false)).GetAwaiter().GetResult()
@@ -282,5 +282,25 @@ try {
             foreach ($version in $server.AnthropicVersion) { Check ($version -eq $anthropic) 'Anthropic discovery must retain version header' }
         } finally { $cancel.Dispose(); $server.Dispose() }
     }
+    # A key saved before the rename still decrypts. The fixture is a temporary file, never the saved key.
+    Add-Type -AssemblyName System.Security
+    $legacyKey = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N') + '.bin')
+    try {
+        $utf8 = [Text.Encoding]::UTF8
+        [IO.File]::WriteAllBytes($legacyKey, [Security.Cryptography.ProtectedData]::Protect($utf8.GetBytes('fixture-legacy-key'), $utf8.GetBytes('Querywright AI provider key'), 'CurrentUser'))
+        $keyPath.SetValue($null, $legacyKey)
+        $read = $assembly.GetType('UlysiSQL.Ssms.AiKey', $true).GetMethod('Read', [Reflection.BindingFlags]'NonPublic,Static')
+        Check ($read.Invoke($null, @()) -ceq 'fixture-legacy-key') 'A key saved before the rename must still decrypt'
+        [IO.File]::WriteAllBytes($legacyKey, [Security.Cryptography.ProtectedData]::Protect($utf8.GetBytes('fixture-other-key'), $utf8.GetBytes('other entropy'), 'CurrentUser'))
+        Check ($read.Invoke($null, @()) -ceq '') 'A key with unknown entropy must read as empty'
+    } finally { Remove-Item -LiteralPath $legacyKey -ErrorAction SilentlyContinue }
+    # Option pages saved before the rename load from their Querywright path until saved again.
+    $settingsPath = $assembly.GetType('UlysiSQL.Ssms.Product', $true).GetMethod('SettingsPath', [Reflection.BindingFlags]'NonPublic,Static')
+    $current = 'DialogPage\UlysiSQL.Ssms.AiOptions'; $legacy = 'DialogPage\Querywright.Ssms.AiOptions'
+    function Resolve-Settings([string]$Path, [string[]]$Saved) { $settingsPath.Invoke($null, @($Path, [Func[string, bool]] { param($p) $p -cin $Saved }.GetNewClosure())) }
+    Check ((Resolve-Settings $current @($legacy)) -ceq $legacy) 'Options saved only under the old name must load from there'
+    Check ((Resolve-Settings $current @($current, $legacy)) -ceq $current) 'Options saved under the new name must win'
+    Check ((Resolve-Settings $current @()) -ceq $current) 'Fresh installs must use the new name'
+    Check ((Resolve-Settings 'DialogPage\Other.Page' @('DialogPage\Other.Page')) -ceq 'DialogPage\Other.Page') 'Other pages must keep their path'
 } finally { $keyPath.SetValue($null, $originalPath); $capture.SetValue($null, $false); [AppDomain]::CurrentDomain.remove_AssemblyResolve($resolver) }
-Write-Host 'PASS: AI HTTP fixtures for both formats, reasoning and usage, JSON fallback, rejection/session suppression, no auth/credit/server retries or redirects, bounded responses, model cache/refresh/pagination, truncation and prompt Stop. No provider or database used.'
+Write-Host 'PASS: AI HTTP fixtures for both formats, reasoning and usage, JSON fallback, rejection/session suppression, no auth/credit/server retries or redirects, bounded responses, model cache/refresh/pagination, truncation and prompt Stop; keys and option pages saved before the rename. No provider or database used.'

@@ -15,4 +15,4 @@ Microsoft Fluent UI System Icons: MIT, Microsoft Corporation.
 Source: https://github.com/microsoft/fluentui-system-icons
 Outline path data for 35 icons (20 px regular and filled variants), retrieved
 October 25, 2026 from the upstream main branch and embedded as WPF geometry in
-src/Querywright.Ssms/Icons.cs. No icon font or image files are bundled.
+src/UlysiSQL.Ssms/Icons.cs. No icon font or image files are bundled.

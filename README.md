@@ -26,7 +26,7 @@ code analysis, refactoring, tab history, server colors and an optional AI assist
 - **Looks the way you like.** Follow the SSMS theme, or pick a palette and accent color of your own.
 - **MIT licensed.**
 
-> Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/Querywright/issues).
+> Tested automatically against SSMS 22 on every build. Found a bug? Please [report it](https://github.com/ulysis022219/UlysiSQL/issues).
 
 ## New in UlysiSQL
 
@@ -41,15 +41,17 @@ UlysiSQL is the new name of Querywright, together with a redesigned interface.
   trigger ENABLE/DISABLE, very deeply nested SQL no longer breaks analysis, and the AI panel, suggestions, auto-fix and
   wide tables are faster. Closed windows no longer hold on to memory.
 
-**Coming from Querywright?** Install the update as usual; your settings stay. An existing install keeps its data
-(settings, snippets, tab history, schema cache and AI key) in `%LOCALAPPDATA%\Querywright`, while new installs use
-`%LOCALAPPDATA%\UlysiSQL`. Comments written for Querywright keep working: `-- querywright-disable` and
+**Coming from Querywright?** Querywright 1.0.31 and earlier cannot install UlysiSQL by itself: install it once by
+hand as described under [Install](#install); later updates install from inside SSMS again. Your options, snippets,
+tab history and AI key stay. An existing install keeps its data in `%LOCALAPPDATA%\Querywright`, while new installs
+use `%LOCALAPPDATA%\UlysiSQL`. Comments written for Querywright keep working: `-- querywright-disable` and
 `-- querywright:format off` mean the same as the new `-- ulysisql-disable` and `-- ulysisql:format off`.
-Release files keep the `QueryWright_` prefix so that older versions can find and install updates.
+If you changed the BEGIN/END block colors under Fonts and Colors or assigned your own keyboard shortcuts to
+Querywright commands, set them again for UlysiSQL.
 
 ## Install
 
-1. Download `QueryWright_v<version>.zip` from the [latest release](https://github.com/ulysis022219/Querywright/releases/latest)
+1. Download `UlysiSQL_v<version>.zip` from the [latest release](https://github.com/ulysis022219/UlysiSQL/releases/latest)
    (or just the `.vsix` next to it if you prefer installing it yourself).
 2. Close SSMS 22, unzip, and double-click **Install.cmd**.
 3. Start SSMS 22 and open a query window.
@@ -63,7 +65,7 @@ How updates are checked: [update security](docs/update-security.md).
 
 To uninstall, close SSMS and double-click `Uninstall.cmd`.
 
-SSMS 18, 19 and 20 (experimental, built from source, not yet tested in SSMS): build `src/Querywright.Ssms.Legacy`,
+SSMS 18, 19 and 20 (experimental, built from source, not yet tested in SSMS): build `src/UlysiSQL.Ssms.Legacy`,
 then run `scripts/Install-Legacy.ps1` from an elevated PowerShell with SSMS closed (`-Uninstall` removes it).
 
 ## What it does
@@ -144,20 +146,19 @@ Full lists: [features](docs/features.md), [analysis rules](docs/analysis-rules.m
 Requires the .NET 10 SDK on Windows.
 
 ```powershell
-dotnet run --project tests/Querywright.Checks                  # core checks
-dotnet build src/Querywright.Ssms/Querywright.Ssms.csproj      # builds the .vsix
+dotnet run --project tests/UlysiSQL.Checks                     # core checks
+dotnet build src/UlysiSQL.Ssms/UlysiSQL.Ssms.csproj            # builds the .vsix
 powershell -NoProfile -File scripts/Test-Package.ps1           # checks the package contents
 powershell -NoProfile -File scripts/Test-Update.ps1            # update validation, no installation
 powershell -NoProfile -STA -File scripts/Test-Dialogs.ps1 -Scale 150 -Theme Midnight -Accent Violet -Out shots  # dialog screenshots
 ```
 
-The package is written to `src/Querywright.Ssms/bin/Debug/net472/Querywright.Ssms.vsix`. Source folders and
-assemblies keep the Querywright name so that existing installs keep updating.
+The package is written to `src/UlysiSQL.Ssms/bin/Debug/net472/UlysiSQL.Ssms.vsix`.
 
-- `src/Querywright.Core`: parsing, formatting, analysis and refactoring (.NET Standard 2.0, no SSMS dependency).
-- `src/Querywright.Ssms`: the SSMS 22 extension (.NET Framework 4.7.2), including themes (`Theme.cs`) and icons (`Icons.cs`).
-- `src/Querywright.Ssms.Legacy`: the experimental SSMS 18-20 build of the same sources.
-- `tests/Querywright.Checks`: the core checks.
+- `src/UlysiSQL.Core`: parsing, formatting, analysis and refactoring (.NET Standard 2.0, no SSMS dependency).
+- `src/UlysiSQL.Ssms`: the SSMS 22 extension (.NET Framework 4.7.2), including themes (`Theme.cs`) and icons (`Icons.cs`).
+- `src/UlysiSQL.Ssms.Legacy`: the experimental SSMS 18-20 build of the same sources.
+- `tests/UlysiSQL.Checks`: the core checks.
 - `scripts/Test-Dialogs.ps1` and `scripts/Test-AiPanel.ps1`: offscreen checks of the dialogs and AI panel at 100-200% scaling; `-Out` saves screenshots.
 - `scripts/Test-Ssms.ps1`: the end-to-end tests that drive a real SSMS 22 in CI.
 

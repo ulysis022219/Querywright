@@ -171,8 +171,8 @@ also cover slash commands, `@` mention parsing and Markdown export. Offscreen pa
 actions, table grids, the model drawer, starter prompts, theme resource changes and 100/125/150/200% layout. Run:
 
 ```powershell
-dotnet run --project tests/Querywright.Checks
-dotnet build src/Querywright.Ssms
+dotnet run --project tests/UlysiSQL.Checks
+dotnet build src/UlysiSQL.Ssms
 powershell -NoProfile -File scripts/Test-AiClient.ps1
 powershell -NoProfile -STA -File scripts/Test-AiPanel.ps1 -Out artifacts/ai-panel
 100,125,150,200 | ForEach-Object { powershell -NoProfile -STA -File scripts/Test-Dialogs.ps1 -Scale $_ }

@@ -14,10 +14,10 @@ $resolver = [ResolveEventHandler] {
 [AppDomain]::CurrentDomain.add_AssemblyResolve($resolver)
 function Check($condition, $message) { if (!$condition) { throw $message } }
 try {
-    $bin = Join-Path $PSScriptRoot '../src/Querywright.Ssms/bin/Debug/net472'
-    [void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Core.dll'))
-    $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'Querywright.Ssms.dll'))
-    $type = $assembly.GetType('Querywright.Ssms.Diagnostics', $true)
+    $bin = Join-Path $PSScriptRoot '../src/UlysiSQL.Ssms/bin/Debug/net472'
+    [void][Reflection.Assembly]::LoadFrom((Join-Path $bin 'UlysiSQL.Core.dll'))
+    $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $bin 'UlysiSQL.Ssms.dll'))
+    $type = $assembly.GetType('UlysiSQL.Ssms.Diagnostics', $true)
     $flags = [Reflection.BindingFlags]'Static,NonPublic'
     $enabled = $type.GetProperty('Enabled', $flags)
     $write = $type.GetMethod('Write', $flags)
@@ -39,6 +39,9 @@ try {
     Check ($json.Contains('[REDACTED]')) 'Redaction must remain visible'
     $roundTrip = $validate.Invoke($null, @($json))
     Check (($roundTrip | ConvertFrom-Json).events.Count -eq 2) 'Export must import into detached validated view'
+    Check ($json.Contains('"ulysisql-diagnostics"')) 'Export must use the UlysiSQL schema name'
+    $legacy = $validate.Invoke($null, @($json.Replace('"ulysisql-diagnostics"', '"querywright-diagnostics"')))
+    Check (($legacy | ConvertFrom-Json).events.Count -eq 2) 'Files exported before the rename must import'
     $modified = $json | ConvertFrom-Json
     $modified | Add-Member NoteProperty execute_sql 'DELETE FROM fixture;'
     $modified.events[0] | Add-Member NoteProperty unknown_secret 'fixture-unknown-canary'
@@ -49,12 +52,12 @@ try {
     try { [void]$validate.Invoke($null, @([string]($modified | ConvertTo-Json -Depth 20))); throw 'Invalid import accepted' }
     catch { Check ($_.Exception.ToString().Contains('Invalid diagnostic field')) 'Invalid imported metadata must fail validation' }
     Check ((Snapshot) -eq $json) 'Rejected import must leave active logs intact'
-    $ai = [Querywright.Core.AiDiagnostics]::new()
-    $entry = [Querywright.Core.AiDiagnosticEntry]::new(); $entry.Model = 'fixture'; $entry.MaxOutputTokens = 4096
+    $ai = [UlysiSQL.Core.AiDiagnostics]::new()
+    $entry = [UlysiSQL.Core.AiDiagnosticEntry]::new(); $entry.Model = 'fixture'; $entry.MaxOutputTokens = 4096
     $ai.Add($entry); Check ($ai.Entries.Count -eq 0) 'AI metadata capture defaults off'
     $ai.Enabled = $true; $ai.Add($entry); $entry.Model = 'changed'
     Check ($ai.Entries[0].Model -eq 'fixture') 'AI metadata must clone entries'
-    $imported = [Querywright.Core.AiDiagnostics]::new(); $imported.Import($ai.Export())
+    $imported = [UlysiSQL.Core.AiDiagnostics]::new(); $imported.Import($ai.Export())
     Check ($imported.Entries.Count -eq 1 -and !$imported.Enabled) 'Import must work without enabling capture'
     1..110 | ForEach-Object { $ai.Add($entry) }; Check ($ai.Entries.Count -eq 100) 'AI metadata ring must remain bounded'
     $ai.Enabled = $false; Check ($ai.Entries.Count -eq 0) 'Turning off must clear AI metadata'

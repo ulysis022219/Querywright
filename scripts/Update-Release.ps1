@@ -1,16 +1,16 @@
 # Shared validation for direct updates. No downloads, process launches or installation on import.
-function Get-QuerywrightReleaseAsset {
+function Get-UlysiSQLReleaseAsset {
     param($Release, [string]$Tag)
     if ($Tag -cnotmatch '\Av[0-9]+\.[0-9]+\.[0-9]+\z' -or
         $Release.tag_name -cne $Tag -or $Release.draft -ne $false -or $Release.prerelease -ne $false) {
         throw 'Expected a published stable UlysiSQL release matching the requested version.'
     }
-    $name = "QueryWright_$Tag.zip"
+    $name = "UlysiSQL_$Tag.zip"
     $assets = @($Release.assets | Where-Object { $_.name -ceq $name })
     if ($assets.Count -ne 1) { throw "The release must contain exactly one $name asset." }
     $asset = $assets[0]
-    # The repository was renamed from SqlWorkbench; GitHub may report either name.
-    $expected = @('Querywright', 'SqlWorkbench') | ForEach-Object { "https://github.com/ulysis022219/$_/releases/download/$Tag/$name" }
+    # The repository was SqlWorkbench, then Querywright, now UlysiSQL; GitHub may report any of them.
+    $expected = @('UlysiSQL', 'Querywright', 'SqlWorkbench') | ForEach-Object { "https://github.com/ulysis022219/$_/releases/download/$Tag/$name" }
     if ($asset.browser_download_url -cnotin $expected -or $asset.state -ne 'uploaded') {
         throw 'Unexpected release download location or incomplete asset.'
     }
@@ -20,7 +20,7 @@ function Get-QuerywrightReleaseAsset {
     return $asset
 }
 
-function Assert-QuerywrightDownloadUri {
+function Assert-UlysiSQLDownloadUri {
     param([uri]$Uri)
     if (-not $Uri.IsAbsoluteUri -or $Uri.Scheme -cne 'https' -or $Uri.Port -ne 443 -or
         $Uri.UserInfo -or $Uri.Fragment -or $Uri.DnsSafeHost -notin @('github.com', 'release-assets.githubusercontent.com')) {
@@ -28,7 +28,7 @@ function Assert-QuerywrightDownloadUri {
     }
 }
 
-function Copy-QuerywrightDownload {
+function Copy-UlysiSQLDownload {
     param([IO.Stream]$InputStream, [IO.Stream]$OutputStream,
         [Threading.CancellationToken]$CancellationToken, [long]$MaxBytes = 100MB)
     $buffer = New-Object byte[] 81920
@@ -40,7 +40,7 @@ function Copy-QuerywrightDownload {
     }
 }
 
-function Save-QuerywrightArchive {
+function Save-UlysiSQLArchive {
     param([uri]$Uri, [string]$Destination)
     Add-Type -AssemblyName System.Net.Http
     $handler = [Net.Http.HttpClientHandler]::new()
@@ -50,7 +50,7 @@ function Save-QuerywrightArchive {
     $timeout = [Threading.CancellationTokenSource]::new([TimeSpan]::FromMinutes(5))
     try {
         for ($redirects = 0; $redirects -le 5; $redirects++) {
-            Assert-QuerywrightDownloadUri $Uri
+            Assert-UlysiSQLDownloadUri $Uri
             $response = $client.GetAsync($Uri, [Net.Http.HttpCompletionOption]::ResponseHeadersRead, $timeout.Token).GetAwaiter().GetResult()
             try {
                 if ([int]$response.StatusCode -in @(301, 302, 303, 307, 308)) {
@@ -63,7 +63,7 @@ function Save-QuerywrightArchive {
                 $inputStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
                 try {
                     $outputStream = [IO.File]::Open($Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-                    try { Copy-QuerywrightDownload $inputStream $outputStream $timeout.Token }
+                    try { Copy-UlysiSQLDownload $inputStream $outputStream $timeout.Token }
                     finally { $outputStream.Dispose() }
                 } finally { $inputStream.Dispose() }
                 return
@@ -73,7 +73,7 @@ function Save-QuerywrightArchive {
     } finally { $timeout.Dispose(); $client.Dispose() }
 }
 
-function Expand-QuerywrightUpdate {
+function Expand-UlysiSQLUpdate {
     param([string]$Archive, [string]$Destination, [string]$Digest, [string]$Tag)
     if ($Digest -cnotmatch '\Asha256:[a-fA-F0-9]{64}\z' -or
         (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ine $Digest.Substring(7)) {
@@ -83,7 +83,7 @@ function Expand-QuerywrightUpdate {
     $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
     try {
         # Only extract the known VSIX. Never run scripts from the downloaded archive.
-        $entries = @($zip.Entries | Where-Object { $_.FullName -ceq 'Querywright.Ssms.vsix' })
+        $entries = @($zip.Entries | Where-Object { $_.FullName -ceq 'UlysiSQL.Ssms.vsix' })
         if ($entries.Count -ne 1 -or $entries[0].Length -gt 200MB) { throw 'Invalid release package.' }
         [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], $Destination, $false)
     } finally { $zip.Dispose() }

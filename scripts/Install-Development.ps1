@@ -7,8 +7,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 # Release zip: the VSIX sits next to this script. Source tree: the build output.
 if (-not $Package) {
-    $Package = Join-Path $PSScriptRoot 'Querywright.Ssms.vsix'
-    if (-not (Test-Path -LiteralPath $Package)) { $Package = Join-Path $root 'src\Querywright.Ssms\bin\Debug\net472\Querywright.Ssms.vsix' }
+    $Package = Join-Path $PSScriptRoot 'UlysiSQL.Ssms.vsix'
+    if (-not (Test-Path -LiteralPath $Package)) { $Package = Join-Path $root 'src\UlysiSQL.Ssms\bin\Debug\net472\UlysiSQL.Ssms.vsix' }
 }
 $package = $Package
 $installer = Join-Path $SsmsDirectory 'VSIXInstaller.exe'
